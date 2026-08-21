@@ -46,6 +46,7 @@ import { resolveColumns, parseTrackerRow, normalizeTextKey } from './tracker-par
 import { normalizeCompany } from './tracker-utils.mjs';
 import { normalizeCompanyName } from './invite-match.mjs';
 import { withPipelineLock } from './pipeline-lock.mjs';
+import { recordExpired } from './expired-log.mjs';
 import { flagValue, hasFlag } from './lib/cli-flags.mjs';
 import { withPortalHealthLock } from './portal-health-lock.mjs';
 
@@ -1964,7 +1965,9 @@ async function verifyOffers(offers, { headedFallback = false, throttleBaseMs = 0
             }
           }
         }
-        expired.push({ ...offer, reason });
+        // `code` rides along with `reason`: the expired-jobs log records the stable
+        // code (liveness-core owns it) rather than the prose, which is free to reword.
+        expired.push({ ...offer, code, reason });
         console.log(`  ❌ expired   ${offer.company} | ${offer.title} (${reason})`);
       } else if (result === 'uncertain' && GUARD_CODES.has(code)) {
         // Guard failures are permanent (not transient like a timeout) — record them
@@ -2440,6 +2443,20 @@ async function main() {
   ];
   if (!dryRun && expiredForHistory.length > 0) {
     appendToScanHistory(expiredForHistory, date, 'skipped_expired');
+    // The scan-history row above is dedup bookkeeping — it stops the next scan
+    // re-checking a dead URL and is not meant to be read. The same closure also
+    // gets a human-legible row in data/expired-jobs.md.
+    //
+    // Only expiredOffers: a MIGRATED offer's old URL is dead as a link, but the
+    // role moved rather than closed, and it is already in pipeline.md at its new
+    // URL. Listing it under "Expired Jobs" would report a live role as gone.
+    const expiredLog = await recordExpired(
+      expiredOffers.map((o) => ({ ...o, posted: postedAtIsoDate(o.postedAt) })),
+      { date }
+    );
+    if (expiredLog.added > 0) {
+      console.log(`  📓 logged ${expiredLog.added} expired posting(s) to data/expired-jobs.md`);
+    }
   }
   // Pages that loaded but had no Apply control: record so we don't re-verify
   // them next scan, but never let them reach pipeline.md.
