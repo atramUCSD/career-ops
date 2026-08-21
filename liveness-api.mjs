@@ -56,6 +56,12 @@ function isSafeValue(v) {
 //   `timeoutMs`  — override the default fetch timeout (slow/rate-limited APIs).
 //   `interpret`  — read the 200 response body to decide liveness (org-level APIs
 //                  where a 200 alone doesn't prove THIS posting is live).
+//   `accept`     — override the Accept header (endpoints that serve HTML, not JSON).
+//   `interpretGone` — read a 404/410 body before trusting it as `expired`. Needed
+//                  where the endpoint returns the same status for "this posting is
+//                  gone" and "you asked about the wrong board", which are opposite
+//                  answers. Returning null there falls back to the browser instead
+//                  of purging a live posting.
 const ATS_PROVIDERS = [
   {
     id: 'greenhouse',
@@ -66,6 +72,92 @@ const ATS_PROVIDERS = [
       return m ? { board: m[1], id: m[2] } : null;
     },
     api: ({ board, id }) => `https://boards-api.greenhouse.io/v1/boards/${board}/jobs/${id}`,
+  },
+  {
+    id: 'greenhouse_embed',
+    // Greenhouse's embedded board on the employer's OWN domain — the posting URL is
+    // e.g. databricks.com/company/careers/open-positions/job?gh_jid=8546367002. The
+    // job id is right there in the query string, and the same per-job API that serves
+    // job-boards.greenhouse.io serves these; 145 of the 228 postings this module could
+    // not check were of exactly this shape, left to the browser classifier for no
+    // reason other than the hostname.
+    //
+    // The board token is NOT in the URL, so it is inferred from the domain label
+    // (databricks.com → "databricks", jobs.dropbox.com → "dropbox"). That inference
+    // is a guess and is sometimes wrong, which makes a 404 ambiguous: the posting was
+    // removed, or the token was never a board at all. The per-job endpoint cannot tell
+    // them apart — it answers `{"error":"Job not found"}` either way, including for a
+    // board that does not exist. Only the BOARD endpoint distinguishes them, so
+    // interpretGone confirms the board before trusting the 404. A guess that turns out
+    // not to be a board degrades to the browser check instead of reporting expired.
+    match(u) {
+      // greenhouse.io hosts are handled by the entry above, which carries the real
+      // board token in its path — never guess one when the URL states it.
+      if (/(^|\.)greenhouse\.io$/.test(u.hostname)) return null;
+      const id = u.searchParams.get('gh_jid');
+      if (!id || !/^\d+$/.test(id)) return null;
+      // Strip the careers-subdomain conventions, then take the registrable label:
+      // "careers.airbnb.com" → "airbnb", "www.coinbase.com" → "coinbase".
+      const labels = u.hostname.toLowerCase().replace(/^(www|careers|jobs|apply|boards)\./, '').split('.');
+      const board = labels.length >= 2 ? labels[0] : null;
+      return board ? { board, id } : null;
+    },
+    api: ({ board, id }) => `https://boards-api.greenhouse.io/v1/boards/${board}/jobs/${id}`,
+    async interpretGone(_res, { board }) {
+      // Second request, and only on the 404 path (rare): does this board exist?
+      // 200 → the token was right, so the 404 above means the posting is gone.
+      // Anything else → the token was a bad guess and the 404 proves nothing.
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+      try {
+        const board_res = await fetch(`https://boards-api.greenhouse.io/v1/boards/${board}`, {
+          method: 'GET',
+          headers: { 'user-agent': DEFAULT_USER_AGENT, accept: 'application/json' },
+          redirect: 'error',
+          signal: controller.signal,
+        });
+        if (board_res.status !== 200) return null; // not a board → inconclusive
+        return {
+          result: 'expired',
+          code: 'greenhouse_embed_api_gone',
+          reason: 'Greenhouse API — posting removed from the board',
+        };
+      } catch {
+        return null; // network / timeout → inconclusive
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  },
+  {
+    id: 'icims',
+    // {tenant}.icims.com/jobs/{id}/{slug}/job — iCIMS renders the posting inside an
+    // IFRAME, so a headless browser reads the page chrome and nothing else. That is
+    // what made every live Peraton posting classify as expired via insufficient
+    // content. Requesting the iframe's own URL (`in_iframe=1`) returns the posting
+    // body directly over plain HTTP, and iCIMS answers a removed posting with a
+    // 410 Gone — an authoritative signal the browser rung never sees.
+    match(u) {
+      const host = u.hostname.match(/^([\w-]+)\.icims\.com$/);
+      if (!host) return null;
+      const m = u.pathname.match(/^\/jobs\/(\d+)\//);
+      return m ? { tenant: host[1], id: m[1] } : null;
+    },
+    // Host is derived rather than fixed, as it is for Lever: the pattern above pins
+    // it to a single safe label under the literal icims.com domain, and isSafeValue
+    // re-checks that label before it reaches the template.
+    api: ({ tenant, id }) => `https://${tenant}.icims.com/jobs/${id}/job?in_iframe=1`,
+    accept: 'text/html',
+  },
+  {
+    id: 'smartrecruiters',
+    // jobs.smartrecruiters.com/{company}/{id}-{slug}
+    match(u) {
+      if (u.hostname !== 'jobs.smartrecruiters.com') return null;
+      const m = u.pathname.match(/^\/([^/]+)\/(\d+)(?:-[^/]*)?\/?$/);
+      return m ? { company: m[1], id: m[2] } : null;
+    },
+    api: ({ company, id }) => `https://api.smartrecruiters.com/v1/companies/${company}/postings/${id}`,
   },
   {
     id: 'lever',
@@ -178,7 +270,15 @@ export function resolveAtsApi(rawUrl) {
     // most providers, or (Workday) a slash-separated sequence of safe segments.
     // isSafeValue enforces the same charset + no-".." rule either way.
     if (!Object.values(parts).every(isSafeValue)) return null;
-    return { ats: provider.id, apiUrl: provider.api(parts), parts, timeoutMs: provider.timeoutMs, interpret: provider.interpret };
+    return {
+      ats: provider.id,
+      apiUrl: provider.api(parts),
+      parts,
+      timeoutMs: provider.timeoutMs,
+      interpret: provider.interpret,
+      interpretGone: provider.interpretGone,
+      accept: provider.accept,
+    };
   }
   return null;
 }
@@ -197,7 +297,7 @@ export function isAtsPosting(url) {
 export async function checkLivenessViaApi(url) {
   const resolved = resolveAtsApi(url);
   if (!resolved) return null;
-  const { ats, apiUrl, parts, interpret, timeoutMs } = resolved;
+  const { ats, apiUrl, parts, interpret, interpretGone, accept, timeoutMs } = resolved;
 
   // The timeout guards the whole classification (fetch + any `interpret` body read),
   // since aborting the shared signal also tears down an in-flight res.json().
@@ -208,7 +308,7 @@ export async function checkLivenessViaApi(url) {
     try {
       res = await fetch(apiUrl, {
         method: 'GET',
-        headers: { 'user-agent': DEFAULT_USER_AGENT, accept: 'application/json' },
+        headers: { 'user-agent': DEFAULT_USER_AGENT, accept: accept || 'application/json' },
         redirect: 'error', // refuse server-side redirects (SSRF + ambiguity guard)
         signal: controller.signal,
       });
@@ -217,6 +317,9 @@ export async function checkLivenessViaApi(url) {
     }
 
     if (res.status === 404 || res.status === 410) {
+      // Where the same status can mean "wrong board" as well as "posting removed",
+      // the body decides — and an unreadable body stays inconclusive.
+      if (interpretGone) return await interpretGone(res, parts);
       return { result: 'expired', code: `${ats}_api_gone`, reason: `ATS API ${res.status} — posting removed` };
     }
     if (res.status === 200) {
