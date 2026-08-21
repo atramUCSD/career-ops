@@ -21,7 +21,7 @@
  */
 
 import { execFileSync } from 'child_process';
-import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, rmSync, chmodSync, utimesSync } from 'fs';
+import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, rmSync, chmodSync, utimesSync, unlinkSync } from 'fs';
 import { join, dirname } from 'path';
 import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
@@ -642,27 +642,41 @@ const TRACKER_REPORT_MISMATCH = `# Applications Tracker
 
 // ── 16. Write failure surfaces as a structured error, not a stack ─
 {
-  if (process.platform !== 'win32' && process.getuid?.() === 0) {
-    pass('write-failure: skipped (running as root — directory permissions are not enforced)');
-  } else {
-    const dir = mkdtempSync(join(tmpdir(), 'co-setstatus-wf-'));
-    const roDir = join(dir, 'ro');
-    mkdirSync(roDir);
-    const tracker = join(roDir, 'applications.md');
-    writeFileSync(tracker, TRACKER_9);
-    const lock = join(dir, 'career-ops-merge-tracker-wf.lock');
-    // Make the tracker's directory readable but unwritable, so the atomic
-    // temp-file write fails after a successful read. On Windows, directory
-    // read-only bits don't block file creation — deny write-data/append-data
-    // for Everyone (*S-1-1-0) via icacls instead.
-    const denyWrite = () => process.platform === 'win32'
-      ? execFileSync('icacls', [roDir, '/deny', '*S-1-1-0:(WD,AD)'])
-      : chmodSync(roDir, 0o555);
-    const restore = () => process.platform === 'win32'
-      ? execFileSync('icacls', [roDir, '/remove:d', '*S-1-1-0'])
-      : chmodSync(roDir, 0o755);
-    denyWrite();
-    try {
+  const dir = mkdtempSync(join(tmpdir(), 'co-setstatus-wf-'));
+  const roDir = join(dir, 'ro');
+  mkdirSync(roDir);
+  const tracker = join(roDir, 'applications.md');
+  writeFileSync(tracker, TRACKER_9);
+  const lock = join(dir, 'career-ops-merge-tracker-wf.lock');
+  // Make the tracker's directory readable but unwritable, so the atomic
+  // temp-file write fails after a successful read. On Windows, directory
+  // read-only bits don't block file creation — deny write-data/append-data
+  // for Everyone (*S-1-1-0) via icacls instead.
+  const denyWrite = () => process.platform === 'win32'
+    ? execFileSync('icacls', [roDir, '/deny', '*S-1-1-0:(WD,AD)'])
+    : chmodSync(roDir, 0o555);
+  const restore = () => process.platform === 'win32'
+    ? execFileSync('icacls', [roDir, '/remove:d', '*S-1-1-0'])
+    : chmodSync(roDir, 0o755);
+  denyWrite();
+  // Whether the deny actually binds is a property of the ACCOUNT, not the
+  // platform: root ignores mode bits, and a Windows account holding SeRestore
+  // (elevated shells, some CI images) bypasses the deny ACE — icacls still
+  // reports success. Probe the directory instead of guessing from the platform,
+  // so an environment that cannot stage the precondition skips honestly rather
+  // than reporting set-status broken.
+  let denyBinds = false;
+  const probe = join(roDir, '.write-probe');
+  try {
+    writeFileSync(probe, 'x');
+    unlinkSync(probe);
+  } catch {
+    denyBinds = true;
+  }
+  try {
+    if (!denyBinds) {
+      pass('write-failure: skipped (this account bypasses the unwritable-directory precondition)');
+    } else {
       const r = runSetStatus(['2', 'Applied', '--json'], { tracker, lock });
       let parsed = null;
       try { parsed = JSON.parse(r.stdout); } catch {}
@@ -671,10 +685,10 @@ const TRACKER_REPORT_MISMATCH = `# Applications Tracker
       } else {
         fail(`write-failure: code=${r.code} json=${parsed?.code}\n${r.stdout}${r.stderr}`);
       }
-    } finally {
-      restore();
-      rmSync(dir, { recursive: true, force: true });
     }
+  } finally {
+    restore();
+    rmSync(dir, { recursive: true, force: true });
   }
 }
 

@@ -12,7 +12,7 @@
 import { pass, fail, NODE, ROOT } from './helpers.mjs';
 import { join } from 'path';
 import { execFileSync } from 'child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync, unlinkSync } from 'fs';
 import { tmpdir } from 'os';
 
 console.log('\nmark-pdf-ready.mjs — PDF column write path');
@@ -403,27 +403,39 @@ const TRACKER_DUP_REPORT = `# Applications Tracker
 
 // ── 14. Write failure surfaces as a structured error, not a stack ──
 {
-  if (process.platform !== 'win32' && process.getuid?.() === 0) {
-    pass('write-failure: skipped (running as root — directory permissions are not enforced)');
-  } else {
-    // Given the tracker's directory is readable but not writable
-    const dir = mkdtempSync(join(tmpdir(), 'co-markpdf-wf-'));
-    const roDir = join(dir, 'ro');
-    mkdirSync(roDir);
-    const tracker = join(roDir, 'applications.md');
-    writeFileSync(tracker, TRACKER_9);
-    const lock = join(dir, 'career-ops-merge-tracker-wf.lock');
-    // On Windows, directory read-only bits don't block file creation — deny
-    // write-data/append-data for Everyone (*S-1-1-0) via icacls instead
-    // (mirrors set-status-tests.mjs's write-failure test).
-    const denyWrite = () => process.platform === 'win32'
-      ? execFileSync('icacls', [roDir, '/deny', '*S-1-1-0:(WD,AD)'])
-      : chmodSync(roDir, 0o555);
-    const restore = () => process.platform === 'win32'
-      ? execFileSync('icacls', [roDir, '/remove:d', '*S-1-1-0'])
-      : chmodSync(roDir, 0o755);
-    denyWrite();
-    try {
+  // Given the tracker's directory is readable but not writable
+  const dir = mkdtempSync(join(tmpdir(), 'co-markpdf-wf-'));
+  const roDir = join(dir, 'ro');
+  mkdirSync(roDir);
+  const tracker = join(roDir, 'applications.md');
+  writeFileSync(tracker, TRACKER_9);
+  const lock = join(dir, 'career-ops-merge-tracker-wf.lock');
+  // On Windows, directory read-only bits don't block file creation — deny
+  // write-data/append-data for Everyone (*S-1-1-0) via icacls instead
+  // (mirrors set-status-tests.mjs's write-failure test).
+  const denyWrite = () => process.platform === 'win32'
+    ? execFileSync('icacls', [roDir, '/deny', '*S-1-1-0:(WD,AD)'])
+    : chmodSync(roDir, 0o555);
+  const restore = () => process.platform === 'win32'
+    ? execFileSync('icacls', [roDir, '/remove:d', '*S-1-1-0'])
+    : chmodSync(roDir, 0o755);
+  denyWrite();
+  // Whether the deny binds is a property of the ACCOUNT, not the platform —
+  // root ignores mode bits, and a Windows account holding SeRestore bypasses
+  // the deny ACE while icacls still reports success. Probe rather than guess
+  // (mirrors set-status-tests.mjs).
+  let denyBinds = false;
+  const probe = join(roDir, '.write-probe');
+  try {
+    writeFileSync(probe, 'x');
+    unlinkSync(probe);
+  } catch {
+    denyBinds = true;
+  }
+  try {
+    if (!denyBinds) {
+      pass('write-failure: skipped (this account bypasses the unwritable-directory precondition)');
+    } else {
       // When mark-pdf-ready tries to flip report #1's PDF cell
       const r = runMarkPdfReady(['1', '--json'], { tracker, lock });
       let parsed = null;
@@ -435,9 +447,9 @@ const TRACKER_DUP_REPORT = `# Applications Tracker
       } else {
         fail(`write-failure: code=${r.code} json=${parsed?.code}\n${r.stdout}${r.stderr}`);
       }
-    } finally {
-      restore();
-      rmSync(dir, { recursive: true, force: true });
     }
+  } finally {
+    restore();
+    rmSync(dir, { recursive: true, force: true });
   }
 }
