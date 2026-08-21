@@ -46,7 +46,7 @@ import { resolveColumns, parseTrackerRow, normalizeTextKey } from './tracker-par
 import { normalizeCompany } from './tracker-utils.mjs';
 import { normalizeCompanyName } from './invite-match.mjs';
 import { withPipelineLock } from './pipeline-lock.mjs';
-import { recordExpired } from './expired-log.mjs';
+import { recordExpired, parseExpiredLog, EXPIRED_LOG_PATH } from './expired-log.mjs';
 import { flagValue, hasFlag } from './lib/cli-flags.mjs';
 import { withPortalHealthLock } from './portal-health-lock.mjs';
 
@@ -1079,6 +1079,19 @@ export function loadSeenUrls(policy = {}) {
     const text = readFileSync(PIPELINE_PATH, 'utf-8');
     for (const match of text.matchAll(/- \[[ x]\] (https?:\/\/\S+)/g)) {
       seen.add(normalizeUrlForDedup(match[1]));
+    }
+  }
+
+  // expired-jobs.md — postings confirmed removed, by a scan or by a standalone
+  // check-liveness run. A death confirmed anywhere is remembered everywhere: the
+  // scan-history row only covers URLs this scanner itself killed, so without this
+  // a posting that died after it reached the pipeline could return as a "fresh"
+  // find once its pipeline line is pruned. A confirmed-dead URL never comes back
+  // to life, so this skip is permanent by design — unlike the recheck_after_days
+  // policy above, which governs merely stale rows.
+  if (existsSync(EXPIRED_LOG_PATH)) {
+    for (const url of parseExpiredLog(readFileSync(EXPIRED_LOG_PATH, 'utf-8')).keys()) {
+      seen.add(normalizeUrlForDedup(url));
     }
   }
 
