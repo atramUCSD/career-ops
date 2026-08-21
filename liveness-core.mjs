@@ -177,7 +177,19 @@ export function classifyLiveness({ status = 0, requestedUrl = '', finalUrl = '',
   }
 
   if (bodyText.trim().length < MIN_CONTENT_CHARS) {
-    return { result: 'expired', code: 'insufficient_content', reason: 'insufficient content — likely nav/footer only' };
+    // A body this short means the posting was not RENDERED, which is not evidence
+    // that it was removed. iCIMS serves the job detail inside an iframe, so headless
+    // Playwright reads nav/footer only and every live careers-peraton.icims.com
+    // posting scored `expired` — 14 of them on one run, whose URLs the same day's
+    // scan had just pulled from the live iCIMS feed. Purging on that verdict deletes
+    // open roles.
+    //
+    // This is the failure the BOT_CHALLENGE_PATTERNS comment above already argues
+    // against, met a second time with no pattern available to match on: absence of
+    // readable content cannot be distinguished from absence of the posting. So it
+    // resolves the way the weaker no_apply_control signal below does — uncertain,
+    // left for an API check or a human to settle.
+    return { result: 'uncertain', code: 'insufficient_content', reason: 'insufficient content — likely nav/footer only (page may not have rendered)' };
   }
 
   return { result: 'uncertain', code: 'no_apply_control', reason: 'content present but no visible apply control found' };
