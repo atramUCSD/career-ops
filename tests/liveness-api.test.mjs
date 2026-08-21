@@ -56,7 +56,9 @@ eq(
   'a greenhouse.io URL uses its path board token, not the hostname guess',
 );
 
-eq(isAtsPosting('https://apply.careers.microsoft.com/careers/job/123'), false, 'unknown ATS is still browser-only (no false coverage claim)');
+// Coverage must never be claimed by guessing: a host this module does not know
+// belongs to the browser rung, whatever its URL looks like.
+eq(isAtsPosting('https://jobs.example.com/careers/job/123'), false, 'unknown ATS is still browser-only (no false coverage claim)');
 eq(isAtsPosting('http://databricks.com/x?gh_jid=1'), false, 'non-https is refused');
 eq(r('https://databricks.com/careers/job'), null, 'a vanity domain WITHOUT gh_jid is not claimed');
 eq(r('https://databricks.com/careers/job?gh_jid=not-a-number'), null, 'a non-numeric gh_jid is refused rather than sent to the API');
@@ -115,6 +117,50 @@ try {
   stubFetch([['icims.com', res(200)]]);
   const icimsLive = await checkLivenessViaApi('https://careers-peraton.icims.com/jobs/169611/x/job');
   eq(icimsLive?.result, 'active', 'iCIMS 200 -> active (the verdict the browser rung got wrong)');
+} finally {
+  globalThis.fetch = realFetch;
+}
+
+// ── Eightfold: the last browser-only ATS ────────────────────────────
+//
+// Eightfold serves each employer from that employer's OWN host, so there is no
+// vendor suffix to key on — which is why these postings had no API rung and why
+// the Playwright classifier cannot recognize them either. The host allowlist is
+// what keeps "fetch a fixed, known host" true for this provider.
+
+eq(
+  r('https://careers.qualcomm.com/careers/job/446714907756')?.apiUrl,
+  'https://careers.qualcomm.com/api/apply/v2/jobs/446714907756',
+  'Eightfold posting resolves to the per-job API on the same branded host',
+);
+
+eq(
+  r('https://apply.careers.microsoft.com/careers/job/1970393556927681')?.ats,
+  'eightfold',
+  'a second branded Eightfold host resolves through the same provider',
+);
+
+eq(r('https://acme.eightfold.ai/careers/job/123')?.ats, 'eightfold', 'a first-party *.eightfold.ai host needs no allowlist entry');
+
+// `/careers/job/{digits}` is a common enough path that matching it anywhere
+// would send requests to arbitrary hosts — the allowlist, not the path, decides.
+eq(r('https://careers.example.com/careers/job/123'), null, 'an unlisted host is NOT claimed on path shape alone');
+eq(r('https://careers.qualcomm.com/careers/job/not-a-number'), null, 'a non-numeric Eightfold job id is refused');
+
+// The `?domain=` param other Eightfold callers send is deliberately omitted: a
+// WRONG domain 404s, so guessing one could manufacture a false expiry.
+if (!r('https://careers.qualcomm.com/careers/job/446714907756')?.apiUrl.includes('domain='))
+  pass('the guessable ?domain= param is not sent (a wrong value 404s — that would be a false expiry)');
+else fail('Eightfold API URL should not carry a guessed ?domain= param');
+
+try {
+  // Unlike embedded Greenhouse, nothing here is inferred, so a bare 404 is a real
+  // answer about this posting and needs no second request to confirm.
+  stubFetch([['/api/apply/v2/jobs/', res(404, { message: 'Job with ID 1 not found' })]]);
+  eq((await checkLivenessViaApi('https://careers.qualcomm.com/careers/job/1'))?.result, 'expired', 'Eightfold 404 -> expired (nothing about the request was guessed)');
+
+  stubFetch([['/api/apply/v2/jobs/', res(200, { id: 446714907756, name: 'LLM Serving Engineer' })]]);
+  eq((await checkLivenessViaApi('https://careers.qualcomm.com/careers/job/446714907756'))?.result, 'active', 'Eightfold 200 -> active');
 } finally {
   globalThis.fetch = realFetch;
 }

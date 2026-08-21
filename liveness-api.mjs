@@ -223,7 +223,46 @@ const ATS_PROVIDERS = [
     api: ({ tenant, shard, site, jobPath }) =>
       `https://${tenant}.${shard}.myworkdayjobs.com/wday/cxs/${tenant}/${site}/job/${jobPath}`,
   },
+  {
+    id: 'eightfold',
+    // Eightfold AI serves employers' career sites from the employer's OWN branded
+    // host (careers.qualcomm.com, apply.careers.microsoft.com), with no shared
+    // suffix to key on — the reason these postings had no API rung and fell to
+    // Playwright, which cannot recognize them either.
+    //
+    // The per-job endpoint is `/api/apply/v2/jobs/{id}` on the same branded host:
+    // 200 for a live posting, 404 `{"message":"Job with ID {id} not found"}` for
+    // one that is gone. That is a genuine per-job answer, so a bare 404 is
+    // trustworthy here — unlike the embedded-Greenhouse case, nothing about the
+    // request is guessed.
+    //
+    // Callers elsewhere pass `?domain={company}.com`. It is omitted deliberately:
+    // the endpoint answers correctly without it, and a WRONG domain returns a 404
+    // HTML page — that is, a guessed parameter could manufacture a false expiry.
+    // Not sending it removes the guess entirely.
+    //
+    // Unlike every other provider here, the API host is the posting's own host
+    // rather than a fixed vendor host, so it is pinned to an allowlist instead.
+    // The path shape `/careers/job/{digits}` is not distinctive enough to prove a
+    // site is Eightfold, and fetching whatever host happened to match would give
+    // up the fixed-host property the rest of this module relies on. Adding an
+    // employer is one line in EIGHTFOLD_HOSTS.
+    match(u) {
+      const host = u.hostname.toLowerCase();
+      if (!EIGHTFOLD_HOSTS.has(host) && !/(^|\.)eightfold\.ai$/.test(host)) return null;
+      const m = u.pathname.match(/^\/careers\/job\/(\d+)\/?$/);
+      return m ? { host, id: m[1] } : null;
+    },
+    api: ({ host, id }) => `https://${host}/api/apply/v2/jobs/${id}`,
+  },
 ];
+
+// Branded hosts served by Eightfold AI. See the `eightfold` provider above for
+// why this is an allowlist and not a pattern.
+const EIGHTFOLD_HOSTS = new Set([
+  'apply.careers.microsoft.com',
+  'careers.qualcomm.com',
+]);
 
 /**
  * Decide liveness for one Ashby posting from its org's job-board API payload.
