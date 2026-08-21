@@ -9,9 +9,11 @@
 Per-URL loop の前に、zero-token liveness checker で pending URLs をまとめて sweep する：
 
 1. "Pending" section のすべての `- [ ]` URL を temp file に集める（1 URL per line）。
-2. `node check-liveness.mjs --file <tmpfile>` を実行する（large batches では WAF rate limits を避けるため `--throttle` を追加。pure Playwright、zero Claude tokens）。Checker は URL ごとの verdict を出し、expired/uncertain がある場合は non-zero で終了する。
-3. Checker が **expired/closed** と報告した URL は処理せず pipeline entry を resolve する：`- [x] ~~URL | Company | Role~~ -- posting expired (liveness sweep)` として "Processed" に移し、すでに tracker row がある場合は `Discarded` にする。**JD extraction、evaluation、report/PDF generation はしない。**
-4. `uncertain` results は残し、normal per-URL extraction 中に確認する（一時的な timeout で live posting を落とさないため）。
+2. `node check-liveness.mjs --file <tmpfile>` を実行する（large batches では WAF rate limits を避けるため `--throttle` を追加。pure Playwright、zero Claude tokens）。Checker は URL ごとの verdict を出し、expired/uncertain がある場合は non-zero で終了する。 大きな list の routine sweep には `--api-only` を追加する：free ATS API rung で止まり、答えられない URL は browser を開かず `skipped` として報告する。
+3. Checker が **expired/closed** と報告した URL は `data/expired-jobs.md` に記録される。`node prune-pipeline.mjs` を実行して該当 entry を "Pending" から "Processed" へ移す（confirmation date と evidence code が行に入る）。すでに tracker row がある場合は `Discarded` にする。**JD extraction、evaluation、report/PDF generation はしない。**
+   - 手作業ではなく script で移すこと。移した行は plain な `- [x] {url}` の形を保つ必要がある——`~~{url}~~` の strikethrough は `scan.mjs` の dedup regex から URL を隠し、次の scan が fresh find として再追加してしまう。
+   - `prune-pipeline.mjs --stale <days>` は `posted:` date が threshold より古い entry も retire する。数か月前の req は ATS 上 open でも実質 closed で、これを外すことが pending list を現実に返信の来る role だけに保つ。
+4. `uncertain` results は残し、normal per-URL extraction 中に確認する（一時的な timeout で live posting を落とさないため）。`uncertain` は `data/expired-jobs.md` に決して入らない——読めなかった posting は unknown であって gone ではない。
 5. 生き残った live URLs だけが下の per-URL processing loop に進む。
 
 これは `auto-pipeline` の per-URL liveness gate（Step 0.5）や `apply` preflight を置き換えるものではなく補完するもの。Dead postings を upfront, in bulk で落とし、ユーザーが expired role の tab を開いたり token を使ったりしないようにする。

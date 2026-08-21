@@ -529,11 +529,36 @@ npm run liveness -- https://a.com/job/1 https://b.com/job/2
 npm run liveness -- --file urls.txt
 npm run liveness -- --no-fallback https://a.com/job/1   # stay fully headless (no headed retry on anti-bot walls)
 npm run liveness -- --throttle=5000 --file urls.txt      # jittered wait between checks (rate-based WAFs)
+npm run liveness -- --api-only --file urls.txt           # ATS API rung only; unanswerable URLs reported as skipped
+npm run liveness -- --no-log https://a.com/job/1         # don't record confirmed expiries in data/expired-jobs.md
 ```
 
 Each URL gets a verdict: `active`, `expired`, or `uncertain` with a reason.
 
+Every **confirmed** `expired` is appended to `data/expired-jobs.md` (see **expired jobs log** below). `uncertain` never is — a posting that could not be read is unknown, not gone.
+
 **Exit codes:** `0` all URLs active, `1` any expired or uncertain.
+
+---
+
+## expired jobs log
+
+`data/expired-jobs.md` is the standing record of postings confirmed removed — one markdown table, newest removal first, keyed by URL. Both paths that can declare a posting dead write it: `scan.mjs` (for offers that expired between scans) and `check-liveness.mjs`.
+
+The `Removed (est.)` column is the date the removal was **first confirmed**, not the date the posting came down. No ATS publishes a removal date, so it is an upper bound whose tightness depends on how often liveness runs; don't compute time-to-close from it. A URL already listed keeps its original date — a re-check is a second observation of the same removal.
+
+The log feeds two things:
+
+- **`scan.mjs` dedup** — `loadSeenUrls` seeds from it, so a confirmed-dead URL is permanently skipped by future scans no matter which path killed it.
+- **`prune-pipeline.mjs`** — moves matching pending entries out of `data/pipeline.md`.
+
+```bash
+node prune-pipeline.mjs --dry-run          # preview; pipeline.md untouched
+node prune-pipeline.mjs                    # retire confirmed-expired pending entries
+node prune-pipeline.mjs --stale 90         # also retire entries posted more than 90 days ago
+```
+
+Pruned entries move to "Processed" with the reason on the line, keeping the plain `- [x] {url}` form so `scan.mjs`'s dedup regex still sees the URL. `--stale` is opt-in: posting age is a judgement about response odds, not a fact about the posting, so the caller names the threshold. Entries with no `posted:` date are never pruned as stale.
 
 ---
 
