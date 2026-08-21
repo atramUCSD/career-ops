@@ -57,6 +57,9 @@ function isSafeValue(v) {
 //   `interpret`  — read the 200 response body to decide liveness (org-level APIs
 //                  where a 200 alone doesn't prove THIS posting is live).
 //   `accept`     — override the Accept header (endpoints that serve HTML, not JSON).
+//   `interpretOther` — claim a status the module otherwise treats as inconclusive
+//                  (Workday's 403 for an unpublished posting), when the ATS answers
+//                  there with an app-level verdict rather than a transport failure.
 //   `interpretGone` — read a 404/410 body before trusting it as `expired`. Needed
 //                  where the endpoint returns the same status for "this posting is
 //                  gone" and "you asked about the wrong board", which are opposite
@@ -158,6 +161,30 @@ const ATS_PROVIDERS = [
       return m ? { company: m[1], id: m[2] } : null;
     },
     api: ({ company, id }) => `https://api.smartrecruiters.com/v1/companies/${company}/postings/${id}`,
+    // A 200 here is NOT proof of life. SmartRecruiters keeps closed postings
+    // addressable and reports their state in the body: `active: false` on a
+    // posting that has been taken down, with the 200 unchanged. Two ServiceNow
+    // postings the browser rung had correctly called dead came back
+    // `smartrecruiters_api_ok` on the status code alone — a false ACTIVE, which
+    // leaves a dead job in the queue looking verified.
+    //
+    // Only an explicit `active: false` is treated as removed. A missing field or
+    // an unreadable body returns null rather than guessing in either direction.
+    async interpret(res) {
+      let json;
+      try {
+        json = await res.json();
+      } catch {
+        return null;
+      }
+      if (json?.active === false) {
+        return { result: 'expired', code: 'smartrecruiters_api_inactive', reason: 'SmartRecruiters posting is marked inactive (closed)' };
+      }
+      if (json?.active === true) {
+        return { result: 'active', code: 'smartrecruiters_api_ok', reason: 'SmartRecruiters posting is marked active (live)' };
+      }
+      return null; // no `active` field → unexpected shape, let the browser decide
+    },
   },
   {
     id: 'lever',
@@ -222,6 +249,32 @@ const ATS_PROVIDERS = [
     },
     api: ({ tenant, shard, site, jobPath }) =>
       `https://${tenant}.${shard}.myworkdayjobs.com/wday/cxs/${tenant}/${site}/job/${jobPath}`,
+    // Workday does NOT 404 every dead posting. Tenants differ: Leidos answers 404
+    // for a removed job, while CACI, Parsons and BAH answer 403 `errorCode: "S22"`
+    // ("permission denied") — the posting still exists in the tenant, it is just
+    // no longer published. A bogus job path on those same tenants returns 404
+    // `errorCode: "S21"`, and a live posting returns 200, so S22 is specifically
+    // "exists but unpublished", not a blanket refusal.
+    //
+    // That distinction is the whole reason this is safe to read. A WAF or CDN
+    // block also arrives as 403, but as an HTML challenge page — so the JSON
+    // content type plus the exact errorCode must both hold before the 403 is
+    // taken as an answer. Anything else stays null and falls to the browser.
+    //
+    // Ten postings sat in the queue unresolvable on this: the API said "don't
+    // know" while the tenant was in fact saying "unpublished".
+    async interpretOther(res) {
+      if (res.status !== 403) return null;
+      if (!/^application\/json/i.test(res.headers.get('content-type') || '')) return null; // WAF/CDN HTML → not an answer
+      let json;
+      try {
+        json = await res.json();
+      } catch {
+        return null;
+      }
+      if (json?.errorCode !== 'S22') return null; // some other refusal → inconclusive
+      return { result: 'expired', code: 'workday_api_unpublished', reason: 'Workday CXS 403 S22 — posting is no longer published' };
+    },
   },
   {
     id: 'eightfold',
@@ -316,6 +369,7 @@ export function resolveAtsApi(rawUrl) {
       timeoutMs: provider.timeoutMs,
       interpret: provider.interpret,
       interpretGone: provider.interpretGone,
+      interpretOther: provider.interpretOther,
       accept: provider.accept,
     };
   }
@@ -336,7 +390,7 @@ export function isAtsPosting(url) {
 export async function checkLivenessViaApi(url) {
   const resolved = resolveAtsApi(url);
   if (!resolved) return null;
-  const { ats, apiUrl, parts, interpret, interpretGone, accept, timeoutMs } = resolved;
+  const { ats, apiUrl, parts, interpret, interpretGone, interpretOther, accept, timeoutMs } = resolved;
 
   // The timeout guards the whole classification (fetch + any `interpret` body read),
   // since aborting the shared signal also tears down an in-flight res.json().
@@ -367,7 +421,12 @@ export async function checkLivenessViaApi(url) {
       if (interpret) return await interpret(res, parts);
       return { result: 'active', code: `${ats}_api_ok`, reason: 'ATS API returns the posting (live)' };
     }
-    return null; // 429/5xx/other → inconclusive, fall back to the browser check
+    // 429/5xx/other → inconclusive by default. A provider may claim one of these
+    // statuses when its ATS answers there with an APP-level verdict about THIS
+    // posting (Workday's 403 for an unpublished job) rather than a transport
+    // failure or a WAF block. The default stays null.
+    if (interpretOther) return await interpretOther(res, parts);
+    return null;
   } catch {
     return null; // interpret abort / unexpected error → inconclusive
   } finally {

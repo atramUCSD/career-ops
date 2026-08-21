@@ -164,3 +164,69 @@ try {
 } finally {
   globalThis.fetch = realFetch;
 }
+
+// ── A 200 is not always alive, and a 403 is not always a block ──────
+//
+// Both of these were found by re-checking postings this module had already
+// ruled on, and both were WRONG in a way the status code alone hides.
+
+const realFetch2 = globalThis.fetch;
+try {
+  // SmartRecruiters keeps closed postings addressable: the body says
+  // `active: false` while the status stays 200. Reading the code alone reports a
+  // dead job as live — a false ACTIVE, which leaves it in the queue looking
+  // verified. Two real ServiceNow postings failed exactly this way.
+  stubFetch([['api.smartrecruiters.com', res(200, { name: 'Sr. Staff Product Designer', active: false })]]);
+  const closed = await checkLivenessViaApi('https://jobs.smartrecruiters.com/ServiceNow/744000139130415-x');
+  eq(closed?.result, 'expired', 'SmartRecruiters 200 + active:false -> expired (the status code alone would say live)');
+  eq(closed?.code, 'smartrecruiters_api_inactive', 'the inactive verdict is coded distinctly from a 404');
+
+  stubFetch([['api.smartrecruiters.com', res(200, { name: 'Open Role', active: true })]]);
+  eq((await checkLivenessViaApi('https://jobs.smartrecruiters.com/ServiceNow/744000141574539-x'))?.result, 'active', 'SmartRecruiters active:true -> active');
+
+  // A shape without the field is not evidence in either direction.
+  stubFetch([['api.smartrecruiters.com', res(200, { name: 'No status field' })]]);
+  eq(await checkLivenessViaApi('https://jobs.smartrecruiters.com/ServiceNow/744000141574539-x'), null, 'SmartRecruiters 200 with no `active` field -> null, not a guess');
+
+  // Workday tenants disagree about how a dead posting answers. Leidos 404s;
+  // CACI/Parsons/BAH return 403 errorCode S22 — the posting exists but is
+  // unpublished. A bogus path on those tenants returns 404 S21 and a live
+  // posting returns 200, so S22 means specifically "exists, unpublished".
+  const jsonRes = (status, body) => () => ({
+    status,
+    url: '',
+    headers: { get: (h) => (h.toLowerCase() === 'content-type' ? 'application/json;charset=utf-8' : null) },
+    json: async () => body,
+    text: async () => JSON.stringify(body),
+  });
+  const wdUrl = 'https://caci.wd1.myworkdayjobs.com/External/job/Chantilly-VA-US/Full-Stack-Developer--Senior_328890';
+
+  stubFetch([['myworkdayjobs.com', jsonRes(403, { errorCode: 'S22', httpStatus: 403, message: 'permission denied' })]]);
+  const unpub = await checkLivenessViaApi(wdUrl);
+  eq(unpub?.result, 'expired', 'Workday 403 S22 -> expired (unpublished, not a refusal to answer)');
+  eq(unpub?.code, 'workday_api_unpublished', 'the unpublished verdict is coded distinctly from a 404');
+
+  // A WAF or CDN block is also a 403 — but it arrives as HTML, so the content
+  // type has to hold before the status is read as an answer about the posting.
+  stubFetch([
+    ['myworkdayjobs.com', () => ({
+      status: 403,
+      url: '',
+      headers: { get: () => 'text/html' },
+      json: async () => ({ errorCode: 'S22' }),
+      text: async () => '<html>Access Denied</html>',
+    })],
+  ]);
+  eq(await checkLivenessViaApi(wdUrl), null, 'Workday 403 serving HTML (WAF/CDN block) -> null, NOT expired');
+
+  // Any other Workday refusal stays inconclusive.
+  stubFetch([['myworkdayjobs.com', jsonRes(403, { errorCode: 'S99', message: 'something else' })]]);
+  eq(await checkLivenessViaApi(wdUrl), null, 'Workday 403 with an unrecognized errorCode -> null');
+
+  // And the default for every other provider is unchanged: no interpretOther,
+  // no verdict.
+  stubFetch([['icims.com', res(403)]]);
+  eq(await checkLivenessViaApi('https://careers-peraton.icims.com/jobs/169611/x/job'), null, 'a provider without interpretOther still returns null on 403');
+} finally {
+  globalThis.fetch = realFetch2;
+}
