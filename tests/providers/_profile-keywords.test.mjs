@@ -1,11 +1,14 @@
 // tests/providers/_profile-keywords.test.mjs
-import { writeFileSync, mkdtempSync } from 'fs';
+import { writeFileSync, mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { pass, fail, ROOT } from '../helpers.mjs';
 import { pathToFileURL } from 'url';
 
 console.log('\nProvider helper — _profile-keywords');
+
+// Hoisted so the finally below removes it even if an assertion throws.
+let tmp = null;
 
 try {
   const mod = await import(pathToFileURL(join(ROOT, 'providers/_profile-keywords.mjs')).href);
@@ -39,7 +42,7 @@ try {
     fail('profileTargetKeywords should return [] for a profile with no target_roles');
   }
 
-  const tmp = mkdtempSync(join(tmpdir(), 'career-ops-profile-keywords-'));
+  tmp = mkdtempSync(join(tmpdir(), 'career-ops-profile-keywords-'));
   const profilePath = join(tmp, 'profile.yml');
   writeFileSync(profilePath, [
     'target_roles:',
@@ -72,4 +75,6 @@ try {
   }
 } catch (e) {
   fail(`_profile-keywords tests crashed: ${e.message}`);
+} finally {
+  if (tmp) rmSync(tmp, { recursive: true, force: true });
 }
