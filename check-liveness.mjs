@@ -40,13 +40,17 @@ async function main() {
   // Confirmed expiries are appended to data/expired-jobs.md so a dead posting
   // leaves a human-legible trace. --no-log suppresses that (one-off spot checks).
   const noLog = args.includes('--no-log');
+  // --api-only: skip anything the API rung can't answer instead of falling back
+  // to the browser. A routine sweep of the whole pending list this way costs no
+  // tokens and no browser time; the URLs it skips are reported, not guessed at.
+  const apiOnly = args.includes('--api-only');
   const throttleArg = args.find((a) => a === '--throttle' || a.startsWith('--throttle='));
   const throttleBaseMs = throttleArg ? (Number(throttleArg.split('=')[1]) || 5000) : 0;
-  const positional = args.filter((a) => a !== '--no-fallback' && a !== '--no-log' && a !== throttleArg);
+  const positional = args.filter((a) => a !== '--no-fallback' && a !== '--no-log' && a !== '--api-only' && a !== throttleArg);
 
   if (positional.length === 0) {
-    console.error('Usage: node check-liveness.mjs [--no-fallback] [--no-log] [--throttle[=ms]] <url1> [url2] ...');
-    console.error('       node check-liveness.mjs [--no-fallback] [--no-log] [--throttle[=ms]] --file urls.txt');
+    console.error('Usage: node check-liveness.mjs [--no-fallback] [--no-log] [--api-only] [--throttle[=ms]] <url1> [url2] ...');
+    console.error('       node check-liveness.mjs [--no-fallback] [--no-log] [--api-only] [--throttle[=ms]] --file urls.txt');
     process.exit(1);
   }
 
@@ -59,7 +63,8 @@ async function main() {
   }
 
   const notes = [
-    noFallback ? null : 'headed fallback on challenge',
+    apiOnly ? 'API only, no browser' : null,
+    noFallback || apiOnly ? null : 'headed fallback on challenge',
     throttleBaseMs ? `throttle ~${throttleBaseMs / 1000}-${(throttleBaseMs * 2) / 1000}s` : null,
   ].filter(Boolean);
   console.log(`Checking ${urls.length} URL(s)...${notes.length ? ` (${notes.join(', ')})` : ''}\n`);
@@ -74,7 +79,7 @@ async function main() {
     headed = noFallback ? null : createHeadedPageProvider(chromium);
   }
 
-  let active = 0, expired = 0, uncertain = 0, viaApi = 0;
+  let active = 0, expired = 0, uncertain = 0, viaApi = 0, skipped = 0;
   const expiredEntries = [];
 
   // Sequential — project rule: never Playwright in parallel
@@ -87,6 +92,12 @@ async function main() {
     if (api) {
       ({ result, reason, code } = api);
       viaApi++;
+    } else if (apiOnly) {
+      // No authoritative answer and no browser allowed. Report it as skipped
+      // rather than guessing — an unanswered URL is not evidence of anything.
+      console.log(`➖ skipped    (no API) ${url}`);
+      skipped++;
+      continue;
     } else {
       // Rung 2: Playwright — handles non-ATS pages and inconclusive API results.
       await ensureBrowser();
@@ -119,7 +130,8 @@ async function main() {
     if (log.added > 0) console.log(`\n📓 logged ${log.added} expired posting(s) to data/expired-jobs.md`);
   }
 
-  console.log(`\nResults: ${active} active  ${expired} expired  ${uncertain} uncertain  (${viaApi} via API, no browser)`);
+  const skippedNote = skipped ? `  ${skipped} skipped (no API coverage)` : '';
+  console.log(`\nResults: ${active} active  ${expired} expired  ${uncertain} uncertain${skippedNote}  (${viaApi} via API, no browser)`);
   if (expired > 0 || uncertain > 0) process.exit(1);
 }
 
