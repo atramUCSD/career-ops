@@ -503,10 +503,22 @@ function gitTimeoutEnvVar(args) {
   return args[0] === 'fetch' ? 'CAREER_OPS_GIT_FETCH_TIMEOUT_MS' : 'CAREER_OPS_GIT_TIMEOUT_MS';
 }
 
+// Ambient `core.fsmonitor=true` (common on Windows) makes the first git command
+// in a repo spawn a daemon and print "starting fsmonitor-daemon in '<path>'" on
+// STDOUT, which lands in front of the real output — `git ls-files -s` then parses
+// as mode "starting" and the caller silently reads the wrong thing (#skill-modes).
+// The daemon also keeps a handle on the repo directory, so temp fixtures fail to
+// rmdir with EBUSY. This tool's git calls are short and one-shot, so the monitor
+// buys nothing: turn it off per invocation rather than filtering its banner out.
+// Both knobs are needed: Git for Windows ships a system-level
+// `core.useBuiltinFSMonitor=true`, the pre-2.37 name, which setting
+// `core.fsmonitor` alone does not override.
+const GIT_NO_FSMONITOR = ['-c', 'core.fsmonitor=false', '-c', 'core.useBuiltinFSMonitor=false'];
+
 export function gitIn(root, ...args) {
   const timeout = gitTimeoutMs(args);
   try {
-    return execFileSync('git', args, { cwd: root, encoding: 'utf-8', timeout }).trim();
+    return execFileSync('git', [...GIT_NO_FSMONITOR, ...args], { cwd: root, encoding: 'utf-8', timeout }).trim();
   } catch (err) {
     if (isTimeoutLikeError(err)) {
       throw new Error(`${describeGitCommand(args)} timed out after ${timeoutSeconds(timeout)}s. If your network is slow, retry or set ${gitTimeoutEnvVar(args)} to a larger value.`);
@@ -532,7 +544,7 @@ function git(...args) {
 function gitQuiet(...args) {
   const timeout = gitTimeoutMs(args);
   try {
-    return execFileSync('git', args, {
+    return execFileSync('git', [...GIT_NO_FSMONITOR, ...args], {
       cwd: ROOT, encoding: 'utf-8', timeout, stdio: ['pipe', 'pipe', 'pipe'],
     }).trim();
   } catch (err) {
