@@ -92,17 +92,35 @@ const CONCURRENCY = 10;
 
 // ── Title filter ────────────────────────────────────────────────────
 
-// Compile a lowercased keyword into a matcher. Short all-letter acronyms
-// (2-3 chars: cfo, coo, sdr, bdr, gsi…) match on WORD BOUNDARIES so "COO" no
-// longer matches "Coordinator", "SDR" no longer matches anything mid-word, etc.
-// Multi-word phrases and keywords containing non-letters (".NET", "SAP ",
-// "L&D") keep fast, permissive substring matching.
+// Compile a keyword into a matcher. Two forms match on WORD BOUNDARIES:
+//
+//   1. Short all-letter acronyms (2-3 chars: cfo, coo, sdr, bdr, gsi…), so
+//      "COO" no longer matches "Coordinator" and "SDR" no longer matches
+//      anything mid-word.
+//   2. Any keyword WRITTEN WITH PADDING in the config — "Java ", "RF ", "SAP ".
+//      The padding was always the config author's way of saying "the bare word,
+//      not a prefix", but the call sites used to `.trim()` before calling here,
+//      so "Java " arrived as "java" and matched "javascript" as a plain
+//      substring. That silently nullified the "JavaScript" title_filter.positive
+//      for as long as both keywords coexisted (found 2026-08-23: every
+//      JavaScript-titled posting was being rejected by the Java negative). A
+//      boundary match is what the padding meant — it still rejects "Java
+//      Developer" and "Java-based", and no longer eats JavaScript.
+//
+// Everything else — multi-word phrases and keywords containing non-letters
+// (".NET", "L&D", "Front-End") — keeps fast, permissive substring matching.
+//
+// Trimming and lowercasing happen HERE, not at the call sites, so the padding
+// survives long enough to be read.
 export function compileKeyword(kw) {
-  if (/^[a-z]{2,3}$/.test(kw)) {
-    const re = new RegExp(`\\b${kw}\\b`);
+  const raw = String(kw).toLowerCase();
+  const padded = /^\s|\s$/.test(raw);
+  const bare = raw.trim();
+  if (padded || /^[a-z]{2,3}$/.test(bare)) {
+    const re = new RegExp(`\\b${bare.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
     return (lower) => re.test(lower);
   }
-  return (lower) => lower.includes(kw);
+  return (lower) => lower.includes(bare);
 }
 
 export function buildTitleFilter(titleFilter) {
@@ -110,8 +128,7 @@ export function buildTitleFilter(titleFilter) {
   // non-string entry in the YAML) must not crash the scan via k.toLowerCase().
   const normalize = (arr) => (Array.isArray(arr) ? arr : [])
     .filter(k => typeof k === 'string')
-    .map(k => k.trim().toLowerCase())
-    .filter(k => k.length > 0)
+    .filter(k => k.trim().length > 0)
     .map(compileKeyword);
   const positive = normalize(titleFilter?.positive);
   const negative = normalize(titleFilter?.negative);
@@ -134,7 +151,7 @@ function compiledPositiveMatchers(positiveList) {
   if (compiledPositiveCache.has(positiveList)) return compiledPositiveCache.get(positiveList);
   const compiled = positiveList
     .filter(k => typeof k === 'string' && k.trim().length > 0)
-    .map(k => ({ raw: k, match: compileKeyword(k.trim().toLowerCase()) }));
+    .map(k => ({ raw: k, match: compileKeyword(k) }));
   compiledPositiveCache.set(positiveList, compiled);
   return compiled;
 }
