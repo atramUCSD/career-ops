@@ -61,7 +61,10 @@
  * @property {string}             [api]            JSON API URL; used directly by greenhouse/ashby providers.
  * @property {string}             [provider]       Explicit provider id — bypasses detect().
  * @property {('http')}           [transport]      Default: 'http'. Reserved for future transports.
- * @property {number}             [max_pages]      Provider-specific pagination cap (avature, workday).
+ * @property {number}             [max_pages]      Provider-specific pagination cap (avature, workday, eightfold).
+ * @property {string[]}           [queries]        eightfold only: replaces the provider's default query terms for
+ *                                                 this tenant. PCSX has no list-everything mode, so board coverage
+ *                                                 is the union of a set of searches.
  * @property {string}             [offset_param]   avature only: pins the pagination query key and disables the
  *                                                 provider's jobOffset→offset self-heal. Rarely needed — an
  *                                                 escape hatch for a tenant the auto-switch can't resolve.
