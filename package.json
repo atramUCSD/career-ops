@@ -63,7 +63,11 @@
     "build:dashboard": "node build-dashboard.mjs",
     "serve:dashboard": "cd dashboard && go run . --path ..",
     "postinstall": "npx playwright install chromium --with-deps || npx playwright install chromium --with-deps",
-    "manifesto": "node manifesto.mjs"
+    "manifesto": "node manifesto.mjs",
+    "build:artifact": "node build-artifact.mjs",
+    "alert": "node notify-email.mjs",
+    "alert:dry": "node notify-email.mjs --dry-run",
+    "alert:seed": "node notify-email.mjs --seed"
   },
   "keywords": [
     "ai",

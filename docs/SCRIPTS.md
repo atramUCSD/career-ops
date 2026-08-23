@@ -562,6 +562,62 @@ Pruned entries move to "Processed" with the reason on the line, keeping the plai
 
 ---
 
+## callback-score
+
+`callback-score.mjs` computes the reply-odds column the artifact renders: a 0-100 prior on whether a posting produces a recruiter reply or interview email. It is not a fit score — fit is the A-G rubric, model-judged and downstream — and it is not a filter, since every posting stays visible and applicable at any number.
+
+Eight signals move a base of 50, each capped: role-family fit against `config/profile.yml` archetypes (14), seniority alignment (16), keyword evidence (8), posting freshness (18), corridor segment as an applicant-pool proxy (12), employer posting volume (6), repost pattern (8), and provider trust when present (10). Keyword evidence is deliberately the second-smallest cap so the column cannot be inflated by adding broad positives to `portals.yml`.
+
+No protected characteristic is an input and none is inferable from one. Location is read as a proxy for how many people are competing for a requisition, never as a statement about an applicant.
+
+The weights are hand-set priors, not trained. `calibrate()` reports the observed reply rate per band as soon as `data/applications.md` carries outcomes; until then the page states plainly that the prior is uncalibrated.
+
+---
+
+## build-artifact
+
+`build-artifact.mjs` renders the pending pipeline as one self-contained HTML page — every pending posting, the role family that claimed it, the title keyword that admitted it, posting age against the configured scan window, and a configuration panel carrying keyword yield, pruned postings and retired postings.
+
+```bash
+node build-artifact.mjs                       # writes output/pipeline-artifact.html
+node build-artifact.mjs --out /tmp/page.html  # anywhere else
+```
+
+Each row also carries a reply-odds score from `callback-score.mjs` (below), sorted highest first by default. The page is a build output, never hand-edited: rows come from `data/pipeline.md` through `swarm.mjs`'s parser, lanes from `config/lanes.yml`, posting dates and trust scores from `data/scan-history.tsv`, scores and status from `data/applications.md`, and the panel from `data/expired-jobs.md` plus `data/discard.log`. Freshness bands derive from `max_posting_age_days` in `portals.yml`, so the page cannot disagree with the scanner about what counts as stale. No network access and no model calls — regenerate it after any scan.
+
+---
+
+## notify-email
+
+`notify-email.mjs` mails a diff of the pipeline to one address on a schedule. It sends what changed since the last alert — never a dump of the whole pending list — and a run with nothing new sends no mail at all.
+
+```bash
+node notify-email.mjs --seed      # mark the current pipeline known, send nothing
+node notify-email.mjs --dry-run   # write output/alert-preview.eml, send nothing
+node notify-email.mjs             # send
+node notify-email.mjs --to a@b.c  # override the configured recipient
+```
+
+New postings at or above `min_reply_odds`, plus known postings that have since reached the top reply-odds band, go into an inline-styled table in the message body; `output/pipeline-artifact.html` rides along as an attachment, because mail clients strip the page's script and CSS and it cannot render in an inbox. Settings live in `config/alerts.yml` (gitignored; copy `config/alerts.example.yml`); credentials come from `.env` via `gmail-send.mjs`, which does OAuth refresh and `messages/send` and nothing else.
+
+Seen/strong URL state lives in `data/alert-state.json` and is written **only** after Gmail returns 2xx, so a failed send re-alerts on the next run rather than silently swallowing a day of postings. Seed once before the first real send, or that mail reports the entire existing backlog. See [ALERTS.md](ALERTS.md) for the send-scoped token and Task Scheduler registration.
+
+---
+
+## swarm
+
+`swarm.mjs` chains the triage scripts into one resumable sequence — liveness sweep, prune, then classify every surviving pending row into a role family ("lane") and print which ones fit this run's evaluation budget. See [SWARM.md](SWARM.md) for the full design, including the Playwright boundary and how a lane is registered.
+
+```bash
+node swarm.mjs --dry-run --max-evals 8   # print the plan; write nothing
+node swarm.mjs --stale 90                # sweep, prune, then plan
+node swarm.mjs --check-lanes             # report lane registration drift, exit 1 on error
+```
+
+Lanes live in `config/lanes.yml` (gitignored; copy `config/lanes.example.yml`). A lane's `title_keywords` must be byte-identical to entries in `portals.yml` → `title_filter.positive`, and its `archetype` must appear in `modes/_profile.md`, `modes/_shared.md`, `batch/batch-prompt.md` and `config/profile.yml`. `--check-lanes` reports every place it is missing and never edits a file. Nothing in a swarm run submits an application.
+
+---
+
 ## scan
 
 Zero-token portal scanner. Runs configured local parsers for SSR/static career pages and hits ATS APIs (Greenhouse, Ashby, Lever) directly — no LLM tokens consumed. Reads `portals.yml` for target companies, outputs matching listings to stdout, and optionally appends to `data/pipeline.md`.
