@@ -7,6 +7,7 @@ console.log('\ncallback-score — response-likelihood prior');
 
 const profile = {
   target_roles: {
+    primary: ['Front End Engineer', 'Software Engineer (UI/UX)'],
     archetypes: [
       { name: 'UI/UX Software Engineer', level: 'Mid-Senior', fit: 'primary' },
       { name: 'Developer Relations / Developer Advocate', level: 'Mid-Senior', fit: 'secondary' },
@@ -116,3 +117,49 @@ worst.score >= 0 && best.score <= 100 && worst.score < best.score
 bandOf(90) === 'strong' && bandOf(60) === 'likely' && bandOf(50) === 'even' && bandOf(10) === 'low'
   ? pass('bands map as documented')
   : fail('band thresholds are wrong');
+
+// ── an unclassified posting must not be scored as a target role ──────────────
+// "core" is the catch-all for everything the lanes did not claim. Awarding it
+// primary fit put an unearned +14 under three quarters of the pipeline and let
+// a Cloud Solutions Architect req outrank the target families.
+
+const unknownTitle = score(row({ t: 'Cloud Solutions Architect' }));
+unknownTitle.signals.find(s => s.id === 'fit') === undefined
+  ? pass('a title matching no target role contributes no fit points at all')
+  : fail(`unrecognised title still scored fit: ${JSON.stringify(unknownTitle.signals.find(s => s.id === 'fit'))}`);
+
+score(row({ t: 'Front End Engineer' })).score > unknownTitle.score
+  ? pass('a North Star title outscores an unrecognised one at equal freshness')
+  : fail('title matching does not separate target roles from strangers');
+
+// The profile says "Front End Engineer"; postings say "Frontend Engineer".
+score(row({ t: 'Frontend Engineer' })).signals.find(s => s.id === 'fit')?.delta === 14
+  ? pass('spacing variants of a North Star title still match')
+  : fail('"Frontend" did not match "Front End"');
+
+score(row({ t: 'Staff UI/UX Software Engineer' })).signals.find(s => s.id === 'fit')?.delta === 14
+  ? pass('an archetype name inside a longer title matches')
+  : fail('archetype substring match failed');
+
+score(row({ t: 'Developer Advocate', lane: 'devrel' })).score > unknownTitle.score
+  ? pass('a lane-registered posting outranks an unclassified one')
+  : fail('lane classification lost to the catch-all');
+
+// ── geography ────────────────────────────────────────────────────────────────
+// The corridor in profile.yml names San Jose / Peninsula / San Francisco, so a
+// Bay Area req carries no relocation objection and sits in the deepest market
+// for these families. It must not be penalised against the home metro.
+
+const sd = score(row({ seg: 'San Diego' })), bay = score(row({ seg: 'Bay Area' }));
+bay.score === sd.score
+  ? pass('Bay Area and San Diego are weighted evenly inside the corridor')
+  : fail(`corridor segments disagree: SD ${sd.score} vs Bay ${bay.score}`);
+
+sd.score > score(row({ seg: 'Remote' })).score && sd.score > score(row({ seg: 'Other / unknown' })).score
+  ? pass('in-corridor still beats remote and out-of-corridor')
+  : fail('corridor no longer beats a national pool');
+
+// Geography plus freshness must not alone carry a stranger into the top band.
+score(row({ t: 'Cloud Solutions Architect', seg: 'San Diego', age: 1 })).band !== 'strong'
+  ? pass('an unrecognised local posting cannot reach the strong band on geography alone')
+  : fail('an unrecognised local posting still reaches the strong band');

@@ -97,11 +97,19 @@ function levelScore(title, targetLevel) {
  * out-of-market req carries a relocation objection the recruiter has to spend
  * effort on. It is about competition and logistics, never about the candidate.
  */
+// Rebalanced 2026-08-23. The Bay Area penalty was wrong on this signal's own
+// terms: profile.yml's relocation_corridor names San Jose / Peninsula / San
+// Francisco explicitly, so a Bay Area req carries no relocation objection to
+// spend effort on — and it is where the density of these role families
+// actually is. San Diego keeps an edge for being the home metro with a thin
+// local pool, but +10 was letting geography alone carry a row into the top
+// band, which is what surfaced unrecognised local titles above target-family
+// work elsewhere in the corridor.
 const POOL = {
-  'San Diego': { delta: 10, why: 'home metro — small local pool, no relocation question' },
+  'San Diego': { delta: 6, why: 'home metro — thin local pool, no relocation question' },
+  'Bay Area': { delta: 6, why: 'in corridor — deepest market for these families' },
   'OC / LA': { delta: 5, why: 'drivable — regional pool' },
   'Central Coast': { delta: 5, why: 'drivable — regional pool' },
-  'Bay Area': { delta: -4, why: 'deep local supply, relocation implied' },
   Remote: { delta: -12, why: 'remote — national applicant pool' },
   'Other / unknown': { delta: -6, why: 'out of corridor — relocation objection' },
 };
@@ -134,6 +142,32 @@ export function buildScorer({ profile = {}, lanes = [], rows = [], history = [] 
   const targetLevel = (profile.target_roles?.archetypes || [])[0]?.level || 'Mid-Senior';
   const fitByLane = new Map(lanes.map(l => [l.id, fitByArchetype.get(l.archetype) || 'secondary']));
 
+  // Title matching for core rows. Built from the profile's own words — the
+  // North Star titles in target_roles.primary and the archetype names — so
+  // adding a target role here is the only place a family is declared.
+  // Deliberately substring, not fuzzy: "Senior Front End Engineer" must match
+  // "Front End Engineer", while "Cloud Solutions Architect" must not match
+  // anything. A vaguer matcher would reintroduce the bug it exists to fix.
+  const norm = s => String(s || '').toLowerCase().replace(/[^a-z]+/g, ' ').trim();
+  const primaryTitles = (profile.target_roles?.primary || []).map(norm).filter(Boolean);
+  const archetypeTitles = [...fitByArchetype.entries()]
+    .map(([name, fit]) => ({ needle: norm(name.split('(')[0]), fit }))
+    .filter(a => a.needle);
+
+  // Compared with spaces stripped as well as with them: the profile says
+  // "Front End Engineer" and postings say "Frontend Engineer". Matching only
+  // the spaced form would miss one of the North Star titles outright.
+  const squash = s => s.replace(/ /g, '');
+  function coreFit(title) {
+    const t = norm(title);
+    if (!t) return 'unmatched';
+    const ts = squash(t);
+    const hits = p => t.includes(p) || ts.includes(squash(p));
+    if (primaryTitles.some(hits)) return 'primary';
+    const hit = archetypeTitles.find(a => hits(a.needle));
+    return hit ? hit.fit : 'unmatched';
+  }
+
   const openReqs = new Map();
   for (const r of rows) openReqs.set(r.c, (openReqs.get(r.c) || 0) + 1);
 
@@ -150,12 +184,18 @@ export function buildScorer({ profile = {}, lanes = [], rows = [], history = [] 
     const signals = [];
     const add = (id, delta, why) => { if (delta || why) signals.push({ id, delta, why }); };
 
-    // Core targeting keywords ARE the North Star roles, so a core row is
-    // treated as primary; a registered lane inherits the fit the profile
-    // assigned to its archetype.
-    const fit = row.lane === 'core' ? 'primary' : (fitByLane.get(row.lane) || 'secondary');
-    const fitPts = { primary: 14, secondary: 6, adjacent: -4 }[fit] ?? 0;
-    add('fit', fitPts, `${fit} family (${row.lane})`);
+    // A registered lane inherits the fit the profile assigned to its archetype.
+    // "core" is NOT a role family — it is everything the lanes did not claim,
+    // roughly three quarters of the pipeline. Awarding it primary put an
+    // unearned +14 under every unrecognised title, which is how a Cloud
+    // Solutions Architect req outranked the target families. A core row now has
+    // to earn the award by matching a named target role or archetype; an
+    // unrecognised title scores neutral, not primary.
+    const fit = row.lane === 'core' ? coreFit(row.t) : (fitByLane.get(row.lane) || 'secondary');
+    const fitPts = { primary: 14, secondary: 6, adjacent: -4, unmatched: 0 }[fit] ?? 0;
+    add('fit', fitPts, fit === 'unmatched'
+      ? 'title matches no target role'
+      : `${fit} family (${row.lane === 'core' ? 'title match' : row.lane})`);
 
     const lvl = levelScore(row.t, targetLevel);
     add('level', lvl.delta, lvl.why);
@@ -186,8 +226,12 @@ export function buildScorer({ profile = {}, lanes = [], rows = [], history = [] 
       add('trust', d, `provider trust ${row.trust}`);
     }
 
+    // An unrecognised title is capped out of the strong band: freshness plus a
+    // home-metro segment alone summed past the threshold, which is exactly the
+    // "geography carried a stranger to the top" bug. It can still rank likely.
+    const ceiling = fit === 'unmatched' ? BANDS[0].min - 1 : 100;
     const raw = BASE + signals.reduce((n, s) => n + s.delta, 0);
-    const score = Math.max(0, Math.min(100, raw));
+    const score = Math.max(0, Math.min(ceiling, raw));
     return { score, band: bandOf(score), signals: signals.filter(s => s.delta !== 0) };
   };
 }
