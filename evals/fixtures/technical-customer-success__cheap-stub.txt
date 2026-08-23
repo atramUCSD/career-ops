@@ -1,0 +1,15 @@
+[recorded fixture — candidate model "cheap-stub" output for golden case technical-customer-success]
+[Only the ---SCORE_SUMMARY--- block is parsed by eval-golden.mjs; the prose above
+it is illustrative and intentionally trimmed so fixtures stay small and reviewable.]
+
+Owns accounts through renewal, runs onboarding, configures the platform, and
+reproduces bugs before they escalate — technical customer success, not a
+relationship-only CSM. Variable comp and NRR ownership noted.
+
+---SCORE_SUMMARY---
+COMPANY: Verrill Systems
+ROLE: Technical Customer Success Manager, Enterprise
+SCORE: 3.6
+ARCHETYPE: Technical Customer Success Manager
+LEGITIMACY: High Confidence
+---END_SUMMARY---
