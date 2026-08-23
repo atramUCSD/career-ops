@@ -148,3 +148,7 @@ plan/
 
 # Personal data exports (GitHub/LinkedIn archives) — never commit
 github-export-data/
+
+# Vendored skill trees — installed from skills-lock.json, not carried in the repo
+.agents/skills/
+.claude/skills/
