@@ -115,6 +115,10 @@ Classify the role as one or two closest archetypes:
 | Developer Relations / Developer Advocate | Community, developer experience, docs, talks, sample apps | Someone who writes the code and can teach it publicly |
 | Technical Customer Success Manager | Onboarding, adoption, advanced configuration, retention | A CSM who can debug the deployment instead of escalating it |
 | GTM Engineer | Sales/marketing automation, CRM and data plumbing, internal tools | An engineer who owns revenue tooling end to end |
+| UI/UX Software Engineer | Accessibility, usability, design systems, shipping the interface | Someone who designs the interface and implements it |
+| Front End / Web Engineer | React/Angular, TypeScript, CSS, responsive web | A front-end engineer with real design judgment |
+| Product Designer | Research, wireframing, prototyping, design systems, Figma | A designer who understands the engineering constraints |
+| ServiceNow / Enterprise Platform Engineer | Service Portal, ITSM, low-code, Salesforce, Power Platform | Platform-specific experience that takes most hires a year to build |
 
 Frame the candidate as a technical builder whose positioning adapts to the role. The truth stays the same; the emphasis changes.
 

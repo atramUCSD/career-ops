@@ -156,11 +156,15 @@ Classify every offer into one of these types (or hybrid of 2):
 | Agentic / Automation | "agent", "HITL", "orchestration", "workflow", "multi-agent" |
 | Technical AI PM | "PRD", "roadmap", "discovery", "stakeholder", "product manager" |
 | AI Solutions Architect | "architecture", "enterprise", "integration", "design", "systems" |
-| AI Forward Deployed | "client-facing", "deploy", "prototype", "fast delivery", "field" |
+| AI Forward Deployed Engineer | "client-facing", "deploy", "prototype", "fast delivery", "field" |
 | AI Transformation | "change management", "adoption", "enablement", "transformation" |
 | Developer Relations / Developer Advocate | "community", "developer experience", "documentation", "evangelism", "conference talks", "sample apps" |
 | Technical Customer Success Manager | "onboarding", "adoption", "renewal", "escalation", "trusted advisor", "technical account" |
 | GTM Engineer | "go-to-market", "RevOps", "CRM", "enrichment", "sales automation", "internal tooling" |
+| UI/UX Software Engineer | "accessibility", "WCAG", "Figma", "usability", "design system", "user research", "interface" |
+| Front End / Web Engineer | "React", "Angular", "TypeScript", "CSS", "responsive", "component", "browser" |
+| Product Designer | "wireframe", "prototype", "design system", "user research", "interaction", "Figma" |
+| ServiceNow / Enterprise Platform Engineer | "ServiceNow", "Service Portal", "ITSM", "low-code", "Salesforce", "Power Platform", "configuration" |
 
 After detecting archetype, read `modes/_profile.md` for the user's specific framing and proof points for that archetype.
 
