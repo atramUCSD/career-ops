@@ -55,6 +55,10 @@ writing-samples/*
 
 # User config and customization (never auto-updated)
 config/profile.yml
+config/lanes.yml
+config/alerts.yml
+data/alert-state.json
+output/alert-preview.eml
 config/cv-facts.json
 config/benchmarks.yml
 portals.yml

@@ -158,6 +158,9 @@ Classify every offer into one of these types (or hybrid of 2):
 | AI Solutions Architect | "architecture", "enterprise", "integration", "design", "systems" |
 | AI Forward Deployed | "client-facing", "deploy", "prototype", "fast delivery", "field" |
 | AI Transformation | "change management", "adoption", "enablement", "transformation" |
+| Developer Relations / Developer Advocate | "community", "developer experience", "documentation", "evangelism", "conference talks", "sample apps" |
+| Technical Customer Success Manager | "onboarding", "adoption", "renewal", "escalation", "trusted advisor", "technical account" |
+| GTM Engineer | "go-to-market", "RevOps", "CRM", "enrichment", "sales automation", "internal tooling" |
 
 After detecting archetype, read `modes/_profile.md` for the user's specific framing and proof points for that archetype.
 
@@ -211,6 +214,10 @@ A mode may tell you to run work in a background subagent (e.g. `scan`, or parall
 - It MUST NOT spawn further subagents, and MUST NOT invoke other skills — especially open-ended or recursive research skills (e.g. a `deep-research` skill). Those fan out into nested agents and can burn tens of millions of tokens on one run.
 - Company, role, and compensation research is ALWAYS done **inline**, with the small explicit set of WebSearch/WebFetch queries the mode names (e.g. `oferta` Blocks C/D) — never delegated to a recursive research harness.
 - One `/career-ops <JD>` evaluates one role; it must never explode into a self-replicating swarm of agents. If you are about to delegate research or nest agents, stop and do it inline, bounded.
+
+**Deterministic conductors are exempt; agents are not.** `batch/batch-runner.sh` and `swarm.mjs` are scripts, not agents: the number of workers and what each one sees is decided by code and capped by a flag the user typed. Every worker they dispatch is still a single-pass worker under every rule above — no nested subagents, no skills, research inline. The rule this section exists to enforce is that **no agent may decide to spawn agents**; a script may.
+
+The conductor is also the only process in a swarm run that may hold a browser. Workers are launched with `--strict-mcp-config` and no MCP servers (`batch-runner.sh`, issue #506), so the "NEVER 2+ agents with Playwright in parallel" rule above is satisfied by construction rather than by convention: anything needing a rendered page is fetched serially by the conductor and handed to the worker as a file.
 
 ### Time-to-offer priority
 - Working demo + metrics > perfection

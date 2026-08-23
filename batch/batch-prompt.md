@@ -112,6 +112,9 @@ Classify the role as one or two closest archetypes:
 | AI Solutions Architect | Hyperautomation, enterprise, integrations | Someone who designs AI systems end to end |
 | AI Forward Deployed Engineer | Client-facing delivery, prototyping, deployment | Someone who delivers AI solutions for customers quickly |
 | AI Transformation Lead | Change management, adoption, enablement | Someone who leads AI adoption across an organization |
+| Developer Relations / Developer Advocate | Community, developer experience, docs, talks, sample apps | Someone who writes the code and can teach it publicly |
+| Technical Customer Success Manager | Onboarding, adoption, advanced configuration, retention | A CSM who can debug the deployment instead of escalating it |
+| GTM Engineer | Sales/marketing automation, CRM and data plumbing, internal tools | An engineer who owns revenue tooling end to end |
 
 Frame the candidate as a technical builder whose positioning adapts to the role. The truth stays the same; the emphasis changes.
 
