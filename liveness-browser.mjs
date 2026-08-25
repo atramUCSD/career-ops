@@ -5,11 +5,15 @@
  * Returns the same shape as classifyLiveness: { result, reason }.
  */
 
-import { classifyLiveness } from './liveness-core.mjs';
+import { classifyLiveness, MIN_CONTENT_CHARS } from './liveness-core.mjs';
 import { BROWSER_LIKE_USER_AGENT } from './user-agent.mjs';
 
 const NAVIGATE_TIMEOUT_MS = 15_000;
 const HYDRATION_WAIT_MS = 2_000;
+// Extra budget for a page that is still under the content floor after the first
+// settle, re-read every HYDRATION_RETRY_MS until it clears or the budget ends.
+const HYDRATION_RETRY_MS = 2_000;
+const HYDRATION_MAX_MS = 8_000;
 
 // The default Playwright headless UA contains "HeadlessChrome", which Cloudflare
 // and similar WAFs flag — portals like pracuj.pl then serve a 403 challenge page
@@ -207,6 +211,57 @@ async function validateUrlSecurity(urlString) {
   }
 }
 
+// Runs inside the page, once per frame. Kept as a standalone function so every
+// frame gets the same collector without duplicating it in two evaluate() calls.
+function collectApplyControls() {
+  const candidates = Array.from(
+    document.querySelectorAll('a, button, input[type="submit"], input[type="button"], [role="button"]')
+  );
+
+  return candidates
+    .filter((element) => {
+      if (element.closest('nav, header, footer')) return false;
+      if (element.closest('[aria-hidden="true"]')) return false;
+
+      const style = window.getComputedStyle(element);
+      if (style.display === 'none' || style.visibility === 'hidden') return false;
+      if (!element.getClientRects().length) return false;
+
+      return Array.from(element.getClientRects()).some((rect) => rect.width > 0 && rect.height > 0);
+    })
+    .map((element) => [
+      element.innerText,
+      element.value,
+      element.getAttribute('aria-label'),
+      element.getAttribute('title'),
+    ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+}
+
+/**
+ * Fold per-frame reads into the single (bodyText, applyControls) pair the
+ * classifier expects.
+ *
+ * Some ATSs render the posting in a child frame — iCIMS is the common one: its
+ * top document is roughly 120 characters of chrome, so reading only the main
+ * frame gives `insufficient_content`, and the classifier calls a live posting
+ * expired. A false expired is the expensive error (the URL is logged dead and
+ * dedup-filtered out of every future scan), so the body is taken from whichever
+ * frame carries the most text and apply controls are pooled across all of them.
+ *
+ * Exported for unit tests; the browser-side caller is checkUrlLiveness.
+ */
+export function mergeFrameContent(perFrame = []) {
+  let bodyText = '';
+  const applyControls = [];
+  for (const frame of perFrame) {
+    const text = frame?.text ?? '';
+    if (text.length > bodyText.length) bodyText = text;
+    if (Array.isArray(frame?.controls)) applyControls.push(...frame.controls);
+  }
+  return { bodyText, applyControls };
+}
+
 export async function checkUrlLiveness(page, url, { extraSettleMs = 0 } = {}) {
   const guardError = rejectPrivateOrInvalid(url);
   if (guardError) {
@@ -244,39 +299,41 @@ export async function checkUrlLiveness(page, url, { extraSettleMs = 0 } = {}) {
     await page.waitForTimeout(HYDRATION_WAIT_MS + extraSettleMs);
 
     const finalUrl = page.url();
-    const bodyText = await page.evaluate(() => document.body?.innerText ?? '');
-    const applyControls = await page.evaluate(() => {
-      const candidates = Array.from(
-        document.querySelectorAll('a, button, input[type="submit"], input[type="button"], [role="button"]')
-      );
 
-      return candidates
-        .filter((element) => {
-          if (element.closest('nav, header, footer')) return false;
-          if (element.closest('[aria-hidden="true"]')) return false;
+    // Read every frame, not just the top document — see mergeFrameContent. A
+    // frame that navigates away mid-read throws; skip it rather than losing the
+    // whole check to one detached iframe (ad slots detach routinely).
+    const readFrames = async () => {
+      // A test double supplies `evaluate` without `frames`; read it as one frame.
+      const frames = typeof page.frames === 'function' ? page.frames() : [page];
+      const perFrame = await Promise.all(frames.map(async (frame) => {
+        try {
+          return {
+            text: await frame.evaluate(() => document.body?.innerText ?? ''),
+            controls: await frame.evaluate(collectApplyControls),
+          };
+        } catch {
+          return { text: '', controls: [] };
+        }
+      }));
+      return mergeFrameContent(perFrame);
+    };
 
-          const style = window.getComputedStyle(element);
-          if (style.display === 'none' || style.visibility === 'hidden') return false;
-          if (!element.getClientRects().length) return false;
-
-          return Array.from(element.getClientRects()).some((rect) => rect.width > 0 && rect.height > 0);
-        })
-        .map((element) => {
-          const label = [
-            element.innerText,
-            element.value,
-            element.getAttribute('aria-label'),
-            element.getAttribute('title'),
-          ]
-            .filter(Boolean)
-            .join(' ')
-            .replace(/\s+/g, ' ')
-            .trim();
-
-          return label;
-        })
-        .filter(Boolean);
-    });
+    // A page still under the content floor is far more often mid-hydration than
+    // dead: Workday and the Microsoft careers SPA routinely need more than the
+    // 2s settle, and reading them early produced `insufficient_content` on live
+    // postings — a false expired, which is logged and filters a real job out of
+    // every later scan. Re-read on a fixed cadence until the body clears the
+    // floor or the budget runs out; a genuinely gone page never fills in.
+    // Only a served page is worth waiting on: a 4xx/5xx body is already the
+    // final answer (block, challenge, or gone), so re-reading it just burns the
+    // budget on every blocked URL in a bulk run.
+    let { bodyText, applyControls } = await readFrames();
+    const worthRetrying = status > 0 && status < 400;
+    for (let waited = 0; worthRetrying && bodyText.trim().length < MIN_CONTENT_CHARS && waited < HYDRATION_MAX_MS; waited += HYDRATION_RETRY_MS) {
+      await page.waitForTimeout(HYDRATION_RETRY_MS);
+      ({ bodyText, applyControls } = await readFrames());
+    }
 
     if (page && page._blockedByGuard) {
       return { result: 'uncertain', code: page._blockedByGuard.code, reason: page._blockedByGuard.reason };
