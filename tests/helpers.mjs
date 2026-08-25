@@ -2,7 +2,7 @@
 // Moved verbatim from test-all.mjs (issue #1440); no framework by design:
 // the suite must run on a fresh clone with only Node.
 import { execFileSync } from 'child_process';
-import { existsSync } from 'fs';
+import { existsSync, rmSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -384,5 +384,32 @@ export async function captureConsoleErrors(fn) {
     return { result, errors };
   } finally {
     console.error = original;
+  }
+}
+
+/**
+ * Remove a temporary fixture directory without letting cleanup decide the
+ * suite's exit code.
+ *
+ * On Windows a git process that touched the fixture can still hold its work
+ * tree open when the test finishes — an fsmonitor daemon, an index writer that
+ * has not released its handle — and plain `rmSync` then throws EBUSY *after*
+ * every assertion has already passed. That aborts the whole run before it
+ * prints its tally, so a green suite exits 1 and reads as a failure with no
+ * failing check to point at. Retry briefly for the handle to drop, then give up
+ * quietly: what is left behind lives in the OS temp directory, which is the one
+ * place it costs nothing.
+ *
+ * For fixture teardown only. A test that asserts on removal should call rmSync
+ * directly and handle the error itself.
+ *
+ * @param {...string} dirs - Temp directories to remove.
+ * @returns {void}
+ */
+export function rmTemp(...dirs) {
+  for (const dir of dirs) {
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    } catch { /* still held by another process — the OS reclaims it */ }
   }
 }
