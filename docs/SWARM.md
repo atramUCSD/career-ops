@@ -99,8 +99,12 @@ node scan.mjs --since 180     # once, by hand, after adding a lane
 ## Seeing the pipeline
 
 ```bash
+node enrich-jd.mjs          # reads each posting and caches its facts (browser pass for what fetch cannot read)
 node build-artifact.mjs     # renders every pending row as one HTML page
 ```
+
+Run `enrich-jd.mjs` first: `build-artifact.mjs` scores rows against the facts
+it cached, and a row with no description read is capped at a title-only guess.
 
 Lanes are the page's primary axis, and each row shows the title keyword that
 admitted it — the same string the lane matched on, so the page doubles as the
@@ -112,6 +116,6 @@ audit trail for keyword noise. See [SCRIPTS.md](SCRIPTS.md#build-artifact).
 node test-all.mjs --only lanes        # classification, gates, registration drift
 node test-all.mjs --only swarm-plan     # row parsing, caps, lane interleaving
 node test-all.mjs --only artifact-build # page generation, bands, escaping
-node test-all.mjs --only callback-score # reply-odds prior: caps, geography, bounds
+node test-all.mjs --only callback-score # match prior: gates, geography, bounds
 node test-all.mjs --only notify-email # alert diff, MIME, credential handling
 ```

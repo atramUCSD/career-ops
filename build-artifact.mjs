@@ -130,6 +130,23 @@ function loadExpired(root) {
   return { count, rows };
 }
 
+/**
+ * data/jd-facts.tsv, indexed by URL — the description-derived facts the score
+ * gates and grades on. Absent until enrich-jd.mjs has run; an empty map is a
+ * supported state (every row then scores on its title family and says so).
+ */
+function loadJdFacts(root) {
+  const text = readIf(join(root, 'data/jd-facts.tsv'));
+  if (!text) return new Map();
+  const lines = text.split(/\r?\n/).filter(Boolean);
+  const cols = lines[0].split('\t');
+  return new Map(lines.slice(1).map(l => {
+    const c = l.split('\t');
+    const row = Object.fromEntries(cols.map((k, i) => [k, c[i] ?? '']));
+    return [row.url, row];
+  }));
+}
+
 function loadDiscards(root) {
   return readIf(join(root, 'data/discard.log')).split(/\r?\n/).filter(Boolean).map(l => {
     const [ts, url, reason] = l.split('\t');
@@ -181,8 +198,12 @@ export function buildModel({ root = ROOT, now = new Date() } = {}) {
   const parsed = classifyRows(parsePendingRows(pipelineText), lanes);
   const today = new Date(now.toISOString().slice(0, 10) + 'T00:00:00Z');
 
+  const jdFacts = loadJdFacts(root);
   const rows = parsed.map(r => {
     const h = history.byUrl.get(r.url);
+    // Some boards publish the location only on the rendered page, so the
+    // browser pass in enrich-jd writes it back. The pipeline row still wins.
+    const location = r.location || jdFacts.get(r.url)?.location || '';
     // The pipeline row wins; scan-history backfills the 20% with no posted date.
     const posted = r.posted || h?.posted?.slice(0, 10) || null;
     const age = posted ? Math.round((today - new Date(posted + 'T00:00:00Z')) / 864e5) : null;
@@ -191,8 +212,8 @@ export function buildModel({ root = ROOT, now = new Date() } = {}) {
       u: r.url,
       c: r.company || '—',
       t: r.title || '—',
-      l: r.location || '',
-      seg: segmentFor(r.location),
+      l: location,
+      seg: segmentFor(location),
       p: posted,
       age,
       band: bandFor(age, bands),
@@ -213,12 +234,22 @@ export function buildModel({ root = ROOT, now = new Date() } = {}) {
   const profile = existsSync(join(root, 'config/profile.yml'))
     ? yaml.load(readFileSync(join(root, 'config/profile.yml'), 'utf-8')) || {}
     : {};
-  const scoreRow = buildScorer({ profile, lanes, rows, history: history.added });
+  const scoreRow = buildScorer({ profile, lanes, rows, history: history.added, facts: jdFacts });
   for (const r of rows) {
     const s = scoreRow(r);
     r.cb = s.score;
     r.cbBand = s.band;
     r.why = s.signals;
+    if (s.gate) r.gate = s.gate;
+    // The facts the drawer shows. Only rows whose description was actually
+    // read carry one, so "no f" is exactly the unread set the chip counts.
+    const fx = jdFacts.get(r.u);
+    if (fx && fx.ok === '1') {
+      r.f = {};
+      for (const k of ['yoe', 'degree', 'clearance', 'comp_low', 'comp_high', 'remote', 'hats', 'frameworks']) {
+        if (fx[k]) r.f[k] = fx[k];
+      }
+    }
   }
 
   const laneMeta = [
@@ -244,6 +275,16 @@ export function buildModel({ root = ROOT, now = new Date() } = {}) {
     discards: loadDiscards(root),
     processed: (pipelineText.match(/^- \[x\] /gm) || []).length,
     historyAdded: history.added.length,
+    // Gate accounting is published, not implied: a rule that starts eating good
+    // reqs has to be visible on the page that applied it.
+    jd: {
+      read: rows.filter(r => jdFacts.get(r.u)?.ok === '1').length,
+      gated: rows.filter(r => r.gate).length,
+      gates: [...rows.filter(r => r.gate).reduce((m, r) => {
+        const k = r.gate.replace(/\d+/g, 'N');
+        return m.set(k, (m.get(k) || 0) + 1);
+      }, new Map())].map(([reason, n]) => ({ reason, n })).sort((a, b) => b.n - a.n),
+    },
     signals: SIGNALS,
     cbBands: BANDS.map(b => ({ id: b.id, label: b.label, min: b.min === -Infinity ? 0 : b.min })),
     calibration: calibrate(rows),
@@ -311,10 +352,46 @@ h1{font-size:clamp(28px,4.4vw,42px);line-height:1.05;margin:0;letter-spacing:-.0
 .group{display:flex;flex-direction:column;gap:7px}
 .glab{font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--text-3)}
 .chips{display:flex;flex-wrap:wrap;gap:6px}
+.scrim{position:fixed;inset:0;background:#12242c66;z-index:20}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:min(430px,92vw);z-index:21;overflow-y:auto;
+  background:var(--surface);border-left:1px solid var(--line);box-shadow:var(--shadow);padding:22px 24px 40px;
+  animation:slidein .16s ease-out}
+@keyframes slidein{from{transform:translateX(18px);opacity:.4}to{transform:none;opacity:1}}
+@media (prefers-reduced-motion:reduce){.drawer{animation:none}}
+.dwclose{position:absolute;top:14px;right:16px;background:none;border:1px solid var(--line);color:var(--text-2);
+  border-radius:6px;width:28px;height:28px;cursor:pointer;font-size:13px;line-height:1}
+.dwclose:hover{border-color:var(--accent);color:var(--text)}
+.drawer h2{font-size:15px;margin:0 6px 2px 0;padding-right:34px;line-height:1.35}
+.drawer .dwco{font-size:12.5px;color:var(--text-2);margin-bottom:14px}
+.drawer h3{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--text-3);
+  margin:22px 0 9px;font-weight:600}
+.dwtot{font-family:ui-monospace,monospace;font-size:22px;color:var(--text)}
+.dwtot .b{font-size:12px;color:var(--text-2);margin-left:8px;font-family:"Segoe UI",sans-serif}
+.dwgate{margin:12px 0 0;padding:9px 11px;border-left:3px solid var(--stale);background:var(--surface-2);
+  font-size:12.5px;color:var(--text)}
+.lad{display:grid;grid-template-columns:auto 1fr auto;gap:3px 10px;align-items:center;font-size:12px}
+.lad .lm{font-family:ui-monospace,monospace;color:var(--text-2);white-space:nowrap}
+.lad .lb{height:6px;background:var(--surface-2);border-radius:3px;overflow:hidden}
+.lad .lb i{display:block;height:100%;background:var(--accent)}
+.lad .lp{font-family:ui-monospace,monospace;color:var(--text-3);font-size:11px;white-space:nowrap}
+.lad .lw{grid-column:1/-1;color:var(--text-2);font-size:11.5px;margin:0 0 8px;line-height:1.45}
+.lad .lw b{font-weight:600;color:var(--text)}
+.dwf{display:grid;grid-template-columns:auto 1fr;gap:5px 14px;font-size:12.5px;margin:0}
+.dwf dt{color:var(--text-3)}
+.dwf dd{margin:0;color:var(--text)}
+.dwlink{display:inline-block;margin-top:20px;font-size:12.5px;color:var(--accent)}
+/* The artifact shell intercepts cross-origin clicks and asks its parent for a
+   new tab; some viewers (phone / remote control) drop that request, so the
+   drawer also prints the URL as selectable text you can long-press and copy. */
+.dwurl{margin-top:8px;font-size:11px;line-height:1.5;color:var(--text-3);word-break:break-all;user-select:all;-webkit-user-select:all}
 .chip{font-family:"Segoe UI",sans-serif;font-size:12.5px;padding:5px 11px;border:1px solid var(--line);
   border-radius:2px;background:var(--surface);color:var(--text-2);cursor:pointer;
   transition:background .13s,color .13s,border-color .13s}
 .chip:hover{border-color:var(--accent);color:var(--text)}
+.matchcell{display:block;width:100%;text-align:left;background:none;border:0;padding:0;cursor:pointer;
+  font:inherit;color:inherit;border-radius:4px}
+.matchcell:hover .cb{color:var(--accent)}
+.matchcell:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .chip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--ground);font-weight:600}
 .chip .n{font-size:11px;opacity:.72;margin-left:5px}
 .chip.lane[aria-pressed="true"]{background:var(--lc);border-color:var(--lc)}
@@ -360,8 +437,10 @@ tr[data-lane=gtm]{--lc:var(--gtm)} tr[data-lane=core]{--lc:var(--core)}
   letter-spacing:.09em;text-transform:uppercase;color:var(--text-3);margin-top:4px;white-space:nowrap}
 .cbbar{height:3px;border-radius:2px;background:var(--line);margin-top:5px;width:64px;overflow:hidden}
 .cbbar i{display:block;height:100%;background:var(--bc)}
-tr[data-cb=strong]{--bc:var(--fresh)} tr[data-cb=likely]{--bc:var(--recent)}
-tr[data-cb=even]{--bc:var(--aging)} tr[data-cb=low]{--bc:var(--none)}
+tr[data-cb=premier]{--bc:var(--fresh)} tr[data-cb=strong]{--bc:var(--recent)}
+tr[data-cb=ordinary]{--bc:var(--aging)} tr[data-cb=low]{--bc:var(--none)}
+tr[data-cb=blocked]{--bc:var(--stale)} tr[data-cb=blocked] .cb{opacity:.55}
+tr[data-cb=blocked] .role a{text-decoration-color:var(--line)}
 .wh{margin:0;padding:0;list-style:none;font-size:12px}
 .wh li{display:flex;justify-content:space-between;gap:12px;padding:2px 0;border-bottom:1px solid var(--line-soft)}
 .wh b{font-variant-numeric:tabular-nums;font-family:"Cascadia Mono",Consolas,ui-monospace,monospace;font-weight:600}
@@ -396,8 +475,9 @@ footer b{color:var(--text-2);font-weight:600}
 
 <div class="bar">
   <div class="group"><div class="glab">Role family</div><div class="chips" id="lanes"></div></div>
-  <div class="group"><div class="glab">Reply odds</div><div class="chips" id="cbbands"></div></div>
+  <div class="group"><div class="glab">Match</div><div class="chips" id="cbbands"></div></div>
   <div class="group"><div class="glab">Corridor segment</div><div class="chips" id="segs"></div></div>
+  <div class="group"><div class="glab">Coverage</div><div class="chips" id="cov"></div></div>
   <div class="group"><div class="glab">Posting age</div><select id="fsel"></select></div>
   <div class="group"><div class="glab">Company</div>
     <input list="colist" id="co" placeholder="Any company" aria-label="Filter by company"><datalist id="colist"></datalist></div>
@@ -408,7 +488,7 @@ footer b{color:var(--text-2);font-weight:600}
 <div class="tablewrap">
 <table>
   <thead><tr>
-    <th class="sortable" data-k="cb" style="padding-left:15px">Reply odds<span class="car">▼</span></th>
+    <th class="sortable" data-k="cb" style="padding-left:15px">Match<span class="car">▼</span></th>
     <th class="sortable" data-k="status">Status<span class="car">▼</span></th>
     <th class="sortable" data-k="company">Company &amp; role<span class="car">▼</span></th>
     <th class="sortable" data-k="lane">Family &amp; keyword<span class="car">▼</span></th>
@@ -422,24 +502,37 @@ footer b{color:var(--text-2);font-weight:600}
 <div class="empty" id="empty" hidden>No postings match those filters.</div>
 <div class="empty" id="more" hidden></div>
 
+<div class="scrim" id="scrim" hidden></div>
+<aside class="drawer" id="drawer" hidden role="dialog" aria-modal="true" aria-labelledby="dwtitle" tabindex="-1">
+  <button class="dwclose" id="dwclose" aria-label="Close details">&#10005;</button>
+  <div id="dwbody"></div>
+</aside>
+
 <details id="cfg">
   <summary>Scanner configuration — keyword yield, removals, retired postings</summary>
   <div class="body" id="cfgbody"></div>
 </details>
 
 <footer>
-  <p><b>What reply odds are.</b> An estimate, out of 100, that this posting produces a recruiter reply or
-  interview email — not a fit score, and not a rejection verdict. Fit is scored separately and downstream by
-  the A–G rubric. Every posting stays visible, linked and applicable at any number; a low one means the
-  evidence is thin, and on this pipeline the most common reason is that the board published no date. Hover
-  any score to see every signal that moved it and by how much.</p>
-  <p><b>It is a prior, not a prediction.</b> The weights are hand-set from published matching behaviour, not
-  trained on outcomes. They stay honest only once <span class="mono">data/applications.md</span> carries
-  replies — the panel below reports the observed reply rate per band as soon as there is one.</p>
-  <p><b>No protected characteristic is an input</b>, and none is inferable from one. The score reads title,
-  matched keywords, role family, posting age, location bucket, employer posting volume, repost pattern and
-  provider trust. Location is used as a proxy for how many people are competing for the req, never as a
-  statement about any applicant.</p>
+  <p><b>What the match number is.</b> <span class="mono">100 × eligibility × fit × timing</span>, out of 100.
+  <b>Eligibility</b> is 0 or 1 — a TS/SCI or polygraph requirement, a years-of-experience floor above 8, a
+  required doctorate, or an advertised ceiling under the walk-away makes the row a 0. <b>Fit</b> is how many
+  of the three hats the description demands — designer, developer, AI advocate — modulated by named
+  frameworks, clearance advantage, degree demand, seniority and title family. <b>Timing</b> only discounts:
+  freshness, applicant pool, employer volume, repost pattern. Hover any score to see every multiplier.</p>
+  <p><b>A 0 is not a hidden row.</b> Gated postings stay in place, stay linked, and name the rule that killed
+  them, so a rule that starts eating good reqs is visible on the page that applied it. Fit in the A–G sense is
+  still scored separately and downstream; this number decides what is worth reading, not what is worth doing.</p>
+  <p><b>Facts come from the description.</b> <span class="mono">node enrich-jd.mjs</span> fetches each posting
+  once, caches it, and reduces it to <span class="mono">data/jd-facts.tsv</span>. A posting whose description
+  could not be read is scored on its title family alone, capped below any confirmed two-hat match, and says so
+  in its own tooltip — a guess never outranks a fact.</p>
+  <p><b>It is a prior, not a prediction.</b> The weights are hand-set, not trained on outcomes. They stay
+  honest only once <span class="mono">data/applications.md</span> carries replies — the panel below reports
+  the observed reply rate per band as soon as there is one.</p>
+  <p><b>No protected characteristic is an input</b>, and none is inferable from one. The score reads the
+  posting's own text and the profile's own stated targets, clearances and comp floor. Location is used as a
+  proxy for how many people are competing for the req, never as a statement about any applicant.</p>
   <p><b>What the family column means.</b> A posting enters the pipeline because its title matched a
   <span class="mono">title_filter.positive</span> keyword in <span class="mono">portals.yml</span>. The same
   matched keyword — shown as written — is what assigns the role family, so the column below is both the
@@ -467,7 +560,9 @@ el('eyebrow').textContent =
 const dated = rows.filter(r => r.age !== null).map(r => r.age).sort((a,b)=>a-b);
 el('stats').innerHTML = [
   [rows.length, 'Pending'],
-  [rows.filter(r=>r.cbBand==='strong'||r.cbBand==='likely').length, 'Reply odds ≥58'],
+  [rows.filter(r=>r.cbBand==='premier'||r.cbBand==='strong').length, 'Match ≥42'],
+  [M.jd.gated, 'Gated to 0'],
+  [M.jd.read, 'Descriptions read'],
   [rows.filter(r=>r.lane!=='core').length, 'In a role family'],
   [rows.filter(r=>r.age!==null&&r.age<=14).length, 'Fresh ≤14d'],
   [rows.filter(r=>r.age===null).length, 'No posted date'],
@@ -507,10 +602,14 @@ function ageBar(age){
 }
 const SIGLAB = Object.fromEntries(M.signals.map(s=>[s.id,s.label]));
 const bandLabel = id => (M.cbBands.find(b=>b.id===id)||{}).label || id;
+const mults = m => (m === 0 ? 'BLOCKED' : '×' + (Math.round(m*100)/100).toFixed(2));
+rows.forEach((r,i) => { r.i = i; });
+
 function whyText(r){
-  return 'Reply odds ' + r.cb + '/100 — ' + bandLabel(r.cbBand) + '\\n'
-    + (r.why||[]).map(w=>\`\${w.delta>0?'+':''}\${w.delta}  \${SIGLAB[w.id]||w.id}: \${w.why}\`).join('\\n')
-    + '\\n\\nPrior, not a verdict. Every posting stays applicable.';
+  return 'Match ' + r.cb + '/100 — ' + bandLabel(r.cbBand) + '\\n'
+    + (r.why||[]).map(w=>\`\${mults(w.mult).padEnd(8)}\${SIGLAB[w.id]||w.id}: \${w.why}\`).join('\\n')
+    + (r.gate ? '\\n\\nGated to 0 and left visible on purpose — check the rule if this looks wrong.'
+              : '\\n\\nPrior, not a verdict. Every posting stays applicable.');
 }
 function bandColor(band){
   if (band === 'unknown') return 'var(--none)';
@@ -523,6 +622,8 @@ function render(){
     (!state.lane || r.lane === state.lane) &&
     (!state.seg  || r.seg === state.seg) &&
     (!state.cbband || r.cbBand === state.cbband) &&
+    (!state.unread || !r.f) &&
+    (state.showBlocked || state.cbband === 'blocked' || r.cbBand !== 'blocked') &&
     (!state.band || (state.band === 'unknown' ? r.age === null : r.band === state.band)) &&
     (!state.co   || r.c.toLowerCase() === state.co) &&
     (!state.q    || (r.c+' '+r.t+' '+r.l+' '+r.all.join(' ')).toLowerCase().includes(state.q))
@@ -541,12 +642,13 @@ function render(){
   el('empty').hidden = f.length > 0;
   const shown = f.slice(0, limit);
   el('rows').innerHTML = shown.map(r => \`<tr data-lane="\${r.lane}" data-cb="\${r.cbBand}">
-    <td class="stripe" style="padding-left:12px" title="\${esc(whyText(r))}">
+    <td class="stripe" style="padding-left:12px">
+      <button class="matchcell" data-i="\${r.i}" aria-label="\${esc(whyText(r))}" aria-haspopup="dialog">
       <span class="cb">\${r.cb}</span>
       <div class="cbbar"><i style="width:\${r.cb}%"></i></div>
-      <span class="cbband">\${esc(bandLabel(r.cbBand))}</span></td>
+      <span class="cbband">\${esc(bandLabel(r.cbBand))}</span></button></td>
     <td>\${r.score!==null?\`<span class="score">\${r.score.toFixed(1)}</span><br>\`:''}<span class="st">\${esc(r.status)}</span></td>
-    <td class="role"><a href="\${esc(r.u)}" target="_blank" rel="noopener"><span class="co">\${esc(r.c)}</span> — \${esc(r.t)}</a>
+    <td class="role"><a href="\${esc(r.u)}" rel="noopener"><span class="co">\${esc(r.c)}</span> — \${esc(r.t)}</a>
       <div class="loc">\${esc(r.l) || '<i>no location published</i>'}</div></td>
     <td><span class="lanetag">\${r.lane}</span><div style="margin-top:5px">\${(r.all.length?r.all:['—']).map(k=>\`<span class="kw">\${esc(k)}</span>\`).join('')}</div></td>
     <td><span class="age">\${r.age===null?'unknown':r.age+' d'}</span>
@@ -573,9 +675,83 @@ function toggler(containerId, key, attr){
     limit = PAGE; render();
   });
 }
+el('cov').innerHTML = [
+  ['unread', 'Description unread', rows.filter(r=>!r.f).length, 'title-only scoring: the posting could not be fetched'],
+  ['blocked', 'Blocked rows', rows.filter(r=>r.cbBand==='blocked').length,
+    'hidden by default — ' + M.jd.gates.map(g=>g.n+' '+g.reason).join(' · ')],
+].filter(c=>c[2]).map(([id,label,n,tip]) =>
+  \`<button class="chip" data-cov="\${id}" aria-pressed="false" title="\${esc(tip)}">\${label}<span class="n">\${n}</span></button>\`
+).join('');
+el('cov').addEventListener('click', e => {
+  const b = e.target.closest('[data-cov]');
+  if (!b) return;
+  const k = b.getAttribute('data-cov') === 'unread' ? 'unread' : 'showBlocked';
+  state[k] = !state[k];
+  b.setAttribute('aria-pressed', String(state[k]));
+  limit = PAGE; render();
+});
+
 toggler('lanes','lane','data-lane');
 toggler('segs','seg','data-seg');
 toggler('cbbands','cbband','data-cbband');
+// One drawer, reused. The row link still opens the posting; only the Match
+// cell opens this, so a click on the role never gets hijacked.
+const FACTLAB = {
+  yoe: 'Years demanded', degree: 'Degree', clearance: 'Clearance',
+  comp_low: 'Comp floor', comp_high: 'Comp ceiling', remote: 'Onsite policy',
+  hats: 'Hats demanded', frameworks: 'Frameworks named',
+};
+const money = v => '$' + Math.round(Number(v)/1000) + 'K';
+let lastTrigger = null;
+
+function openDrawer(r){
+  let run = 1;
+  const lad = (r.why||[]).map(w => {
+    run *= w.mult;
+    const pct = Math.min(100, Math.round(Math.min(w.mult,1.1)/1.1*100));
+    return \`<span class="lm">\${mults(w.mult)}</span>
+      <span class="lb"><i style="width:\${w.mult===0?100:pct}%;background:\${w.mult===0?'var(--stale)':w.mult>1?'var(--fresh)':'var(--accent)'}"></i></span>
+      <span class="lp">\${w.mult===0?'0':Math.round(run*100)}</span>
+      <span class="lw"><b>\${esc(SIGLAB[w.id]||w.id)}</b> — \${esc(w.why)}</span>\`;
+  }).join('');
+  const f = r.f || {};
+  const facts = Object.keys(f).length
+    ? Object.entries(f).map(([k,v]) => \`<dt>\${esc(FACTLAB[k]||k)}</dt><dd>\${esc(
+        k === 'comp_low' || k === 'comp_high' ? money(v) : String(v).replace(/,/g,', '))}</dd>\`).join('')
+    : '<dt>—</dt><dd>No description was read; this row is scored on its title alone.</dd>';
+  el('dwbody').innerHTML = \`
+    <h2 id="dwtitle">\${esc(r.t)}</h2>
+    <div class="dwco">\${esc(r.c)} · \${esc(r.l) || 'no location published'} · \${r.age===null?'age unknown':r.age+' days old'}</div>
+    <div class="dwtot">\${r.cb}<span class="b">/ 100 · \${esc(bandLabel(r.cbBand))}</span></div>
+    \${r.gate ? \`<p class="dwgate"><b>Gated to 0:</b> \${esc(r.gate)}. The row stays visible and stays applicable — check the rule if this looks wrong.</p>\` : ''}
+    <h3>How the number was reached</h3>
+    <div class="lad">\${lad}</div>
+    <h3>What the description said</h3>
+    <dl class="dwf">\${facts}</dl>
+    <a class="dwlink" href="\${esc(r.u)}" rel="noopener">Open the posting ↗</a>
+    <div class="dwurl" title="Tap and hold to copy">\${esc(r.u)}</div>\`;
+  el('scrim').hidden = false;
+  el('drawer').hidden = false;
+  el('drawer').focus();
+}
+function closeDrawer(){
+  el('drawer').hidden = true;
+  el('scrim').hidden = true;
+  if (lastTrigger && document.contains(lastTrigger)) lastTrigger.focus();
+  lastTrigger = null;
+}
+el('rows').addEventListener('click', e => {
+  const b = e.target.closest('.matchcell');
+  if (!b) return;
+  lastTrigger = b;
+  openDrawer(rows[Number(b.getAttribute('data-i'))]);
+});
+el('scrim').addEventListener('click', closeDrawer);
+el('dwclose').addEventListener('click', closeDrawer);
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !el('drawer').hidden) closeDrawer();
+});
+
 el('fsel').addEventListener('change', e => { state.band = e.target.value; limit = PAGE; render(); });
 el('co').addEventListener('input', e => { state.co = e.target.value.toLowerCase().trim(); limit = PAGE; render(); });
 el('q').addEventListener('input', e => { state.q = e.target.value.toLowerCase().trim(); limit = PAGE; render(); });
@@ -594,22 +770,22 @@ document.querySelector('th[data-k="cb"]').setAttribute('aria-sort','descending')
 // ---- configuration panel --------------------------------------------
 const y = M.yields;
 el('cfgbody').innerHTML = \`
-<h3>Reply-odds rubric — \${M.signals.length} signals, base \${50}</h3>
+<h3>Match rubric — 100 × eligibility × fit × timing</h3>
 <p style="color:var(--text-2);font-size:13px;margin:0 0 10px">
-  Each signal moves the score by at most the cap shown. Keyword evidence is capped at 8 on purpose: no
-  amount of keyword matching can carry a row on its own, so the column cannot be inflated by adding broad
-  positives to <span class="mono">portals.yml</span>.</p>
-<table class="mini"><thead><tr><th>Signal</th><th class="num">Cap</th><th>What it reads</th></tr></thead><tbody>
-\${M.signals.map(s=>\`<tr><td>\${esc(s.label)}</td><td class="num">±\${s.max}</td><td style="color:var(--text-3);font-size:12px">\${esc({
-  fit:'role family vs the archetypes in config/profile.yml',
-  level:'seniority words in the title vs your target level',
-  evidence:'how many portals.yml positives matched, and how specific',
-  fresh:'days since the board published it',
-  pool:'corridor segment as a proxy for how many people are applying',
-  volume:'how many reqs this employer has open in the pipeline',
-  repost:'same company and title surfaced under more than one URL',
-  trust:'provider trust score, when the scanner recorded one',
-}[s.id]||'')}</td></tr>\`).join('')}
+  Every signal is a multiplier, so the score is a product and not a sum. <b>Eligibility</b> is the only
+  one that can be zero. <b>Fit</b> is what the description demands of you; <b>timing</b> only ever
+  discounts, so no amount of freshness or geography can manufacture a match that the description does
+  not support.</p>
+<table class="mini"><thead><tr><th>Signal</th><th class="num">Range</th><th>What it reads</th></tr></thead><tbody>
+\${M.signals.map(s=>\`<tr><td>\${esc(s.label)}</td><td class="num mono">\${esc(s.range||'')}</td><td style="color:var(--text-3);font-size:12px">\${esc(s.reads||'')}</td></tr>\`).join('')}
+</tbody></table>
+<h3>Gate accounting — \${M.jd.gated} of \${M.rows.length} rows scored 0</h3>
+<p style="color:var(--text-2);font-size:13px;margin:0 0 10px">
+  A gate is a rule, and a rule that starts eating good reqs should be visible on the page that applied
+  it. Descriptions read: <b>\${M.jd.read}</b> of \${M.rows.length}. The rest are scored on their title
+  family alone and say so in their own tooltip.</p>
+<table class="mini"><thead><tr><th>Rule that fired</th><th class="num">Rows</th></tr></thead><tbody>
+\${M.jd.gates.map(g=>\`<tr><td>\${esc(g.reason)}</td><td class="num">\${g.n}</td></tr>\`).join('') || '<tr><td colspan="2">none</td></tr>'}
 </tbody></table>
 <h3>Calibration</h3>
 <p style="color:var(--text-2);font-size:13px;margin:0 0 10px">\${

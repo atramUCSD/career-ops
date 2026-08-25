@@ -64,6 +64,7 @@
     "serve:dashboard": "cd dashboard && go run . --path ..",
     "postinstall": "npx playwright install chromium --with-deps || npx playwright install chromium --with-deps",
     "manifesto": "node manifesto.mjs",
+    "enrich:jd": "node enrich-jd.mjs",
     "build:artifact": "node build-artifact.mjs",
     "alert": "node notify-email.mjs",
     "alert:dry": "node notify-email.mjs --dry-run",

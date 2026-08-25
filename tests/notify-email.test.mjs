@@ -5,7 +5,9 @@
 import { pass, fail } from './helpers.mjs';
 import {
   diffRows, subjectFor, encodeMime, toBase64Url, composeBody, composeRun, DEFAULTS,
+  BAND_COLOR,
 } from '../notify-email.mjs';
+import { BANDS } from '../callback-score.mjs';
 import { sendRaw, credentialsFrom, GmailSendError } from '../gmail-send.mjs';
 
 console.log('\nnotify-email — scheduled Gmail alert');
@@ -161,3 +163,22 @@ const sent = await sendRaw('x', {
 sent === 'm1'
   ? pass('a successful send returns the message id')
   : fail('send did not return an id');
+
+// ── band ids stay in sync with the scorer ────────────────────────────────────
+// The mailer paints and counts by band id. When callback-score renamed its
+// bands, nothing here noticed, because every fixture above supplies its own
+// band string. This is the check that catches the next rename.
+const ids = new Set(BANDS.map(b => b.id));
+const unknownColors = Object.keys(BAND_COLOR).filter(k => !ids.has(k));
+unknownColors.length === 0
+  ? pass('every band the mailer colours is a band the scorer emits')
+  : fail(`BAND_COLOR names bands the scorer does not emit: ${unknownColors.join(', ')}`);
+
+const counted = composeBody({
+  fresh: [], upgraded: [], cfg: { ...DEFAULTS },
+  model: { rows: BANDS.map(b => row({ cbBand: b.id })), expired: { count: 0 } },
+  date: '2026-08-24',
+});
+BANDS.filter(b => b.id !== 'blocked').every(b => counted.includes(b.id))
+  ? pass('the snapshot line counts the bands the scorer actually emits')
+  : fail('the snapshot line names bands that no longer exist');

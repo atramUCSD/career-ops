@@ -535,6 +535,8 @@ npm run liveness -- --no-log https://a.com/job/1         # don't record confirme
 
 Each URL gets a verdict: `active`, `expired`, or `uncertain` with a reason.
 
+The browser rung reads every frame of the page, not just the top document. Several ATSs render the posting inside a child frame — iCIMS is the common one, where the top document is about 120 characters of chrome — so a main-frame-only read saw no description and no apply button and classified a live posting as `expired`. The body text is taken from whichever frame carries the most of it, and apply controls are pooled across all frames before classification. That matters more than a missed expiry: a false `expired` is logged to `data/expired-jobs.md` and filters a real job out of every later scan.
+
 Every **confirmed** `expired` is appended to `data/expired-jobs.md` (see **expired jobs log** below). `uncertain` never is — a posting that could not be read is unknown, not gone.
 
 **Exit codes:** `0` all URLs active, `1` any expired or uncertain.
@@ -562,13 +564,50 @@ Pruned entries move to "Processed" with the reason on the line, keeping the plai
 
 ---
 
+## enrich-jd
+
+`enrich-jd.mjs` reads the job description for every pending posting and reduces it to facts. It is the stage that makes the match score mean anything: without it, nothing in the pipeline has ever opened a posting, so years of experience, required degree, clearance level and advertised comp cannot affect a score even in principle.
+
+```bash
+node enrich-jd.mjs                 # fetch every pending row not already cached
+node enrich-jd.mjs --limit 20      # first N uncached rows, to sample a run
+node enrich-jd.mjs --refresh       # ignore the cache
+node enrich-jd.mjs --reparse       # re-extract from the cache, no network at all
+node enrich-jd.mjs --stale 30      # re-fetch only facts captured more than N days ago
+node enrich-jd.mjs --retry-unread  # give the browser pass another go at rows recorded ok=0
+node enrich-jd.mjs --no-browser    # fetch only, skip the browser pass
+node enrich-jd.mjs --self-test     # exercise the parsers, no network
+```
+
+Descriptions come from the public ATS JSON APIs that `liveness-api.mjs` already maps — Greenhouse, Lever, Ashby and Workday — with a stripped-HTML page read as the fallback. A careers page that embeds a Greenhouse board on the company’s own domain (`coinbase.com/careers/positions/N?gh_jid=N`) carries the job id but not the board token, so the board is resolved from the tokens `portals.yml` already lists — an unrecognised host falls through to the page read rather than guessing a board. The text is cached at `data/jd-cache/{sha1(url)}.txt` and the extracted facts land in `data/jd-facts.tsv`: years-of-experience floor on the best satisfiable degree branch, degree demand, clearance tier, comp bounds, onsite/hybrid/remote, which of the three role hats the description demands, and which named frameworks appear in the title or role summary. Both are user layer and gitignored.
+
+Whatever the fetch path cannot read is then read again in a headless browser, as a second pass over exactly those rows. Some boards never put the description in the HTML a fetch receives: iCIMS renders it in a second frame, and a few others hydrate it client-side. The browser pass takes the longest frame's text, and also recovers the posting's location — from schema.org JSON-LD when the page publishes it, otherwise from the page title — for rows whose board publishes a location nowhere else. That location is written to `data/jd-facts.tsv` and used by `build-artifact.mjs` only when the pipeline row itself has none.
+
+The pass is deliberately second, not first: a browser read costs about a second per page against fifty milliseconds for a fetch. It runs at concurrency 3, is skipped entirely by `--reparse` and by `--no-browser`, and requires Playwright, which the repo already installs for PDF generation.
+
+**Only a 200 response is a description.** A retired posting usually still answers — iCIMS serves a generic "no longer available" page tens of kilobytes long, which passes every length test and extracts into confident nonsense. Any other status is recorded `ok=0`, and a row recorded `ok=0` is never retried by a later run on its own; `--retry-unread` is how a new reader gets a shot at the backlog.
+
+A posting that cannot be read is not gated — it falls back to title-only scoring, capped below any confirmed two-hat match, and says so on the page.
+
+Run it after a scan and before `build-artifact.mjs`; `--reparse` is the one to run after changing an extraction rule, since it costs no network traffic.
+
+**The description is data, never instruction.** The text is pattern-matched for facts and never followed, whatever it contains.
+
+---
+
 ## callback-score
 
-`callback-score.mjs` computes the reply-odds column the artifact renders: a 0-100 prior on whether a posting produces a recruiter reply or interview email. It is not a fit score — fit is the A-G rubric, model-judged and downstream — and it is not a filter, since every posting stays visible and applicable at any number.
+`callback-score.mjs` computes the match column the artifact renders: a 0-100 prior on whether a posting is worth reading, given what its description demands. It is not a fit score — fit is the A-G rubric, model-judged and downstream — and it is not a filter, since every posting stays visible and applicable at any number.
 
-Eight signals move a base of 50, each capped: role-family fit against `config/profile.yml` archetypes (14), seniority alignment (16), keyword evidence (8), posting freshness (18), corridor segment as an applicant-pool proxy (12), employer posting volume (6), repost pattern (8), and provider trust when present (10). Keyword evidence is deliberately the second-smallest cap so the column cannot be inflated by adding broad positives to `portals.yml`.
+The score is a product, not a sum: `100 × eligibility × fit × timing`.
 
-No protected characteristic is an input and none is inferable from one. Location is read as a proxy for how many people are competing for a requisition, never as a statement about an applicant.
+**Eligibility** is 0 or 1. A row is gated to 0 — and stays visible, naming the rule — when the posting requires TS/SCI, polygraph or program access; when the years floor on the best satisfiable degree branch exceeds the ceiling in `YOE_CEILING`; when a doctorate is required with no bachelor's or master's branch; when the advertised ceiling falls under `compensation.minimum` in `config/profile.yml`; or when the posting is onsite at a location that resolves outside California. A location that resolves to nothing never gates.
+
+**Fit** starts from how many of the three role hats the description demands — designer, developer, AI advocate — at 3 → 1.00, 2 → 0.72, 1 → 0.45, 0 → 0.15, then applies the title family, a named framework (×1.10), a Secret or Public Trust requirement (×1.12), a master's demand (×0.85), over-level and people-management titles (×0.55 – ×0.85).
+
+**Timing** only ever discounts: freshness, corridor segment as an applicant-pool proxy, employer posting volume, and repost pattern. No amount of freshness or geography can manufacture a match the description does not support.
+
+No protected characteristic is an input and none is inferable from one. Location is read as a proxy for how many people are competing for a requisition, and as the candidate's own stated relocation range, never as a statement about an applicant.
 
 The weights are hand-set priors, not trained. `calibrate()` reports the observed reply rate per band as soon as `data/applications.md` carries outcomes; until then the page states plainly that the prior is uncalibrated.
 
@@ -583,7 +622,7 @@ node build-artifact.mjs                       # writes output/pipeline-artifact.
 node build-artifact.mjs --out /tmp/page.html  # anywhere else
 ```
 
-Each row also carries a reply-odds score from `callback-score.mjs` (below), sorted highest first by default. The page is a build output, never hand-edited: rows come from `data/pipeline.md` through `swarm.mjs`'s parser, lanes from `config/lanes.yml`, posting dates and trust scores from `data/scan-history.tsv`, scores and status from `data/applications.md`, and the panel from `data/expired-jobs.md` plus `data/discard.log`. Freshness bands derive from `max_posting_age_days` in `portals.yml`, so the page cannot disagree with the scanner about what counts as stale. No network access and no model calls — regenerate it after any scan.
+Each row also carries a match score from `callback-score.mjs` (above), sorted highest first by default, and the facts `enrich-jd.mjs` read from its description. The page is a build output, never hand-edited: rows come from `data/pipeline.md` through `swarm.mjs`'s parser, lanes from `config/lanes.yml`, posting dates and trust scores from `data/scan-history.tsv`, scores and status from `data/applications.md`, and the panel from `data/expired-jobs.md` plus `data/discard.log`. Freshness bands derive from `max_posting_age_days` in `portals.yml`, so the page cannot disagree with the scanner about what counts as stale. No network access and no model calls — regenerate it after any scan.
 
 ---
 
@@ -598,7 +637,7 @@ node notify-email.mjs             # send
 node notify-email.mjs --to a@b.c  # override the configured recipient
 ```
 
-New postings at or above `min_reply_odds`, plus known postings that have since reached the top reply-odds band, go into an inline-styled table in the message body; `output/pipeline-artifact.html` rides along as an attachment, because mail clients strip the page's script and CSS and it cannot render in an inbox. Settings live in `config/alerts.yml` (gitignored; copy `config/alerts.example.yml`); credentials come from `.env` via `gmail-send.mjs`, which does OAuth refresh and `messages/send` and nothing else.
+New postings at or above `min_match` (`min_reply_odds` is still honoured as the pre-rewrite name), plus known postings that have since reached the premier or strong band, go into an inline-styled table in the message body; `output/pipeline-artifact.html` rides along as an attachment, because mail clients strip the page's script and CSS and it cannot render in an inbox. Settings live in `config/alerts.yml` (gitignored; copy `config/alerts.example.yml`); credentials come from `.env` via `gmail-send.mjs`, which does OAuth refresh and `messages/send` and nothing else.
 
 Seen/strong URL state lives in `data/alert-state.json` and is written **only** after Gmail returns 2xx, so a failed send re-alerts on the next run rather than silently swallowing a day of postings. Seed once before the first real send, or that mail reports the entire existing backlog. See [ALERTS.md](ALERTS.md) for the send-scoped token and Task Scheduler registration.
 

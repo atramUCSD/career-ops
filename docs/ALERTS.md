@@ -15,7 +15,7 @@ notify-email.mjs             diff against last alert → one email
 ## What arrives
 
 A diff, never a dump. The mail carries postings that are new since the last
-alert, postings that have since crossed into the top reply-odds band, and the
+alert, postings that have since reached the premier or strong match band, and the
 count of retirements. A run with nothing new sends no mail at all.
 
 Two payloads:
@@ -71,9 +71,9 @@ know about.
 schtasks /create /tn "career-ops-alert" /tr "C:\path\to\career-ops\scripts\alert.cmd" /sc daily /st 07:00 /f
 ```
 
-Daily is the right cadence: posting freshness is the heaviest signal in the
-reply-odds model (+18 at day 1 against +7 at day 10), so a day of latency is a
-real cost.
+Daily is the right cadence: freshness is the largest timing discount in the
+match model (a posting past its first weeks is scored down to ×0.60), so a day
+of latency is a real cost.
 
 Task Scheduler, not `CronCreate`. Every stage here is deterministic — putting a
 model in the loop would cost tokens and require Claude to be running.

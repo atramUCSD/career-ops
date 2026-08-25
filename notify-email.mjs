@@ -5,7 +5,7 @@
  * WHAT IT SENDS
  * A diff, never a dump. Each run compares the current pending set against
  * data/alert-state.json and reports only what is new since the last alert,
- * plus anything that has since crossed into the top reply-odds band, plus the
+ * plus anything that has since crossed into a top match band, plus the
  * postings that retired. An unchanged pipeline sends nothing.
  *
  * TWO PAYLOADS
@@ -33,6 +33,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import yaml from 'js-yaml';
 import { buildModel } from './build-artifact.mjs';
+import { BANDS } from './callback-score.mjs';
 import { sendRaw } from './gmail-send.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
@@ -41,7 +42,7 @@ const ARTIFACT_PATH = 'output/pipeline-artifact.html';
 
 export const DEFAULTS = {
   to: '',
-  min_reply_odds: 58,
+  min_match: 42,
   max_rows: 15,
   quiet_if_empty: true,
   attach_artifact: true,
@@ -52,7 +53,14 @@ export function loadConfig(root = ROOT) {
   const path = join(root, 'config/alerts.yml');
   if (!existsSync(path)) return { ...DEFAULTS };
   const parsed = yaml.load(readFileSync(path, 'utf-8')) || {};
-  return { ...DEFAULTS, ...(parsed.alerts || parsed) };
+  const cfg = { ...DEFAULTS, ...(parsed.alerts || parsed) };
+  // min_reply_odds was the pre-rewrite name on a 0-100 additive scale. An
+  // existing config keeps working rather than going quiet, but it is read as
+  // the same threshold on the new scale, so a stale 58 alerts on less.
+  if (cfg.min_reply_odds !== undefined && (parsed.alerts || parsed).min_match === undefined) {
+    cfg.min_match = cfg.min_reply_odds;
+  }
+  return cfg;
 }
 
 export function loadState(root = ROOT) {
@@ -76,20 +84,25 @@ export function saveState(state, root = ROOT) {
 
 /**
  * What changed. `fresh` is what has never been alerted; `upgraded` is a
- * previously-alerted posting that has since reached the top band — worth a
- * line, because that is the one transition the reply-odds model can make in a
- * favourable direction after a posting is already known.
+ * previously-alerted posting that has since reached a top band — worth a line,
+ * because that is the one transition the match model can make in a favourable
+ * direction after a posting is already known. A posting reaches it when its
+ * description is finally read, or when a gate that was blocking it clears.
  */
-export function diffRows(rows, state, { min_reply_odds = 0 } = {}) {
+export const TOP_BANDS = ['premier', 'strong'];
+
+export function diffRows(rows, state, { min_match = 0, min_reply_odds } = {}) {
+  const floor = min_match || min_reply_odds || 0;
   const seen = new Set(state.seen);
   const strongSeen = new Set(state.strong);
-  const fresh = rows.filter(r => !seen.has(r.u) && r.cb >= min_reply_odds);
-  const upgraded = rows.filter(r => seen.has(r.u) && r.cbBand === 'strong' && !strongSeen.has(r.u));
+  const top = r => TOP_BANDS.includes(r.cbBand);
+  const fresh = rows.filter(r => !seen.has(r.u) && r.cb >= floor);
+  const upgraded = rows.filter(r => seen.has(r.u) && top(r) && !strongSeen.has(r.u));
   // Every row considered is marked seen, including the ones below the
   // threshold. They are already on the page; re-offering them every morning
   // would train the reader to ignore the mail.
   const nextSeen = [...new Set([...state.seen, ...rows.map(r => r.u)])];
-  const nextStrong = [...new Set([...state.strong, ...rows.filter(r => r.cbBand === 'strong').map(r => r.u)])];
+  const nextStrong = [...new Set([...state.strong, ...rows.filter(top).map(r => r.u)])];
   return { fresh, upgraded, nextSeen, nextStrong };
 }
 
@@ -98,13 +111,18 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '
 export function subjectFor({ fresh, upgraded, retired, date }) {
   const parts = [];
   if (fresh.length) parts.push(`${fresh.length} new`);
-  const strong = fresh.filter(r => r.cbBand === 'strong').length + upgraded.length;
+  const strong = fresh.filter(r => TOP_BANDS.includes(r.cbBand)).length + upgraded.length;
   if (strong) parts.push(`${strong} strong`);
   if (retired) parts.push(`${retired} retired`);
   return `career-ops — ${parts.join(', ') || 'no change'} (${date})`;
 }
 
-const BAND_COLOR = { strong: '#2c7a51', likely: '#3f7f6d', even: '#9a7420', low: '#8b8b8b' };
+// Keyed off the scorer's own band list, in its own order, so a band rename
+// cannot leave the mail painting every score the same grey. The ramp is the
+// artifact's --fresh / --recent / --aging / --none / --stale, inlined because
+// mail clients drop custom properties.
+const BAND_RAMP = ['#2c7a51', '#3f7f6d', '#9a7420', '#8b8b8b', '#a04f2a'];
+export const BAND_COLOR = Object.fromEntries(BANDS.map((b, i) => [b.id, BAND_RAMP[i] || '#4a6068']));
 
 /**
  * Inline-styled table. Every rule is on the element: mail clients drop <style>
@@ -125,7 +143,7 @@ function rowsTable(rows, max) {
     ? `<tr><td colspan="3" style="${cell};color:#74898f;font-size:12.5px">+ ${rows.length - shown.length} more in the attached snapshot</td></tr>`
     : '';
   return `<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;max-width:640px">
-<tr><th style="${head}">Odds</th><th style="${head}">Company &amp; role</th><th style="${head}">Where / age</th></tr>
+<tr><th style="${head}">Match</th><th style="${head}">Company &amp; role</th><th style="${head}">Where / age</th></tr>
 ${body}${more}</table>`;
 }
 
@@ -139,7 +157,7 @@ export function composeBody({ fresh, upgraded, model, cfg, date }) {
     out.push(rowsTable([...fresh].sort((a, b) => b.cb - a.cb), cfg.max_rows));
   }
   if (upgraded.length) {
-    out.push(h(`Now scoring strong — ${upgraded.length}`));
+    out.push(h(`Now a top match — ${upgraded.length}`));
     out.push(rowsTable([...upgraded].sort((a, b) => b.cb - a.cb), cfg.max_rows));
   }
   if (!fresh.length && !upgraded.length) {
@@ -147,12 +165,13 @@ export function composeBody({ fresh, upgraded, model, cfg, date }) {
   }
   out.push(h('Snapshot'));
   out.push(`<p style="margin:0;font-size:14px;line-height:1.6">
-    ${model.rows.filter(r => r.cbBand === 'strong').length} strong ·
-    ${model.rows.filter(r => r.cbBand === 'likely').length} likely ·
+    ${BANDS.filter(b => b.id !== 'blocked').map(b =>
+      `${model.rows.filter(r => r.cbBand === b.id).length} ${b.id}`).join(' · ')} ·
     ${model.expired.count} retired to date${cfg.artifact_url ? ` · <a href="${esc(cfg.artifact_url)}" style="color:#0f6f6b">open the full page</a>` : ''}</p>`);
   out.push(`<p style="margin:20px 0 0;font-size:12px;color:#74898f;line-height:1.6">
-    Reply odds are a prior on whether a posting produces a recruiter reply — not a fit score, not a
-    verdict, and uncalibrated until the tracker carries outcomes. Nothing in this pipeline applies to
+    Match is 100 × eligibility × fit × timing, read from the posting's own description — a prior on
+    what is worth reading, not a fit score and not a verdict. A 0 means a hard gate fired (clearance,
+    years, degree, comp floor) and the full page names which. Nothing in this pipeline applies to
     anything on your behalf.</p>`);
   return wrap(out.join('\n'));
 }

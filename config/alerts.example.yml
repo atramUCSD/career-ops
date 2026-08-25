@@ -11,10 +11,10 @@ alerts:
   # Where the alert goes. `node notify-email.mjs --to x@y.com` overrides it.
   to: ""
 
-  # Only postings scoring at or above this appear in the mail. 58 is the
-  # "likely reply" band boundary; 0 sends every new posting. Everything is on
-  # the attached page regardless — this filters the mail, not the pipeline.
-  min_reply_odds: 58
+  # Only postings scoring at or above this appear in the mail. 42 is the
+  # "strong" band floor; 0 sends every new posting. Everything is on the
+  # attached page regardless — this filters the mail, not the pipeline.
+  min_match: 42
 
   # Rows per table. Overflow is reported as a count, not dropped silently.
   max_rows: 15
