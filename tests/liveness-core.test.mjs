@@ -100,6 +100,44 @@ for (const status of [404, 410]) {
     : fail(`HTTP ${status} classified ${gone.result}/${gone.code}, expected expired/http_gone`);
 }
 
+// ── An unrendered page is not a removed posting ──────────────────────
+//
+// iCIMS serves job detail inside an iframe, so headless Playwright reads
+// nav/footer only. Every live careers-peraton.icims.com posting scored
+// `expired` via insufficient_content — 14 of them on one run, whose URLs the
+// same day's scan had just pulled from the live iCIMS feed. `expired` routes
+// to purge, so the verdict deleted open roles.
+const unrendered = classifyLiveness({
+  status: 200,
+  finalUrl: 'https://careers-peraton.icims.com/jobs/169611/full-stack-microservices-developer/job',
+  bodyText: 'Skip to main content Careers Home Privacy Policy',
+  applyControls: [],
+});
+
+unrendered.result === 'uncertain'
+  ? pass('short body (iframe/JS-rendered posting) -> uncertain, not expired')
+  : fail(`short body classified ${unrendered.result}, expected uncertain — purges live postings`);
+
+unrendered.code === 'insufficient_content'
+  ? pass('insufficient_content code preserved for routing/telemetry')
+  : fail(`expected code insufficient_content, got ${unrendered.code}`);
+
+// The code must stay outside scan.mjs's GUARD_CODES and distinct from
+// no_apply_control: both of those routes drop the offer from pipeline.md.
+// Only the fall-through branch keeps it for a retry next scan.
+unrendered.code !== 'no_apply_control'
+  ? pass('insufficient_content is not routed as no_apply_control (which drops)')
+  : fail('insufficient_content collapsed into no_apply_control — still drops the offer');
+
+// Regression: a real closure on a short page is still caught by pattern, not length.
+classifyLiveness({
+  status: 200,
+  finalUrl: 'https://jobs.smartrecruiters.com/acme/123',
+  bodyText: 'This job has expired.',
+  applyControls: [],
+}).result === 'expired'
+  ? pass('explicit expiry text still -> expired regardless of body length')
+  : fail('explicit expiry text regressed to uncertain');
 // A posting rendered in a child frame (iCIMS) must not read as expired. The top
 // document is a sliver of chrome; the description and the Apply button live in
 // the second frame, so the frame reads are folded before classification.
@@ -126,9 +164,13 @@ const topOnly = classifyLiveness({
   finalUrl: 'https://careers-example.icims.com/jobs/123/frontend-engineer/job',
   ...mergeFrameContent([{ text: 'Careers at Example', controls: ['Sign In'] }]),
 });
-topOnly.result === 'expired'
-  ? pass('top frame alone would have been a false expired')
-  : fail(`top-frame-only classified ${topOnly.result}, expected the expired it used to produce`);
+// Two guards stack here. Folding the child frames is what finds the posting;
+// classifying an unreadable body as uncertain is what stops a page nobody could
+// read from being purged anyway. So the top-frame-only read no longer reaches
+// `expired` — it lands on the weaker `insufficient_content`, which never prunes.
+topOnly.result === 'uncertain' && topOnly.code === 'insufficient_content'
+  ? pass('top frame alone -> insufficient_content, never expired')
+  : fail(`top-frame-only classified ${topOnly.result}/${topOnly.code}, expected uncertain/insufficient_content`);
 
 // SmartRecruiters labels its apply button "I’m interested" — curly apostrophe on
 // the page, ASCII after normalization. Both spellings must count as live.
