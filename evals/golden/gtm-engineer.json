@@ -1,0 +1,10 @@
+{
+  "id": "gtm-engineer",
+  "synthetic": true,
+  "jd": "GTM Engineer — Solvent (Remote, US)\n\nRevenue operations is a software problem here and you are the engineer who owns it. You will build and maintain the plumbing between Salesforce, our data warehouse, the product telemetry stream, and the outbound tooling the sales team lives in. Concretely: design the lead-enrichment pipeline, own lifecycle and routing automation, build the internal tools that let a rep see product usage without asking anyone, and instrument the funnel so attribution survives contact with reality. You will write Python and SQL daily and own your deploys. You partner with sales leadership and marketing ops, but you are not a sales rep and you carry no quota. We care that you can model a messy revenue process and then automate it, not that you have a specific tool on your resume — though experience with Salesforce, Clay, HubSpot, or dbt is a plus. $150k-$185k base plus equity.",
+  "label": {
+    "archetype": "GTM Engineer",
+    "score": 2.9,
+    "provenance": "reference-frozen-v1"
+  }
+}

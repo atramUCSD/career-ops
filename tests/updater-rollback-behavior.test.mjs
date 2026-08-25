@@ -9,10 +9,10 @@
  * just that the code reads right (@FReptar0 + CodeRabbit review of #2110).
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { pass, fail } from './helpers.mjs';
+import { pass, fail, rmTemp } from './helpers.mjs';
 import { gitIn, removeAdditionsNotInHead } from '../update-system.mjs';
 
 // A throwaway git repo plus a ctx that binds the rollback helper's git runner
@@ -79,7 +79,7 @@ console.log('\n🧪 Testing updater rollback behavior (#2015)...');
   } else {
     fail(`index wrong after rollback: ${[...staged].join(', ')}`);
   }
-  rmSync(dir, { recursive: true, force: true });
+  rmTemp(dir);
 }
 
 // ── 2. --diff-filter=A: a merely modified file is never removed ──
@@ -107,7 +107,7 @@ console.log('\n🧪 Testing updater rollback behavior (#2015)...');
   } else {
     fail('rollback left an unprotected addition behind');
   }
-  rmSync(dir, { recursive: true, force: true });
+  rmTemp(dir);
 }
 
 // ── 3. a single-file pathspec is handled like a directory one ──
@@ -127,5 +127,5 @@ console.log('\n🧪 Testing updater rollback behavior (#2015)...');
   } else {
     fail('rollback left an added file for a file pathspec');
   }
-  rmSync(dir, { recursive: true, force: true });
+  rmTemp(dir);
 }

@@ -412,6 +412,22 @@ export const USER_PATHS = [
   'opencode.json',
   '.claude/settings.json',
   '.claude/hooks/',
+  // Corridor dashboard. This fork wrote the scanner swarm, the match scorer,
+  // the JD fact layer and the mailer; upstream has no version of any of them,
+  // so an update must leave them exactly where it found them.
+  'swarm.mjs',
+  'lanes.mjs',
+  'build-artifact.mjs',
+  'callback-score.mjs',
+  'enrich-jd.mjs',
+  'notify-email.mjs',
+  'gmail-send.mjs',
+  'expired-log.mjs',
+  'prune-pipeline.mjs',
+  'scripts/alert.cmd',
+  'skills-lock.json',
+  'config/alerts.example.yml',
+  'config/lanes.example.yml',
 ];
 
 function parseVersionFile(raw) {
@@ -689,7 +705,15 @@ export function prepareMaterializedSkillEntrypointsForStage(paths, root = ROOT) 
     const entry = gitIn(root, 'ls-files', '-s', '--', path);
     if (!entry) continue;
 
-    const mode = entry.split(/\s+/, 1)[0];
+    // Read the mode off the index line itself, not off the first line of
+    // output. Git writes housekeeping notices to stdout ahead of the result —
+    // a machine with `core.fsmonitor` on prints "starting fsmonitor-daemon in
+    // '<repo>'" before the first command's output in a repo — and splitting
+    // the whole blob on whitespace then reads "starting" as the mode. The
+    // symlink entry is left in the index, `git add` preserves its 120000 mode,
+    // and the entrypoint is committed as a symlink blob on a filesystem that
+    // cannot follow it, which is the exact failure this function prevents.
+    const mode = entry.match(/^(\d{6}) /m)?.[1];
     if (mode === '120000') {
       gitIn(root, 'rm', '--cached', '-f', '--', path);
     }

@@ -18,7 +18,7 @@
  */
 
 import { execFileSync } from 'child_process';
-import { readFileSync, writeFileSync, mkdtempSync } from 'fs';
+import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'fs';
 import { join, dirname } from 'path';
 import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
@@ -34,8 +34,18 @@ function check(name, cond, detail = '') {
   else { failed++; console.log(`  ❌ ${name}${detail ? ` — ${detail}` : ''}`); }
 }
 
+// Every fixture is registered and removed on exit. Per-case cleanup would have
+// to run after each check below; one exit hook at the single place fixtures are
+// created cannot be forgotten by a case added later.
+const fixtures = [];
+process.on('exit', () => {
+  for (const dir of fixtures) rmSync(dir, { recursive: true, force: true });
+});
+
 function tmp(prefix) {
-  return mkdtempSync(join(tmpdir(), prefix));
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  fixtures.push(dir);
+  return dir;
 }
 
 // Run agent-inbox.mjs against a provisioned queue file; returns stdout.

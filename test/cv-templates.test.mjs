@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -30,8 +30,17 @@ test('KINDS defines cv and cover', () => {
   assert.equal(KINDS.cover.prefix, 'cover-letter-template');
 });
 
+// Every fixture is registered and removed on exit. Per-test cleanup would have
+// to run after each assertion in every test below; one exit hook at the single
+// place fixtures are created cannot be forgotten by a test added later.
+const fixtures = [];
+process.on('exit', () => {
+  for (const dir of fixtures) rmSync(dir, { recursive: true, force: true });
+});
+
 function fixtureDir() {
   const dir = mkdtempSync(join(tmpdir(), 'cvt-'));
+  fixtures.push(dir);
   writeFileSync(join(dir, 'cv-template.html'), '{{NAME}}{{EXPERIENCE}}{{EDUCATION}}');
   writeFileSync(
     join(dir, 'cv-template.executive-authority.html'),

@@ -1,0 +1,10 @@
+{
+  "id": "developer-relations",
+  "synthetic": true,
+  "jd": "Developer Advocate, Platform APIs — Halden (San Diego, hybrid 3 days on-site)\n\nYou are the bridge between our platform team and the developers who build on us. You will write and maintain the sample applications and quickstarts in our public repos, own the getting-started documentation end to end, and turn recurring forum questions into guides that stop the question from being asked again. Expect to speak at two or three regional meetups a quarter and to run hands-on workshops at our annual user conference. You will sit in on API design reviews and carry developer feedback back to the platform team with enough specificity that it changes the roadmap. This is a builder's role: we expect you to ship working code in TypeScript or Python, not slideware, and your GitHub history is part of the evaluation. Comfortable being publicly wrong and correcting in the open. $145k-$175k base, conference travel covered.",
+  "label": {
+    "archetype": "Developer Relations / Developer Advocate",
+    "score": 3.6,
+    "provenance": "reference-frozen-v1"
+  }
+}

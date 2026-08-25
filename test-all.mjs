@@ -31,7 +31,7 @@ import { tmpdir } from 'os';
 import { promisify } from 'util';
 import { fileURLToPath, pathToFileURL } from 'url';
 import yaml from 'js-yaml';
-import { pass, fail, warn, run, lastRunFailure, formatRunFailure, fileExists, finish, ROOT, QUICK, NODE, getBash, toBashPath } from './tests/helpers.mjs';
+import { pass, fail, warn, run, lastRunFailure, formatRunFailure, fileExists, finish, ROOT, QUICK, NODE, getBash, toBashPath, rmTemp } from './tests/helpers.mjs';
 import { flagValue, hasFlag } from './lib/cli-flags.mjs';
 
 /**
@@ -5360,8 +5360,10 @@ console.log('\n12c. Materialized skill index mode');
     // individually; re-reporting here would double-count and re-bury the cause.
     if (!e?.alreadyReported) fail(`skill entrypoint index-mode test crashed: ${e.message}`);
   } finally {
-    rmSync(fixtureRoot, { recursive: true, force: true });
-    rmSync(gitConfigRoot, { recursive: true, force: true });
+    // rmTemp, not rmSync: a git process that touched this fixture can still
+    // hold its work tree open on Windows, and a cleanup EBUSY after the last
+    // passing assertion would abort the run before it prints its tally.
+    rmTemp(fixtureRoot, gitConfigRoot);
   }
 }
 

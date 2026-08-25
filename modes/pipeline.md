@@ -9,9 +9,11 @@ Process job URLs stored in `data/pipeline.md`. The user adds URLs at any time an
 Sweep all pending URLs in one batch with the zero-token liveness checker before the per-URL loop:
 
 1. Collect every `- [ ]` URL from the "Pending" section into a temp file (one URL per line).
-2. Run `node check-liveness.mjs --file <tmpfile>` (add `--throttle` for large batches to stay under WAF rate limits; it's pure Playwright, zero Claude tokens). The checker prints a per-URL verdict and exits non-zero if any are expired/uncertain.
-3. For every URL the checker reports as **expired/closed**, resolve the pipeline entry instead of processing it: move it to "Processed" as `- [x] ~~URL | Company | Role~~ — posting expired (liveness sweep)` and, if it already has a tracker row, mark it `Discarded`. **Do not** extract the JD, evaluate, or generate a report/PDF for it.
-4. Leave `uncertain` results in place to be confirmed during normal per-URL extraction (a transient timeout shouldn't drop a possibly-live posting).
+2. Run `node check-liveness.mjs --file <tmpfile>` (add `--throttle` for large batches to stay under WAF rate limits; it's pure Playwright, zero Claude tokens). The checker prints a per-URL verdict and exits non-zero if any are expired/uncertain. Add `--api-only` for a routine sweep of a large list: it stops at the free ATS API rung and reports what it cannot answer as `skipped` instead of opening a browser.
+3. Every URL the checker reports as **expired/closed** is written to `data/expired-jobs.md`. Run `node prune-pipeline.mjs` to move those entries out of "Pending" into "Processed" with the confirmation date and evidence code on the line, and mark any existing tracker row `Discarded`. **Do not** extract the JD, evaluate, or generate a report/PDF for them.
+   - Do the move with the script rather than by hand. A moved line must keep the plain `- [x] {url}` form — a struck-through `~~{url}~~` hides the URL from `scan.mjs`'s dedup regex, and the next scan re-adds the posting as a fresh find.
+   - `prune-pipeline.mjs --stale <days>` additionally retires entries whose `posted:` date is older than the threshold. A months-old req is usually open in the ATS and closed in practice; retiring those is what keeps the pending list to roles that can realistically answer.
+4. Leave `uncertain` results in place to be confirmed during normal per-URL extraction (a transient timeout shouldn't drop a possibly-live posting). `uncertain` never reaches `data/expired-jobs.md` — a posting that could not be read is unknown, not gone.
 5. Only the surviving live URLs continue to the per-URL processing loop below.
 
 This complements — does not replace — the per-URL liveness gate in `auto-pipeline` (Step 0.5) and the `apply` preflight: the sweep drops the dead postings up front, in bulk, so the user never opens a tab or spends a token on them.

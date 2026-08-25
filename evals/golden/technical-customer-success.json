@@ -1,0 +1,10 @@
+{
+  "id": "technical-customer-success",
+  "synthetic": true,
+  "jd": "Technical Customer Success Manager, Enterprise — Verrill Systems (Remote, US)\n\nYou own a book of twelve enterprise accounts from kickoff through renewal. Day to day that means running onboarding for new deployments, configuring the platform to match each customer's workflow, and being the person who reproduces the bug before it becomes an escalation. You are the trusted advisor in quarterly business reviews: you bring adoption data, you name the workflows that are not being used, and you propose the configuration change that fixes it. You will work directly against our APIs and admin console — this is not a relationship-only role, and you will be expected to read logs and write the occasional script. Success is measured on adoption depth, time-to-value on new deployments, and net revenue retention. Prior experience implementing an enterprise SaaS platform for a large regulated customer strongly preferred. $130k-$155k base plus variable.",
+  "label": {
+    "archetype": "Technical Customer Success Manager",
+    "score": 3.5,
+    "provenance": "reference-frozen-v1"
+  }
+}

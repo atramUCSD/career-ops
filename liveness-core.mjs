@@ -91,9 +91,14 @@ const APPLY_PATTERNS = [
   /panelu aplikowania/i,
   // Accent-free: apply controls go through normalizeForMatch too ("wyślij" → "wyslij").
   /wyslij (cv|aplikacj)/i,
+  // SmartRecruiters never writes "Apply" on the button — its call to action is
+  // "I'm interested" (curly apostrophe on the page, ASCII after normalization).
+  // Without this every live SmartRecruiters posting reads `no_apply_control` and
+  // stays uncertain forever, which is why 32 of them were unprunable.
+  /\bi'?m interested\b/i,
 ];
 
-const MIN_CONTENT_CHARS = 300;
+export const MIN_CONTENT_CHARS = 300;
 
 // A job-detail URL almost always carries the posting's identity: a numeric req id
 // (Greenhouse, Workday pid, Microsoft) or a UUID (Lever, Ashby). If the requested

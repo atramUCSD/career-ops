@@ -2,7 +2,7 @@
 import { pass, fail, ROOT } from '../helpers.mjs';
 import { join } from 'path';
 import { pathToFileURL } from 'url';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 
 console.log('\nProvider — vdab');
@@ -263,7 +263,10 @@ try {
         process.chdir(tmp);
         return await run();
       } finally {
+        // chdir back BEFORE removing: Windows refuses to delete the process's
+        // own working directory, which would leak one fixture per call.
         process.chdir(cwdBefore);
+        rmSync(tmp, { recursive: true, force: true });
       }
     };
 
