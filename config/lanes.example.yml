@@ -1,0 +1,74 @@
+# config/lanes.example.yml — role families ("lanes") for the swarm conductor.
+#
+# Copy to config/lanes.yml and edit. The real file is gitignored, like
+# config/profile.yml, because the families you target are personal data.
+#
+# A lane is one role family carried end to end: the scanner surfaces it by
+# title keyword, the pre-screen gates it on the JD, the evaluator scores it as
+# the named archetype. All lanes share the same A–G rubric — a lane changes the
+# framing the worker is given, never a dimension weight, so a DevRel role stays
+# comparable to a Forward Deployed one.
+#
+# Fields
+#   id              short slug, unique. Used in batch-input.tsv `source` and in logs.
+#   archetype       MUST match the archetype name written in modes/_profile.md,
+#                   modes/_shared.md, batch/batch-prompt.md and config/profile.yml.
+#                   `node swarm.mjs --check-lanes` reports every place it is missing.
+#   title_keywords  MUST be byte-identical to entries in portals.yml
+#                   title_filter.positive. The literal string is the coupling —
+#                   the same one content_filter.by_title_keyword already uses.
+#   jd_gate         applied at pre-screen, where the JD actually exists. A single
+#                   negative term rejects; at least one positive term is required
+#                   (an empty positive list means "accept").
+#   max_evaluations per-run cap for this lane, so one family cannot eat the
+#                   global --max-evals budget on its own.
+#   golden_case     optional path to an evals/golden/*.json regression case.
+
+lanes:
+  - id: devrel
+    archetype: "Developer Relations / Developer Advocate"
+    title_keywords:
+      - "Developer Relations"
+      - "Developer Advocate"
+      - "Developer Advocacy"
+      - "DevRel"
+      - "Developer Experience"
+      - "Developer Evangelist"
+      - "Technical Evangelist"
+      - "Developer Community"
+      - "Developer Educator"
+    jd_gate:
+      positive: ["developer", "documentation", "docs", "sdk", "api", "community", "workshop", "conference", "tutorial"]
+      # A "Developer Advocate" carrying a quota is a sales job wearing the title.
+      negative: ["quota", "commission", "cold outreach", "sdr", "bdr"]
+    max_evaluations: 8
+    golden_case: evals/golden/developer-relations.json
+
+  - id: tcsm
+    archetype: "Technical Customer Success Manager"
+    title_keywords:
+      - "Customer Success"
+      - "Technical Account Manager"
+      - "Technical Success"
+      - "Adoption Engineer"
+    jd_gate:
+      positive: ["onboarding", "adoption", "integration", "api", "technical", "escalation", "renewal", "implementation"]
+      negative: ["quota", "upsell target", "commission-only", "cold calling"]
+    max_evaluations: 6
+    golden_case: evals/golden/technical-customer-success.json
+
+  - id: gtm
+    archetype: "GTM Engineer"
+    title_keywords:
+      - "GTM"
+      - "Go-To-Market"
+      - "Go To Market"
+      - "Revenue Operations"
+      - "RevOps"
+      - "Growth Engineer"
+      - "Marketing Engineer"
+    jd_gate:
+      positive: ["automation", "workflow", "integration", "api", "data", "internal tools", "python", "sql", "crm"]
+      negative: ["cold calling", "quota", "field marketing", "brand campaign", "sdr"]
+    max_evaluations: 6
+    golden_case: evals/golden/gtm-engineer.json

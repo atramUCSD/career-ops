@@ -11,6 +11,8 @@
 // filled" and rejects "filled out" (a candidate completing a form).
 import { pass, fail } from './helpers.mjs';
 import { classifyLiveness } from '../liveness-core.mjs';
+import { mergeFrameContent } from '../liveness-browser.mjs';
+import { greenhouseEmbed } from '../liveness-api.mjs';
 
 console.log('\nliveness-core — "filled" reqs (incl. Phenom/ICF phrasing) classify as expired');
 
@@ -97,3 +99,65 @@ for (const status of [404, 410]) {
     ? pass(`HTTP ${status} still -> expired/http_gone`)
     : fail(`HTTP ${status} classified ${gone.result}/${gone.code}, expected expired/http_gone`);
 }
+
+// A posting rendered in a child frame (iCIMS) must not read as expired. The top
+// document is a sliver of chrome; the description and the Apply button live in
+// the second frame, so the frame reads are folded before classification.
+console.log('\nliveness-browser — a posting inside a child frame is still active');
+const framed = mergeFrameContent([
+  { text: 'Careers at Example', controls: ['Sign In'] },
+  { text: 'Job Description '.repeat(40), controls: ['Apply for this job'] },
+]);
+const framedVerdict = classifyLiveness({
+  status: 200,
+  requestedUrl: 'https://careers-example.icims.com/jobs/123/frontend-engineer/job',
+  finalUrl: 'https://careers-example.icims.com/jobs/123/frontend-engineer/job',
+  ...framed,
+});
+framedVerdict.result === 'active'
+  ? pass('apply control inside a child frame -> active')
+  : fail(`framed posting classified ${framedVerdict.result}/${framedVerdict.code}, expected active`);
+
+// And with only the top frame read, the same page would have been called expired —
+// which is the bug this merge exists to prevent.
+const topOnly = classifyLiveness({
+  status: 200,
+  requestedUrl: 'https://careers-example.icims.com/jobs/123/frontend-engineer/job',
+  finalUrl: 'https://careers-example.icims.com/jobs/123/frontend-engineer/job',
+  ...mergeFrameContent([{ text: 'Careers at Example', controls: ['Sign In'] }]),
+});
+topOnly.result === 'expired'
+  ? pass('top frame alone would have been a false expired')
+  : fail(`top-frame-only classified ${topOnly.result}, expected the expired it used to produce`);
+
+// SmartRecruiters labels its apply button "I’m interested" — curly apostrophe on
+// the page, ASCII after normalization. Both spellings must count as live.
+console.log('\nliveness-core — SmartRecruiters "I\u2019m interested" is an apply control');
+for (const label of ["I’m interested", "I'm interested"]) {
+  const sr = classifyLiveness({
+    status: 200,
+    requestedUrl: 'https://jobs.smartrecruiters.com/ServiceNow/744000144370049-gtm-lead',
+    finalUrl: 'https://jobs.smartrecruiters.com/ServiceNow/744000144370049-gtm-lead',
+    bodyText: 'Job Description '.repeat(40),
+    applyControls: ['Refer a friend', label],
+  });
+  sr.result === 'active'
+    ? pass(`"${label}" -> active`)
+    : fail(`"${label}" classified ${sr.result}/${sr.code}, expected active`);
+}
+
+// A careers page that embeds a Greenhouse board carries ?gh_jid but not the board
+// token. The host is matched against the boards portals.yml already scans, so an
+// unknown host resolves to nothing rather than guessing a token from the domain.
+console.log('\nliveness-api — embedded Greenhouse boards resolve from ?gh_jid');
+const BOARDS = ['stripe', 'coinbase'];
+greenhouseEmbed('https://stripe.com/jobs/search?gh_jid=8075570', BOARDS)
+  === 'https://boards-api.greenhouse.io/v1/boards/stripe/jobs/8075570'
+  ? pass('stripe search URL -> board API')
+  : fail('stripe search URL did not resolve to the stripe board API');
+greenhouseEmbed('https://evil.example.com/x?gh_jid=1', BOARDS) === null
+  ? pass('an unknown host resolves to no board')
+  : fail('an unknown host must not resolve to a board');
+greenhouseEmbed('https://stripe.com/jobs/search?gh_jid=../x', BOARDS) === null
+  ? pass('a non-numeric job id is refused')
+  : fail('a non-numeric gh_jid must be refused');

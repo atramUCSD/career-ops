@@ -1,0 +1,15 @@
+[recorded fixture — candidate model "cheap-stub" output for golden case developer-relations]
+[Only the ---SCORE_SUMMARY--- block is parsed by eval-golden.mjs; the prose above
+it is illustrative and intentionally trimmed so fixtures stay small and reviewable.]
+
+Sample apps, quickstart docs, meetup talks and workshops, feeding developer
+feedback into API design — developer advocacy, and a building one rather than a
+speaking-only one. San Diego hybrid sits in the home metro.
+
+---SCORE_SUMMARY---
+COMPANY: Halden
+ROLE: Developer Advocate, Platform APIs
+SCORE: 3.5
+ARCHETYPE: Developer Relations / Developer Advocate
+LEGITIMACY: High Confidence
+---END_SUMMARY---

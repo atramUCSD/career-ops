@@ -55,6 +55,10 @@ writing-samples/*
 
 # User config and customization (never auto-updated)
 config/profile.yml
+config/lanes.yml
+config/alerts.yml
+data/alert-state.json
+output/alert-preview.eml
 config/cv-facts.json
 config/benchmarks.yml
 portals.yml
@@ -141,3 +145,10 @@ plan/
 # (see DATA_CONTRACT.md). Re-include them past the unanchored user-layer
 # patterns above (cv.md, portals.yml).
 !test-fixtures/**
+
+# Personal data exports (GitHub/LinkedIn archives) — never commit
+github-export-data/
+
+# Vendored skill trees — installed from skills-lock.json, not carried in the repo
+.agents/skills/
+.claude/skills/

@@ -1,0 +1,34 @@
+# config/alerts.example.yml — scheduled email alert settings.
+#
+# Copy to config/alerts.yml and edit. The real file is gitignored, like
+# config/profile.yml and config/lanes.yml, because it carries your address.
+#
+# Credentials do NOT live here. Sending reads GMAIL_CLIENT_ID,
+# GMAIL_CLIENT_SECRET and GMAIL_SEND_REFRESH_TOKEN from .env — see
+# docs/ALERTS.md for minting a send-scoped token.
+
+alerts:
+  # Where the alert goes. `node notify-email.mjs --to x@y.com` overrides it.
+  to: ""
+
+  # Only postings scoring at or above this appear in the mail. 42 is the
+  # "strong" band floor; 0 sends every new posting. Everything is on the
+  # attached page regardless — this filters the mail, not the pipeline.
+  min_match: 42
+
+  # Rows per table. Overflow is reported as a count, not dropped silently.
+  max_rows: 15
+
+  # A run with nothing new sends no mail at all. Set false for a daily
+  # proof-of-life message instead.
+  quiet_if_empty: true
+
+  # Attach output/pipeline-artifact.html (~400KB, self-contained, opens
+  # interactive in a browser). The inline table in the message body is a
+  # separate static rendering — mail clients strip the page's script and CSS.
+  attach_artifact: true
+
+  # Link to the published artifact. Optional: a scheduled node run cannot
+  # republish it, so this points at the last version published from a Claude
+  # session and may lag the attachment.
+  artifact_url: ""

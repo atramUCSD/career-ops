@@ -1,7 +1,7 @@
 # Golden-set eval for cheap-model routing (#1354)
 
 > **Status: v1.** The *mechanism* (`eval-golden.mjs`) is design-invariant and runs
-> today. Reference labels are now frozen (10 synthetic cases — see **Labeling
+> today. Reference labels are now frozen (13 synthetic cases — see **Labeling
 > methodology** below); the gate threshold and per-model cost remain tunable
 > constants, and wiring into CI is still deferred (see **Open design questions**).
 
@@ -24,17 +24,17 @@ to route that task to it.
 applied to each synthetic JD under the repo's own rubric (`modes/_shared.md` §
 Scoring System + § Archetype Detection):
 
-- **`archetype`** is the gate. It is a property of the JD alone (the 6-archetype
+- **`archetype`** is the gate. It is a property of the JD alone (the 9-archetype
   keyword taxonomy in `_shared.md`), so it is profile-independent and reproducible.
 - **`score`** (1–5) is the reference model's fit verdict. It is profile-relative by
   construction, but because both reference and candidate are scored under the *same*
   conditions, distance-to-reference stays meaningful regardless of whose profile
   drives it. It is a secondary, tolerance-banded signal — it does **not** gate.
 
-The 10 cases cover all 6 archetypes and deliberately favor **edge archetypes over
+The 13 cases cover all 9 archetypes and deliberately favor **edge archetypes over
 easy wins**: four are hybrids/ambiguous (`platform-agentic-hybrid`,
 `pm-architect-ambiguous`, `forward-deployed-vs-architect`, `transformation-vs-pm`)
-where a cheaper model is most likely to diverge, and scores span 3.2–4.3 so the
+where a cheaper model is most likely to diverge, and scores span 2.9–4.3 so the
 tolerance band has real range to catch drift on red-flag postings.
 
 **Future upgrade path:** hand-curated labels. Freezing the reference verdict is the
@@ -69,6 +69,12 @@ why the reference resolved an ambiguous JD the way it did. Both are advisory —
 harness only requires `archetype` (string) and `score` (number). All JDs are
 **synthetic** so the set stays clear of the `no-user-data` guard.
 
+A case can have a second consumer: `config/lanes.yml` entries may name one as
+their `golden_case`, pinning a lane's archetype to a regression case (`devrel`,
+`tcsm` and `gtm` do today). `node swarm.mjs --check-lanes` warns when a lane
+points at a case file that does not exist, so a case a lane depends on cannot be
+renamed or deleted silently.
+
 ### Fixture format (`evals/fixtures/<case-id>__<model>.txt`)
 
 A recorded candidate-model output containing a `---SCORE_SUMMARY---` block. Only
@@ -95,8 +101,8 @@ Resolved in v1:
 
 - **Reference labels** — frozen reference (Claude-tier) verdict; see **Labeling
   methodology** above. Hand-curation is the documented future upgrade path.
-- **Set size / spread** — grown from 2 to 10 cases across all 6 archetypes, favoring
-  edge/hybrid archetypes, scores spanning 3.2–4.3.
+- **Set size / spread** — grown from 2 to 13 cases across all 9 archetypes, favoring
+  edge/hybrid archetypes, scores spanning 2.9–4.3.
 
 Still tunable (named constants, safe defaults today):
 

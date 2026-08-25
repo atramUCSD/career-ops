@@ -41,7 +41,7 @@ If deeper company research is useful, recommend running `/career-ops deep` separ
 
 ## Step 0 — Archetype Detection
 
-Classify the job into one of the 6 archetypes (see `_shared.md`). If it is a hybrid, indicate the 2 closest ones. This determines:
+Classify the job into one of the archetypes listed in `_shared.md` (the table there is the single source of truth — new role families are added to it, so never hard-code a count). If it is a hybrid, indicate the 2 closest ones. This determines:
 - Which proof points to prioritize in block B
 - How to rewrite the summary in block E
 - Which STAR stories to prepare in block F
@@ -105,6 +105,9 @@ Read `cv.md`. Create a table with each JD requirement mapped to exact lines in t
 - If LLMOps → prioritize evals, observability, pipelines
 - If Agentic → prioritize multi-agent, HITL, orchestration
 - If Transformation → prioritize change management, adoption, scaling
+- If DevRel → prioritize public technical communication, documentation, developer-facing artifacts
+- If TCSM → prioritize onboarding, adoption and stakeholder trust under change
+- If GTM Engineer → prioritize workflow automation, data plumbing and internal tooling. **Never imply Salesforce, HubSpot, Clay or outbound-automation experience** — frame platform-automation work as transferring to the GTM stack
 
 **Gaps** section with mitigation strategy for each. For each gap:
 1. Is it a hard blocker or a nice-to-have?
@@ -224,6 +227,9 @@ The **Reflection** column captures what was learned or what would be done differ
 - LLMOps → emphasize metrics, evals, production hardening
 - Agentic → emphasize orchestration, error handling, HITL
 - Transformation → emphasize adoption, organizational change
+- DevRel → emphasize teaching, docs and public technical communication
+- TCSM → emphasize adoption pacing, escalation handling and trust
+- GTM Engineer → emphasize automation built, funnel instrumented, tooling owned
 
 Also include:
 - 1 recommended case study (which of their projects to present and how)

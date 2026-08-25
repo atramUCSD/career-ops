@@ -27,7 +27,12 @@
  * (no slashes / traversal), and server-side redirects are refused.
  */
 
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { DEFAULT_USER_AGENT } from './user-agent.mjs';
+
+const ROOT = dirname(fileURLToPath(import.meta.url));
 
 const TIMEOUT_MS = 8_000;
 // Strict path-segment charset. Anything with a slash, dot-dot, or other char is
@@ -157,6 +162,30 @@ export function classifyAshbyBoard(json, jobId) {
   return { result: 'expired', code: 'ashby_api_unlisted', reason: 'Ashby posting not listed on the board — removed/unlisted' };
 }
 
+// A Greenhouse-embedded careers page — coinbase.com/careers/positions/N?gh_jid=N,
+// pinterestcareers.com/jobs/?gh_jid=N — carries the job id but not the board
+// token, so resolveAtsApi (URL-only by design, and SSRF-tight) cannot map it.
+// portals.yml already names every board this pipeline scans; match the host
+// against those tokens rather than guessing one from the domain.
+let GH_BOARDS = null;
+function ghBoards() {
+  if (GH_BOARDS) return GH_BOARDS;
+  const text = existsSync(join(ROOT, 'portals.yml')) ? readFileSync(join(ROOT, 'portals.yml'), 'utf-8') : '';
+  GH_BOARDS = [...new Set([...text.matchAll(/boards-api\.greenhouse\.io\/v1\/boards\/([a-z0-9-]+)\//gi)]
+    .map(m => m[1].toLowerCase()))];
+  return GH_BOARDS;
+}
+
+export function greenhouseEmbed(rawUrl, boards = ghBoards()) {
+  let u;
+  try { u = new URL(rawUrl); } catch { return null; }
+  const id = u.searchParams.get('gh_jid');
+  if (!id || !/^[0-9]+$/.test(id)) return null;
+  const host = u.hostname.toLowerCase();
+  const board = boards.find(b => host.includes(b));
+  return board ? `https://boards-api.greenhouse.io/v1/boards/${board}/jobs/${id}` : null;
+}
+
 /**
  * Map a posting URL to its ATS API URL, or null if it isn't a known ATS posting
  * (or any extracted segment fails the strict charset). Pure + deterministic.
@@ -195,7 +224,16 @@ export function isAtsPosting(url) {
  *   null = not a known ATS posting, or inconclusive → caller should fall back to Playwright.
  */
 export async function checkLivenessViaApi(url) {
-  const resolved = resolveAtsApi(url);
+  // Second rung: a careers page that embeds a Greenhouse board carries the job id
+  // in ?gh_jid but not the board token, so resolveAtsApi (URL-only, SSRF-tight)
+  // cannot map it. stripe.com/jobs/search?gh_jid=N is the worst case — the page
+  // itself is a search view that takes 15s to render and then shows no single
+  // posting, so the browser rung could only ever time out into `uncertain`.
+  const resolved = resolveAtsApi(url)
+    ?? (() => {
+      const apiUrl = greenhouseEmbed(url);
+      return apiUrl ? { ats: 'greenhouse', apiUrl, parts: {}, interpret: undefined, timeoutMs: undefined } : null;
+    })();
   if (!resolved) return null;
   const { ats, apiUrl, parts, interpret, timeoutMs } = resolved;
 
