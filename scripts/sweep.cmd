@@ -23,9 +23,17 @@ if not exist "%LOG%" echo when	stage	result> "%LOG%"
 for /f "usebackq tokens=*" %%t in (`powershell -NoProfile -Command "(Get-Date).ToString('s')"`) do set TS=%%t
 
 REM --since 10 keeps a margin over the weekly interval so a run that slips a
-REM day still overlaps the previous sweep. --resume continues from the
-REM 500-company checkpoint if an earlier run was interrupted.
-call node scan-ats-full.mjs --since 10 --resume
+REM day still overlaps the previous sweep.
+REM
+REM --resume is conditional on purpose. scan-ats-full.mjs deletes its checkpoint
+REM on a clean finish and exits 1 if --resume is passed with no checkpoint on
+REM disk, so passing it unconditionally would fail stage 1 on the very first
+REM sweep and on every sweep that follows a successful one — taking the rest of
+REM the chain down with it. The checkpoint only exists when the previous sweep
+REM was interrupted, which is exactly when resuming is what we want.
+set ATS_RESUME=
+if exist data\cache\ats-full-checkpoint.json set ATS_RESUME=--resume
+call node scan-ats-full.mjs --since 10 !ATS_RESUME!
 if errorlevel 1 goto :failed_ats
 
 call node scan-hn.mjs
