@@ -30,11 +30,12 @@
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import yaml from 'js-yaml';
+import { fileURLToPath } from 'node:url';
+import * as yaml from 'js-yaml';
 import { buildModel } from './build-artifact.mjs';
 import { BANDS } from './callback-score.mjs';
 import { sendRaw } from './gmail-send.mjs';
+import { isMainModule } from './lib/is-main-module.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const STATE_PATH = 'data/alert-state.json';
@@ -287,6 +288,6 @@ async function main(argv) {
   console.log(`  sent to ${run.to}${id ? ` (${id})` : ''}`);
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
+if (isMainModule(import.meta.url)) {
   main(process.argv.slice(2)).catch(e => { console.error(`  ${e.message}`); process.exitCode = 1; });
 }

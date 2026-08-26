@@ -11,7 +11,6 @@
 // filled" and rejects "filled out" (a candidate completing a form).
 import { pass, fail } from './helpers.mjs';
 import { classifyLiveness } from '../liveness-core.mjs';
-import { mergeFrameContent } from '../liveness-browser.mjs';
 import { greenhouseEmbed } from '../liveness-api.mjs';
 
 console.log('\nliveness-core — "filled" reqs (incl. Phenom/ICF phrasing) classify as expired');
@@ -87,6 +86,21 @@ blocked.result === 'uncertain' && blocked.code === 'access_blocked'
   ? pass('HTTP 503 still classifies as uncertain/access_blocked, not server_error')
   : fail(`HTTP 503 classified ${blocked.result}/${blocked.code}, expected uncertain/access_blocked`);
 
+// 429 is throttling, never evidence the posting is gone. Its body is a short
+// "Too Many Requests" — under MIN_CONTENT_CHARS — so before the guard covered it
+// the verdict fell through to insufficient_content and read as `expired`, which
+// scan-history records as skipped_expired and every later scan dedup-skips.
+const throttled = classifyLiveness({
+  status: 429,
+  requestedUrl: 'https://boards.greenhouse.io/acme/jobs/1234567',
+  finalUrl: 'https://boards.greenhouse.io/acme/jobs/1234567',
+  bodyText: 'Too Many Requests. Please retry after some time.',
+  applyControls: [],
+});
+throttled.result === 'uncertain' && throttled.code === 'access_blocked'
+  ? pass('HTTP 429 classifies as uncertain/access_blocked, not expired')
+  : fail(`HTTP 429 classified ${throttled.result}/${throttled.code}, expected uncertain/access_blocked`);
+
 // A real 404/410 is still authoritative expiry — both statuses, both halves.
 for (const status of [404, 410]) {
   const gone = classifyLiveness({
@@ -142,10 +156,12 @@ classifyLiveness({
 // document is a sliver of chrome; the description and the Apply button live in
 // the second frame, so the frame reads are folded before classification.
 console.log('\nliveness-browser — a posting inside a child frame is still active');
-const framed = mergeFrameContent([
-  { text: 'Careers at Example', controls: ['Sign In'] },
-  { text: 'Job Description '.repeat(40), controls: ['Apply for this job'] },
-]);
+// Shape checkUrlLiveness hands the classifier: top-level body plus each
+// same-origin child frame's text, with apply controls pooled across all of them.
+const framed = {
+  bodyText: 'Careers at Example\n' + 'Job Description '.repeat(40),
+  applyControls: ['Sign In', 'Apply for this job'],
+};
 const framedVerdict = classifyLiveness({
   status: 200,
   requestedUrl: 'https://careers-example.icims.com/jobs/123/frontend-engineer/job',
@@ -162,7 +178,8 @@ const topOnly = classifyLiveness({
   status: 200,
   requestedUrl: 'https://careers-example.icims.com/jobs/123/frontend-engineer/job',
   finalUrl: 'https://careers-example.icims.com/jobs/123/frontend-engineer/job',
-  ...mergeFrameContent([{ text: 'Careers at Example', controls: ['Sign In'] }]),
+  bodyText: 'Careers at Example',
+  applyControls: ['Sign In'],
 });
 // Two guards stack here. Folding the child frames is what finds the posting;
 // classifying an unreadable body as uncertain is what stops a page nobody could

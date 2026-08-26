@@ -23,12 +23,13 @@
  */
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import yaml from 'js-yaml';
+import { fileURLToPath } from 'node:url';
+import * as yaml from 'js-yaml';
 import { parsePendingRows, classifyRows } from './swarm.mjs';
 import { loadLanes, LANES_PATH } from './lanes.mjs';
 import { matchedTitleKeywords, buildTitleFilter } from './scan.mjs';
 import { buildScorer, calibrate, SIGNALS, BANDS } from './callback-score.mjs';
+import { isMainModule } from './lib/is-main-module.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 
@@ -828,4 +829,4 @@ function main(argv) {
   console.log(`${out} — ${model.rows.length} pending (${laneCounts}), ${Math.round(html.length / 1024)}KB`);
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] || '').href) main(process.argv.slice(2));
+if (isMainModule(import.meta.url)) main(process.argv.slice(2));

@@ -1,196 +1,317 @@
-// tests/providers/eightfold.test.mjs — the PCSX board is rate-limit hostile and
-// its list payload carries no dates in the shape the scanner expects, so the
-// cases below pin config resolution, pagination bounds, and the two failure
-// modes that would silently report a truncated board as a complete one.
+// tests/providers/eightfold.test.mjs — contract test for the Eightfold AI
+// provider. Auto-discovered by test-all.mjs under tests/**; no registration.
+// Run alone with: node test-all.mjs --only providers/eightfold
+//
+// Every fixture here is synthetic (acme/other/big.eightfold.ai). Nothing in
+// this file touches the network.
+
 import { pass, fail, ROOT } from '../helpers.mjs';
 import { join } from 'path';
 import { pathToFileURL } from 'url';
 
 console.log('\nProvider — eightfold');
 
-try {
-  const eightfold = (await import(pathToFileURL(join(ROOT, 'providers/eightfold.mjs')).href)).default;
+// Validate derived URLs by PARSED hostname, never by substring-matching the
+// URL string — a trusted host fragment can appear in a hostile URL's
+// path/query/userinfo (CodeQL js/incomplete-url-substring-sanitization).
+// Mirrors the discipline in tests/providers/oraclecloud.test.mjs.
+const hostOf = (u) => { try { return new URL(u).hostname; } catch { return null; } };
 
-  const mkCtx = (fetchJson, extra = {}) => ({
-    transport: 'http',
-    fetchText: async () => { throw new Error('fetchText should not be called'); },
-    fetchJson,
-    sleep: async () => {},   // no-op so the 4s backoff never slows the suite
-    ...extra,
-  });
-
-  const position = (id, over = {}) => ({
-    id,
-    name: `Engineer ${id}`,
-    positionUrl: `/careers/job/${id}`,
-    standardizedLocations: ['San Diego, CA'],
-    postedTs: 1755000000,
-    ...over,
-  });
-  const pageOf = positions => ({ data: { positions } });
-
-  const QUALCOMM = {
-    name: 'Qualcomm',
-    provider: 'eightfold',
-    careers_url: 'https://careers.qualcomm.com/careers',
-    api: 'https://careers.qualcomm.com/api/pcsx/search?domain=qualcomm.com',
+// A ctx that records every URL + options it is asked for and replays canned
+// pages keyed by the `start` offset.
+function mockCtx(pages) {
+  const calls = [];
+  return {
+    calls,
+    ctx: {
+      transport: 'http',
+      fetchText: async () => '',
+      sleep: async () => {},
+      fetchJson: async (url, opts) => {
+        calls.push({ url, opts });
+        const start = Number(new URL(url).searchParams.get('start') || '0');
+        return pages[start] ?? { positions: [], count: 0 };
+      },
+    },
   };
+}
 
-  if (eightfold.id === 'eightfold') pass('eightfold.id is "eightfold"');
-  else fail(`eightfold.id is ${JSON.stringify(eightfold.id)}`);
+try {
+  const mod = await import(pathToFileURL(join(ROOT, 'providers/eightfold.mjs')).href);
+  const ef = mod.default;
+  const { resolveTenant, buildApiUrl, buildJobUrl, parseEightfoldResponse } = mod;
 
-  // ── detect() ───────────────────────────────────────────────────────────────
+  // ── id ──────────────────────────────────────────────────────────────
+  if (ef.id === 'eightfold') pass('eightfold.id is "eightfold"');
+  else fail(`eightfold.id is ${JSON.stringify(ef.id)}`);
 
-  const hit = eightfold.detect(QUALCOMM);
-  if (hit && hit.url === 'https://careers.qualcomm.com/api/pcsx/search?domain=qualcomm.com') {
-    pass('eightfold.detect() resolves the PCSX search endpoint from api:');
+  // ── detect ──────────────────────────────────────────────────────────
+  const hit = ef.detect({ name: 'Acme', careers_url: 'https://acme.eightfold.ai/careers' });
+  if (hit && hostOf(hit.url) === 'acme.eightfold.ai'
+      && new URL(hit.url).pathname === '/api/apply/v2/jobs'
+      && new URL(hit.url).searchParams.get('start') === '0') {
+    pass('eightfold.detect() derives the /api/apply/v2/jobs URL from a tenant careers_url');
   } else {
-    fail(`eightfold.detect(api) returned ${JSON.stringify(hit)}`);
+    fail(`eightfold.detect(careers) returned ${JSON.stringify(hit)}`);
   }
 
-  // Eightfold is white-labelled onto customer domains, so the hostname alone
-  // must never claim an entry — that would shadow whichever provider owns it.
-  if (eightfold.detect({ name: 'X', careers_url: 'https://careers.example.com/careers' }) === null) {
-    pass('eightfold.detect() returns null without provider: eightfold');
+  // `domain` is optional — the server infers it from the tenant host — but is
+  // forwarded when the entry supplies one, since multi-brand tenants scope by it.
+  if (!new URL(hit.url).searchParams.has('domain')) {
+    pass('eightfold.detect() omits domain= when the entry does not supply one');
   } else {
-    fail('eightfold.detect() claimed an entry that did not opt in');
+    fail(`eightfold.detect() should omit domain=, got ${hit.url}`);
   }
 
-  const derived = eightfold.detect({ name: 'MS', provider: 'eightfold', careers_url: 'https://apply.careers.microsoft.com/careers' });
-  if (derived && derived.url === 'https://apply.careers.microsoft.com/api/pcsx/search?domain=microsoft.com') {
-    pass('eightfold.detect() derives domain from a careers_url subdomain');
+  const withDomain = ef.detect({ name: 'Acme', careers_url: 'https://acme.eightfold.ai/careers?domain=acme.example' });
+  if (new URL(withDomain.url).searchParams.get('domain') === 'acme.example') {
+    pass('eightfold.detect() carries domain= through from the careers_url query');
   } else {
-    fail(`eightfold.detect(careers_url) returned ${JSON.stringify(derived)}`);
+    fail(`domain passthrough returned ${JSON.stringify(withDomain?.url)}`);
   }
 
-  // http:// is not https:// — the scanner only talks to TLS endpoints.
-  if (eightfold.detect({ name: 'X', provider: 'eightfold', careers_url: 'http://careers.example.com/careers' }) === null) {
-    pass('eightfold.detect() rejects a non-HTTPS careers_url');
+  const overridden = ef.detect({
+    name: 'Acme',
+    careers_url: 'https://acme.eightfold.ai/careers?domain=from-url.example',
+    domain: 'explicit.example',
+  });
+  if (new URL(overridden.url).searchParams.get('domain') === 'explicit.example') {
+    pass('eightfold.detect() lets an explicit entry.domain override the URL query');
   } else {
-    fail('eightfold.detect() accepted a plaintext URL');
+    fail(`domain override returned ${JSON.stringify(overridden?.url)}`);
   }
 
-  // ── fetch(): request shape ─────────────────────────────────────────────────
+  // api: takes precedence over careers_url (greenhouse/ashby/oraclecloud house rule).
+  const apiFirst = ef.detect({
+    name: 'Branded',
+    api: 'https://pinned.eightfold.ai/api/apply/v2/jobs',
+    careers_url: 'https://other.eightfold.ai/careers',
+  });
+  if (hostOf(apiFirst?.url) === 'pinned.eightfold.ai') {
+    pass('eightfold.detect() honors api: over careers_url');
+  } else {
+    fail(`api precedence returned ${JSON.stringify(apiFirst)}`);
+  }
 
-  let firstUrl = null, firstOpts = null;
-  await eightfold.fetch(QUALCOMM, mkCtx(async (u, opts) => {
-    if (firstUrl === null) { firstUrl = u; firstOpts = opts; }
-    return pageOf([]);
+  // ── detect: SSRF pin (do not delete) ────────────────────────────────
+  // The host regex is what stands between a portals.yml entry and an arbitrary
+  // outbound fetch. Every one of these must produce a null detect().
+  const badEntries = [
+    // branded CNAME — a real tenant's board, but not *.eightfold.ai
+    { name: 'B', careers_url: 'https://careers.acme.example/careers' },
+    { name: 'B', careers_url: 'https://evil.example/careers' },
+    // the apex itself and multi-label subdomains are not tenant hosts
+    { name: 'B', careers_url: 'https://eightfold.ai/careers' },
+    { name: 'B', careers_url: 'https://a.b.eightfold.ai/careers' },
+    // lookalike suffix
+    { name: 'B', careers_url: 'https://acme.eightfold.ai.evil.example/careers' },
+    // trusted host relegated to the path / hidden in userinfo
+    { name: 'B', careers_url: 'https://evil.example/acme.eightfold.ai/careers' },
+    { name: 'B', careers_url: 'https://acme.eightfold.ai@evil.example/careers' },
+    // plaintext
+    { name: 'B', careers_url: 'http://acme.eightfold.ai/careers' },
+    // nothing to go on
+    {}, { name: 'B' }, { name: 'B', careers_url: null }, { name: 'B', careers_url: 42 },
+    { name: 'B', careers_url: 'not a url' },
+  ];
+  const detectLeaks = badEntries.filter((e) => ef.detect(e) !== null);
+  if (detectLeaks.length === 0) {
+    pass(`eightfold.detect() returns null for all ${badEntries.length} untrusted / unusable entries (SSRF pin)`);
+  } else {
+    fail(`eightfold.detect() accepted: ${detectLeaks.map((e) => e.careers_url).join(' | ')}`);
+  }
+
+  // ── resolveTenant / buildApiUrl / buildJobUrl ───────────────────────
+  const tenant = resolveTenant({ name: 'Acme', careers_url: 'https://ACME.eightfold.ai/careers' });
+  if (tenant?.host === 'acme.eightfold.ai' && tenant.domain === null) {
+    pass('resolveTenant() lowercases the host and reports a null domain when absent');
+  } else {
+    fail(`resolveTenant returned ${JSON.stringify(tenant)}`);
+  }
+
+  const paged = buildApiUrl({ host: 'acme.eightfold.ai', domain: 'acme.example' }, 30, 10);
+  const pp = new URL(paged).searchParams;
+  if (pp.get('start') === '30' && pp.get('num') === '10' && pp.get('domain') === 'acme.example') {
+    pass('buildApiUrl() sets domain/start/num');
+  } else {
+    fail(`buildApiUrl returned ${paged}`);
+  }
+
+  const fallbackUrl = buildJobUrl({ host: 'acme.eightfold.ai', domain: 'acme.example' }, '99');
+  if (hostOf(fallbackUrl) === 'acme.eightfold.ai' && new URL(fallbackUrl).searchParams.get('pid') === '99') {
+    pass('buildJobUrl() builds the tenant fallback posting URL from a pid');
+  } else {
+    fail(`buildJobUrl returned ${fallbackUrl}`);
+  }
+
+  // ── parseEightfoldResponse (pure) ───────────────────────────────────
+  const T = { host: 'acme.eightfold.ai', domain: 'acme.example' };
+  const fixture = {
+    count: 6,
+    positions: [
+      // 0: full row, canonical URL on a branded host (accepted — display-only)
+      {
+        id: 1001,
+        name: 'Staff Backend Engineer',
+        location: 'Berlin,Germany',
+        locations: ['Berlin,Germany', 'Munich,Germany'],
+        t_create: 1_780_000_000,
+        t_update: 1_781_000_000,
+        canonicalPositionUrl: 'https://careers.acme.example/careers/job/1001',
+      },
+      // 1: no canonicalPositionUrl → tenant fallback built from id
+      { id: 1002, name: 'Data Platform Lead', location: 'Berlin,Germany', t_create: 1_780_500_000 },
+      // 2: title only under posting_name
+      { id: 1003, posting_name: 'Product Manager', location: 'Munich,Germany' },
+      // 3: DROP — no title at all
+      { id: 1004, location: 'Berlin,Germany', canonicalPositionUrl: 'https://careers.acme.example/careers/job/1004' },
+      // 4: DROP — no id and no usable URL
+      { name: 'Ghost Role', location: 'Berlin,Germany' },
+      // 5: DROP — non-https canonical URL and no id to fall back on
+      { name: 'Insecure Role', location: 'Berlin', canonicalPositionUrl: 'http://careers.acme.example/careers/job/1005' },
+      // 6: not an object
+      null,
+    ],
+  };
+  const parsed = parseEightfoldResponse(fixture, T, 'Acme');
+
+  if (parsed.length === 3) {
+    pass('parseEightfoldResponse() drops rows with no title / no id / no https URL (7 in → 3 out)');
+  } else {
+    fail(`drop rules: expected 3 kept, got ${parsed.length}: ${JSON.stringify(parsed.map((j) => j.title))}`);
+  }
+
+  const first = parsed[0];
+  if (first?.title === 'Staff Backend Engineer'
+      && first.url === 'https://careers.acme.example/careers/job/1001'
+      && first.company === 'Acme'
+      && first.location === 'Berlin,Germany · Munich,Germany') {
+    pass('parseEightfoldResponse() maps title/url/company and folds locations[] into location');
+  } else {
+    fail(`row mapping: ${JSON.stringify(first)}`);
+  }
+
+  // t_create is epoch SECONDS — not ms, and not an ISO string like every
+  // other provider's date field. Getting this wrong dates postings to 1970.
+  if (first?.postedAt === 1_780_000_000_000) {
+    pass('parseEightfoldResponse() converts t_create (epoch seconds) to epoch ms');
+  } else {
+    fail(`postedAt = ${first?.postedAt} (expected 1780000000000)`);
+  }
+
+  if (parsed[1]?.url === buildJobUrl(T, '1002')) {
+    pass('parseEightfoldResponse() falls back to the tenant posting URL when canonicalPositionUrl is absent');
+  } else {
+    fail(`fallback url = ${parsed[1]?.url}`);
+  }
+
+  if (parsed[2]?.title === 'Product Manager' && parsed[2]?.postedAt === undefined) {
+    pass('parseEightfoldResponse() reads posting_name as a title fallback and omits postedAt when undated');
+  } else {
+    fail(`posting_name row = ${JSON.stringify(parsed[2])}`);
+  }
+
+  // Degenerate payloads must return [] rather than throw.
+  const degenerate = [null, undefined, {}, [], 'nope', { positions: null }, { positions: 'x' }];
+  if (degenerate.every((j) => {
+    const r = parseEightfoldResponse(j, T, 'X');
+    return Array.isArray(r) && r.length === 0;
+  })) {
+    pass('parseEightfoldResponse() returns [] for null/{}/[]/non-array payloads (no crash)');
+  } else {
+    fail('parseEightfoldResponse() should return [] for degenerate payloads');
+  }
+
+  // ── fetch: pagination, page-size cap, redirect:"error" ──────────────
+  const full = (n, offset) => Array.from({ length: n }, (_, i) => ({
+    id: offset + i, name: `Role ${offset + i}`, location: 'Berlin,Germany',
   }));
-  if (firstOpts?.redirect === 'error') pass('eightfold.fetch() passes redirect:"error"');
-  else fail(`eightfold.fetch() should pass redirect:"error", got ${JSON.stringify(firstOpts)}`);
+  const { calls, ctx } = mockCtx({
+    0: { count: 25, positions: full(10, 0) },
+    10: { count: 25, positions: full(10, 10) },
+    20: { count: 25, positions: full(5, 20) },   // short page → stop
+  });
+  const jobs = await ef.fetch({ name: 'Acme', careers_url: 'https://acme.eightfold.ai/careers' }, ctx);
 
-  // Without the Referer the host 403s — this header IS the auth.
-  if (firstOpts?.headers?.Referer === 'https://careers.qualcomm.com/careers') {
-    pass('eightfold.fetch() sends the careers Referer the host requires');
+  if (calls.length === 3 && jobs.length === 25) {
+    pass('eightfold.fetch() paginates by start= and aggregates (3 pages → 25 jobs)');
   } else {
-    fail(`eightfold.fetch() Referer was ${JSON.stringify(firstOpts?.headers?.Referer)}`);
+    fail(`pagination: ${calls.length} requests, ${jobs.length} jobs (expected 3 / 25)`);
   }
 
-  // The location param is accepted but ignored by PCSX; sending it would imply
-  // a filter the scanner never actually got.
-  if (firstUrl && !/[?&]location=/.test(firstUrl) && firstUrl.startsWith('https://careers.qualcomm.com/api/pcsx/search?domain=qualcomm.com&')) {
-    pass('eightfold.fetch() hits the PCSX search path and sends no location param');
+  // The server caps a page at 10 regardless of what `num` asks for, so
+  // pagination is mandatory rather than an optimization.
+  if (calls.every((c) => new URL(c.url).searchParams.get('num') === '10')) {
+    pass('eightfold.fetch() requests num=10 — the server caps a page at 10 regardless');
   } else {
-    fail(`eightfold.fetch() first URL was ${firstUrl}`);
+    fail(`page size: ${calls.map((c) => new URL(c.url).searchParams.get('num')).join(',')}`);
   }
 
-  // ── fetch(): normalization ─────────────────────────────────────────────────
-
-  const jobs = await eightfold.fetch({ ...QUALCOMM, queries: ['engineer'] }, mkCtx(async () => pageOf([position('111')])));
-  const j = jobs[0];
-  if (jobs.length === 1 && j.url === 'https://careers.qualcomm.com/careers/job/111' && j.company === 'Qualcomm' && j.location === 'San Diego, CA') {
-    pass('eightfold.fetch() normalizes a position to an absolute URL, company and location');
+  if (calls.every((c) => c.opts?.redirect === 'error')) {
+    pass('eightfold.fetch() passes redirect:"error" on every page (SSRF via redirect)');
   } else {
-    fail(`eightfold.fetch() normalized to ${JSON.stringify(j)}`);
+    fail(`redirect option: ${JSON.stringify(calls.map((c) => c.opts?.redirect))}`);
   }
 
-  // postedTs is epoch SECONDS. Passing it through unscaled would date every
-  // posting to 1970 and make every freshness filter silently drop the board.
-  if (j.postedAt === 1755000000 * 1000) pass('eightfold.fetch() converts postedTs seconds to postedAt ms');
-  else fail(`eightfold.fetch() postedAt was ${j.postedAt}, expected ${1755000000 * 1000}`);
+  if (calls.every((c) => c.opts?.headers?.['User-Agent'] && c.opts.headers.Accept === 'application/json')) {
+    pass('eightfold.fetch() sends browser UA + Accept: application/json');
+  } else {
+    fail(`fetch headers = ${JSON.stringify(calls[0]?.opts?.headers)}`);
+  }
 
-  const undated = await eightfold.fetch({ ...QUALCOMM, queries: ['engineer'] }, mkCtx(async () => pageOf([position('112', { postedTs: undefined })])));
-  if (undated[0].postedAt === undefined) pass('eightfold.fetch() omits postedAt when the position carries no date');
-  else fail(`eightfold.fetch() invented postedAt ${undated[0].postedAt}`);
+  if (calls.every((c) => hostOf(c.url) === 'acme.eightfold.ai')) {
+    pass('eightfold.fetch() only ever requests the pinned tenant host');
+  } else {
+    fail(`hosts requested: ${calls.map((c) => hostOf(c.url)).join(',')}`);
+  }
 
-  // The same req comes back under several query terms — the board is a union,
-  // not a concatenation.
-  const deduped = await eightfold.fetch({ ...QUALCOMM, queries: ['engineer', 'designer'] }, mkCtx(async () => pageOf([position('222')])));
-  if (deduped.length === 1) pass('eightfold.fetch() dedupes a position seen under two query terms');
-  else fail(`eightfold.fetch() returned ${deduped.length} jobs for one position across two terms`);
+  // An empty board is a valid answer, not an error.
+  const empty = mockCtx({ 0: { count: 0, positions: [] } });
+  const none = await ef.fetch({ name: 'Acme', careers_url: 'https://acme.eightfold.ai/careers' }, empty.ctx);
+  if (Array.isArray(none) && none.length === 0 && empty.calls.length === 1) {
+    pass('eightfold.fetch() returns [] after a single request for an empty board');
+  } else {
+    fail(`empty board: ${none.length} jobs in ${empty.calls.length} requests`);
+  }
 
-  // ── fetch(): pagination bounds ─────────────────────────────────────────────
+  // max_pages caps the loop even when the board claims more.
+  const bigPages = {};
+  for (let s = 0; s <= 500; s += 10) bigPages[s] = { count: 500, positions: full(10, s) };
+  const capped = mockCtx(bigPages);
+  const cappedJobs = await ef.fetch(
+    { name: 'Big', careers_url: 'https://big.eightfold.ai/careers', max_pages: 4 },
+    capped.ctx,
+  );
+  if (capped.calls.length === 4 && cappedJobs.length === 40) {
+    pass('eightfold.fetch() honors max_pages on the entry (4 pages → 40 jobs)');
+  } else {
+    fail(`max_pages: ${capped.calls.length} requests, ${cappedJobs.length} jobs (expected 4 / 40)`);
+  }
 
-  let calls = 0;
-  await eightfold.fetch({ ...QUALCOMM, queries: ['engineer'], max_pages: 3 }, mkCtx(async () => {
-    calls++;
-    return pageOf(Array.from({ length: 10 }, (_, i) => position(`${calls}-${i}`)));
-  }));
-  if (calls === 3) pass('eightfold.fetch() stops at entry.max_pages on a full board');
-  else fail(`eightfold.fetch() made ${calls} requests with max_pages: 3`);
+  // ctx.maxPages is verify-portals.mjs's health-probe hint — it must narrow further.
+  const probe = mockCtx(bigPages);
+  await ef.fetch({ name: 'Big', careers_url: 'https://big.eightfold.ai/careers' }, { ...probe.ctx, maxPages: 1 });
+  if (probe.calls.length === 1) {
+    pass('eightfold.fetch() honors the ctx.maxPages probe hint (1 page)');
+  } else {
+    fail(`ctx.maxPages hint: ${probe.calls.length} requests (expected 1)`);
+  }
 
-  // A short page is the last page. Paging on burns a request against a host
-  // that 429s after nine of them.
-  calls = 0;
-  await eightfold.fetch({ ...QUALCOMM, queries: ['engineer'], max_pages: 10 }, mkCtx(async () => {
-    calls++;
-    return pageOf(Array.from({ length: 4 }, (_, i) => position(`s${i}`)));
-  }));
-  if (calls === 1) pass('eightfold.fetch() stops on a short page instead of paging on');
-  else fail(`eightfold.fetch() made ${calls} requests after a short page`);
-
-  // verify-portals' liveness probe passes maxPages: 1 and only needs to tell a
-  // live board from a broken one — it must not walk seven query terms to do it.
-  calls = 0;
-  await eightfold.fetch(QUALCOMM, mkCtx(async () => {
-    calls++;
-    return pageOf(Array.from({ length: 10 }, (_, i) => position(`p${calls}-${i}`)));
-  }, { maxPages: 1 }));
-  if (calls === 1) pass('eightfold.fetch() honors ctx.maxPages across pages AND query terms');
-  else fail(`eightfold.fetch() made ${calls} requests under ctx.maxPages: 1`);
-
-  // ── fetch(): failure modes ─────────────────────────────────────────────────
-
-  // A 429 that recovers must not lose the page it was retrying.
-  let attempts = 0;
-  const recovered = await eightfold.fetch({ ...QUALCOMM, queries: ['engineer'] }, mkCtx(async () => {
-    if (++attempts <= 2) throw new Error('HTTP 429 Too Many Requests');
-    return pageOf([position('333')]);
-  }));
-  if (recovered.length === 1 && attempts === 3) pass('eightfold.fetch() backs off through a 429 and keeps the page');
-  else fail(`eightfold.fetch() after transient 429: ${recovered.length} jobs in ${attempts} attempts`);
-
-  // Exhausted retries must throw. Returning what it had would report a
-  // truncated board as a complete one — indistinguishable from a real board
-  // that shrank, which is how a dead scan looks like a quiet week.
-  let threw = null;
+  // An undetectable entry must throw BEFORE any network call.
+  let touched = false;
   try {
-    await eightfold.fetch({ ...QUALCOMM, queries: ['engineer'] }, mkCtx(async () => { throw new Error('HTTP 429 Too Many Requests'); }));
+    await ef.fetch(
+      { name: 'BadCo', careers_url: 'https://example.com/careers' },
+      { transport: 'http', fetchText: async () => '', fetchJson: async () => { touched = true; return {}; } },
+    );
+    fail('eightfold.fetch() should throw for an undetectable entry');
   } catch (e) {
-    threw = e;
+    if (/cannot derive API URL for BadCo/.test(e.message) && !touched) {
+      pass('eightfold.fetch() throws "cannot derive API URL" before any request');
+    } else {
+      fail(`unexpected fetch error / fetchJson called=${touched}: ${e.message}`);
+    }
   }
-  if (threw && /rate-limited/.test(threw.message)) pass('eightfold.fetch() throws when retries are exhausted rather than truncating');
-  else fail(`eightfold.fetch() should throw on exhausted retries, got ${threw ? threw.message : 'no error'}`);
-
-  // A non-429 error is not a rate limit and must not be retried into silence.
-  threw = null;
-  try {
-    await eightfold.fetch({ ...QUALCOMM, queries: ['engineer'] }, mkCtx(async () => { throw new Error('HTTP 403 Forbidden'); }));
-  } catch (e) {
-    threw = e;
-  }
-  if (threw && /403/.test(threw.message)) pass('eightfold.fetch() propagates a non-429 error unretried');
-  else fail(`eightfold.fetch() swallowed a 403: ${threw ? threw.message : 'no error'}`);
-
-  threw = null;
-  try {
-    await eightfold.fetch({ name: 'Nope', careers_url: 'https://example.com/jobs' }, mkCtx(async () => pageOf([])));
-  } catch (e) {
-    threw = e;
-  }
-  if (threw && /cannot derive PCSX config/.test(threw.message)) pass('eightfold.fetch() refuses an entry it cannot resolve');
-  else fail(`eightfold.fetch() on an unresolvable entry: ${threw ? threw.message : 'no error'}`);
 } catch (e) {
   fail(`eightfold provider tests crashed: ${e.message}`);
 }

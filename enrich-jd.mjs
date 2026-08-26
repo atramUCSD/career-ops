@@ -33,6 +33,7 @@ import { createHash } from 'node:crypto';
 import { parsePendingRows } from './swarm.mjs';
 import { resolveAtsApi, greenhouseEmbed } from './liveness-api.mjs';
 import { DEFAULT_USER_AGENT } from './user-agent.mjs';
+import { isMainModule } from './lib/is-main-module.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const CACHE = join(ROOT, 'data/jd-cache');
@@ -530,4 +531,4 @@ function selfTest() {
   if (!process.exitCode) console.log('enrich-jd self-test OK');
 }
 
-if (process.argv[1] && process.argv[1].endsWith('enrich-jd.mjs')) await main();
+if (isMainModule(import.meta.url)) await main();

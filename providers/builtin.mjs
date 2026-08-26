@@ -1,6 +1,8 @@
 // @ts-check
 /** @typedef {import('./_types.js').Provider} Provider */
 
+import { decodeEntities } from './_html-entities.mjs';
+
 // Built In (builtin.com) — the tech-hub job network (Built In NYC / Chicago /
 // LA / Austin / Boston / Colorado / Seattle / SF, plus the national site). Not
 // an ATS: it aggregates postings from employers that pay to list, so it surfaces
@@ -52,22 +54,6 @@ const DEFAULT_MAX_JOBS = 1000;
 const PAGE_DELAY_MS = 250; // polite pacing — Built In is a single small operator
 
 const ALLOWED_HOST = 'builtin.com';
-
-const NAMED_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
-
-/** @param {string} s */
-function decodeEntities(s) {
-  return s.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (m, body) => {
-    if (body[0] === '#') {
-      const code = body[1] === 'x' || body[1] === 'X' ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10);
-      // Mirrors radancy.mjs: a malformed or adversarial entity degrades to the
-      // original text rather than throwing RangeError out of the whole parse.
-      const valid = Number.isFinite(code) && code >= 0 && code <= 0x10ffff && !(code >= 0xd800 && code <= 0xdfff);
-      return valid ? String.fromCodePoint(code) : m;
-    }
-    return NAMED_ENTITIES[body.toLowerCase()] ?? m;
-  });
-}
 
 /** @param {string} s */
 function clean(s) {
