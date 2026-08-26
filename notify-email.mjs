@@ -37,6 +37,20 @@ import { BANDS } from './callback-score.mjs';
 import { sendRaw } from './gmail-send.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
 
+// The scheduled path (scripts/alert.cmd under Task Scheduler) runs with a
+// minimal environment and sources nothing, so without this the three GMAIL_*
+// variables never reach gmail-send.mjs and every unattended send fails on
+// "missing credentials". Same idiom, and same optional-dependency posture, as
+// scan.mjs.
+try {
+  const { config } = await import('dotenv');
+  // quiet: the startup banner would otherwise land on stdout, which --dry-run
+  // and the seed path keep clean.
+  config({ quiet: true });
+} catch {
+  // dotenv is optional — fall back to whatever is already in process.env.
+}
+
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const STATE_PATH = 'data/alert-state.json';
 const ARTIFACT_PATH = 'output/pipeline-artifact.html';

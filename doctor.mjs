@@ -17,6 +17,7 @@ import { resolveExtractorMode } from './browser-extract.mjs';
 import { parseConfigByExtension } from './jsonc-parse.mjs';
 import { validateFlags } from './lib/cli-flags.mjs';
 import { geminiNodeFloor } from './lib/gemini-node-floor.mjs';
+import { credentialsFrom } from './gmail-send.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -192,6 +193,57 @@ function checkTrackedBakFiles(root) {
       'git rm --cached <each path>      # untrack, leaving the file on disk',
       'git commit -m "chore: untrack .bak backups"',
     ],
+  };
+}
+
+// Scheduled email alerts are opt-in, so an untouched install must not be
+// nagged about them: with neither config/alerts.yml nor a single GMAIL_*
+// variable present, this check stays silent (returns null, filtered out by the
+// caller). Once the user has started wiring it up, a half-configured alert is
+// worth shouting about — otherwise the first sign of trouble is a scheduled
+// 07:00 run that quietly fails, and Task Scheduler reports nothing.
+//
+// Warning tier only, never a failure: `missing` is reserved for the four
+// cold-start prerequisites AGENTS.md lists, and the alert is not one of them.
+function checkAlertReadiness(root) {
+  const configPath = join(root, 'config', 'alerts.yml');
+  const configured = existsSync(configPath);
+  const { missing: missingEnv } = credentialsFrom(process.env);
+  // Opted in at all? Either half counts — a .env with the credentials but no
+  // alerts.yml is just as broken as the reverse.
+  if (!configured && missingEnv.length === 3) return null;
+
+  const problems = [];
+  const fix = [];
+  if (!configured) {
+    problems.push('config/alerts.yml is missing');
+    fix.push('cp config/alerts.example.yml config/alerts.yml   # then set alerts.to');
+  } else {
+    let to = '';
+    try {
+      const parsed = yaml.load(readFileSync(configPath, 'utf-8')) || {};
+      to = String((parsed.alerts?.to ?? parsed.to) || '').trim();
+    } catch {
+      problems.push('config/alerts.yml does not parse as YAML');
+      fix.push('config/alerts.yml — compare against config/alerts.example.yml');
+    }
+    if (!problems.length && !to) {
+      problems.push('alerts.to is empty');
+      fix.push('config/alerts.yml — set alerts.to to the address that should receive the mail');
+    }
+  }
+  if (missingEnv.length) {
+    // Names only. A doctor report gets pasted into issues.
+    problems.push(`${missingEnv.join(', ')} not set`);
+    fix.push('.env — see docs/ALERTS.md for minting a send-scoped refresh token');
+  }
+  if (!problems.length) {
+    return { pass: true, label: 'Scheduled email alerts configured (recipient + send credentials present)' };
+  }
+  return {
+    warn: true,
+    label: `Scheduled email alerts half-configured: ${problems.join('; ')} — \`node notify-email.mjs\` will fail`,
+    fix: [...fix, 'node notify-email.mjs --seed      # then --dry-run before the first real send'],
   };
 }
 
@@ -596,6 +648,7 @@ async function main() {
     checkAutoDir('output'),
     checkAutoDir('reports'),
     checkPlugins(projectRoot),
+    checkAlertReadiness(projectRoot),
   ].filter(Boolean);
 
   // Network-bound ATS slug probe — only under --strict.
@@ -677,10 +730,12 @@ function onboardingState(root) {
 
   const mcpCheck = checkPlaywrightMcp(root, activeCli);
   const bakCheck = checkTrackedBakFiles(root);
+  const alertCheck = checkAlertReadiness(root);
   const warnings = [
     ...(cliWarning ? [cliWarning] : []),
     ...(mcpCheck?.warn ? [`${mcpCheck.label}\n→ ${[].concat(mcpCheck.fix || []).join('\n  ')}`] : []),
     ...(bakCheck.warn ? [`${bakCheck.label}\n→ ${[].concat(bakCheck.fix || []).join('\n  ')}`] : []),
+    ...(alertCheck?.warn ? [`${alertCheck.label}\n→ ${[].concat(alertCheck.fix || []).join('\n  ')}`] : []),
   ];
 
   const playwrightMcp = activeCli !== 'unknown' && MCP_CONFIGS.find((c) => c.cli === activeCli)
