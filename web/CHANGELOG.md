@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.7.0](https://github.com/atramUCSD/career-ops/compare/web-v0.6.1...web-v0.7.0) (2026-08-26)
+
+
+### Features
+
+* expired-job logging, pipeline pruning, lane triage, alerts, and the artifact renderer ([670ac9a](https://github.com/atramUCSD/career-ops/commit/670ac9ab67485f0c39c62c4eab7b86436ce78886))
+
+
+### Bug Fixes
+
+* **deps:** patch both HIGH advisories in web (js-yaml 4.3.1, nanoid 3.3.18) ([a094ec9](https://github.com/atramUCSD/career-ops/commit/a094ec9ddbe8f21e8db6dba87f548532af2a820e))
+* **web:** finish Unicode company keys for explore + registry ([#2668](https://github.com/atramUCSD/career-ops/issues/2668)) ([c294242](https://github.com/atramUCSD/career-ops/commit/c294242dbb6a78a03bac738f397c568c02316971))
+
 ## [0.6.1](https://github.com/santifer/career-ops/compare/web-v0.6.0...web-v0.6.1) (2026-08-10)
 
 

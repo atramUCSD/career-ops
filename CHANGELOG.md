@@ -1,5 +1,41 @@
 # Changelog
 
+## [1.27.0](https://github.com/atramUCSD/career-ops/compare/career-ops-v1.26.0...career-ops-v1.27.0) (2026-08-26)
+
+
+### Features
+
+* --api-only liveness sweep that never falls back to the browser ([943fa78](https://github.com/atramUCSD/career-ops/commit/943fa78002379a5362a1f0d941cb4e808a06dbb7))
+* **alerts:** mail a scheduled diff of the pipeline, never a dump ([ca15e39](https://github.com/atramUCSD/career-ops/commit/ca15e3956693a068bb05564b284011fbe3c77372))
+* **artifact:** render the pipeline as a page and score reply odds per posting ([caf7620](https://github.com/atramUCSD/career-ops/commit/caf76209a476f48c77b12f60180911ce8b4c9451))
+* expired-job logging, pipeline pruning, lane triage, alerts, and the artifact renderer ([670ac9a](https://github.com/atramUCSD/career-ops/commit/670ac9ab67485f0c39c62c4eab7b86436ce78886))
+* **hooks:** carry the change log into each session from tracked settings ([c2241b1](https://github.com/atramUCSD/career-ops/commit/c2241b19514c193133d430b45947a43c6c464516))
+* **lanes:** give the core archetypes an evaluation-side registration ([2cefe86](https://github.com/atramUCSD/career-ops/commit/2cefe864709d5f5ae8516d87ac23e92827b3df91))
+* **liveness:** authoritative API check for Eightfold career sites ([ca25a4f](https://github.com/atramUCSD/career-ops/commit/ca25a4fb38fd61163a827c6c7d184984dc0ed3b6))
+* **liveness:** authoritative API checks for iCIMS, SmartRecruiters, embedded Greenhouse ([67242ad](https://github.com/atramUCSD/career-ops/commit/67242ada7fc7b5414d6c2bd2fdf92a919f716898))
+* **liveness:** authoritative API checks for iCIMS, SmartRecruiters, embedded Greenhouse ([96d5953](https://github.com/atramUCSD/career-ops/commit/96d59535da810cef491aac15401159d53f965d86))
+* **providers:** Built In (builtin.com) listing provider ([58a06f4](https://github.com/atramUCSD/career-ops/commit/58a06f447f6f828a35ee4209124f4bbc7540b9ce))
+* **providers:** Built In (builtin.com) listing provider ([bf49e6e](https://github.com/atramUCSD/career-ops/commit/bf49e6e3cc7d6350fb3d84648bf431018b40bb27))
+* **providers:** read white-labelled Eightfold boards over the PCSX search API ([ae73498](https://github.com/atramUCSD/career-ops/commit/ae73498d4fca02f84cd55753c8b7a9fdf003cdfe))
+* prune dead pipeline entries and remember them across scans ([4194d23](https://github.com/atramUCSD/career-ops/commit/4194d23aeab0f9ca1103077df7d15e02c5d1c5a9))
+* record confirmed-expired postings in data/expired-jobs.md ([f254683](https://github.com/atramUCSD/career-ops/commit/f2546836319de75062a6a6a68312239a683db288))
+* **score:** score postings from job-description facts, not titles ([4bd4844](https://github.com/atramUCSD/career-ops/commit/4bd48445bba5f1a3094f125a5a7707e9a270c829))
+* **swarm:** lane-aware triage conductor with a single lane definition ([946c517](https://github.com/atramUCSD/career-ops/commit/946c517fdd8726abfeeba1e5b18e3a56fedf0c33))
+
+
+### Bug Fixes
+
+* **callback-score:** stop geography and the core lane inflating strangers ([ac91f27](https://github.com/atramUCSD/career-ops/commit/ac91f27810570ff09c4c8613a81440fc5e22bd56))
+* **ci:** skip the upgrade leg when nothing managed changed, instead of failing ([#2697](https://github.com/atramUCSD/career-ops/issues/2697)) ([9dcfd2f](https://github.com/atramUCSD/career-ops/commit/9dcfd2f668628879539c2ccfb3f17ce67f2824eb))
+* **deps:** patch both HIGH advisories in web (js-yaml 4.3.1, nanoid 3.3.18) ([a094ec9](https://github.com/atramUCSD/career-ops/commit/a094ec9ddbe8f21e8db6dba87f548532af2a820e))
+* **liveness:** a 200 is not always alive, and a 403 is not always a block ([894d1d2](https://github.com/atramUCSD/career-ops/commit/894d1d27cf6a41cc0db6dd58236eadbe1170d166))
+* **liveness:** an unrendered page is not a removed posting ([644f957](https://github.com/atramUCSD/career-ops/commit/644f957b42fd1442907e9ff1430b096d272f1436))
+* **liveness:** stop waiting for hydration on a body that is already final ([443e8c4](https://github.com/atramUCSD/career-ops/commit/443e8c4d94c06dae99cbe0eaf6a227e8f7d60411))
+* **scan:** let a padded title keyword mean the bare word ([6b1701c](https://github.com/atramUCSD/career-ops/commit/6b1701c3d5b9263ad40adcfad51ab84f6b72471b))
+* **update-system:** disable fsmonitor for the tool's own git calls ([#8](https://github.com/atramUCSD/career-ops/issues/8)) ([e5bddf3](https://github.com/atramUCSD/career-ops/commit/e5bddf374aeeb5c8448c0ce368dc23f67fb36abc))
+* **update:** read the entrypoint file mode off the index line, not the blob ([e5ddae2](https://github.com/atramUCSD/career-ops/commit/e5ddae2b531714353a48a832c1c660e29bc76e7c))
+* **web:** finish Unicode company keys for explore + registry ([#2668](https://github.com/atramUCSD/career-ops/issues/2668)) ([c294242](https://github.com/atramUCSD/career-ops/commit/c294242dbb6a78a03bac738f397c568c02316971))
+
 ## [1.26.0](https://github.com/santifer/career-ops/compare/career-ops-v1.25.0...career-ops-v1.26.0) (2026-08-10)
 
 
