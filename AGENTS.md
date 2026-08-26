@@ -36,7 +36,7 @@ Auto-memory at `~/.claude/projects/.../memory/` is for **behavioural steering on
 
 ### Where rules live
 
-Rules belong in files the harness reads automatically — `CLAUDE.md`, `CODEX.md`, `AGENTS.md`, `modes/*.md`, `MEMORY.md`. Do not create sidecar documentation that requires manual loading. Reinforcement-without-enforcement decays.
+Rules belong in files the harness reads automatically — `CLAUDE.md`, `CODEX.md`, `AGENTS.md`, `modes/*.md`, and the auto-memory index at `~/.claude/projects/.../memory/MEMORY.md` (there is no `MEMORY.md` in this repo; repo-local procedural rules go in `modes/_custom.md`). Do not create sidecar documentation that requires manual loading. Reinforcement-without-enforcement decays.
 
 ## Untrusted External Content (CRITICAL)
 
@@ -73,6 +73,8 @@ AI-powered, CLI-agnostic job search automation: pipeline tracking, offer evaluat
 
 ### Main Files
 
+Curated subset — **the exhaustive script reference is [docs/SCRIPTS.md](docs/SCRIPTS.md)**; check there before assuming a capability is missing. Deeper dives: [docs/SWARM.md](docs/SWARM.md) (parallel workers), [docs/SUPPORTED_JOB_BOARDS.md](docs/SUPPORTED_JOB_BOARDS.md), [docs/SUPPORTED_CLIS.md](docs/SUPPORTED_CLIS.md), [docs/PLUGINS.md](docs/PLUGINS.md), [ARCHITECTURE.md](ARCHITECTURE.md).
+
 | File | Function |
 |------|----------|
 | `data/applications.md` | Application tracker |
@@ -89,6 +91,7 @@ AI-powered, CLI-agnostic job search automation: pipeline tracking, offer evaluat
 | `article-digest.md` | Compact proof points from portfolio (optional) |
 | `interview-prep/story-bank.md` | Accumulated STAR+R stories |
 | `interview-prep/{company}-{role}.md` | Company-specific interview intel |
+| `interview-prep/question-bank.md` | Per-question performance log, 🔴 = proven gap (user layer, no fixed schema; created on the first `interview/debrief` or `interview/practice`, read by `interview/plan` and `weekly-digest.mjs`) |
 | `generate-pdf.mjs` | Playwright: HTML to PDF |
 | `generate-latex.mjs` | LaTeX CV validator + pdflatex compiler |
 | `scan.mjs` | Zero-token portal scanner (Greenhouse/Ashby/Lever APIs, zero LLM cost) |
@@ -115,7 +118,7 @@ AI-powered, CLI-agnostic job search automation: pipeline tracking, offer evaluat
 | `contacts.mjs` | Job-search phonebook → vCard 3.0 exporter — stable UIDs so re-imports update instead of duplicating on platforms that honor vCard UID (JSON, `--summary`, `--vcf`, `--caller-id`) |
 | `data/contacts.tsv` | Job-search contact list — recruiters/hiring managers/peers saved from `contacto` (user layer, gitignored third-party PII) |
 | `outcome.mjs` | Record application outcome, archive artifacts, and sync tracker (`node outcome.mjs <selector> <type>`) |
-| `weekly-digest.mjs` | Rolls up `interview-prep/sessions/*.md` (default: current ISO week) into a per-company round summary, recurring competency-tag counts, and best-effort recurring 🔴 gaps from `question-bank.md` (JSON or `--summary`) |
+| `weekly-digest.mjs` | Rolls up `interview-prep/sessions/*.md` (default: current ISO week) into a per-company round summary, recurring competency-tag counts, and best-effort recurring 🔴 gaps from `interview-prep/question-bank.md` (JSON or `--summary`) |
 | `reports/` | Evaluation reports `{###}-{company-slug}-{YYYY-MM-DD}.md` — Blocks A-F + G (Posting Legitimacy) + Risk Summary + `## Machine Summary` YAML; header includes `**Legitimacy:** {tier}` |
 
 ### Plugins (optional)
@@ -368,7 +371,7 @@ Headless worker command per CLI:
 
 - Node.js (`.mjs`), Playwright (PDF + scraping), YAML (config), HTML/CSS (template), Markdown (data), Canva MCP (optional visual CV)
 - Output in `output/` (gitignored) · Reports in `reports/` · JDs in `jds/` (referenced as `local:jds/{file}` in pipeline.md) · Batch in `batch/` (gitignored except scripts and prompt)
-- Report numbering: sequential 3-digit zero-padded, max existing + 1
+- Report numbering: sequential 3-digit zero-padded. Single-worker runs may take max existing + 1; **parallel fan-outs MUST reserve via `node reserve-report-num.mjs`** (see "Headless / Batch Mode") — computing max+1 concurrently is the #749 race
 - **RULE: After each batch of evaluations, run `node merge-tracker.mjs`** to merge tracker additions and avoid duplications.
 - **RULE: NEVER create new entries in applications.md if company+role already exists.** Update the existing entry.
 
