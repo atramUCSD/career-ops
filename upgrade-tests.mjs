@@ -57,9 +57,14 @@ function buildMirror(work, targetSha) {
 }
 
 function writeGitConfig(work, mirror) {
+  // core.* goes in the leg's global config, not just in our own git wrapper: the
+  // leg runs the OLD release's update-system.mjs, whose git calls predate any
+  // fix we make here. Git for Windows enables the fsmonitor daemon system-wide,
+  // and the daemon holds an open handle on the temp install, so the rmSync() in
+  // runLeg's finally fails with EBUSY and the leg dies before it can report.
   const cfg = join(work, 'gitconfig');
   const url = pathToFileURL(mirror).href;
-  writeFileSync(cfg, `[user]\n\tname = upgrade-tests\n\temail = upgrade-tests@career-ops.test\n[url "${url}"]\n\tinsteadOf = ${CANONICAL}\n[safe]\n\tdirectory = *\n`);
+  writeFileSync(cfg, `[user]\n\tname = upgrade-tests\n\temail = upgrade-tests@career-ops.test\n[url "${url}"]\n\tinsteadOf = ${CANONICAL}\n[safe]\n\tdirectory = *\n[core]\n\tfsmonitor = false\n\tuseBuiltinFSMonitor = false\n`);
   return cfg;
 }
 

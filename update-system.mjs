@@ -519,10 +519,28 @@ function gitTimeoutEnvVar(args) {
   return args[0] === 'fetch' ? 'CAREER_OPS_GIT_FETCH_TIMEOUT_MS' : 'CAREER_OPS_GIT_TIMEOUT_MS';
 }
 
+// Ambient `core.fsmonitor=true` (the default on Git for Windows) makes the first
+// git command in a repository spawn a daemon and print "starting fsmonitor-daemon
+// in '<path>'" on STDOUT, ahead of the command's real output. Every caller that
+// reads a git result positionally then parses the banner instead of the answer —
+// prepareMaterializedSkillEntrypointsForStage() guards against this by matching
+// the index mode with an anchored regex, but that is one call site defending
+// itself, not a fix for the wrappers.
+//
+// The daemon also holds an open handle on the repository directory, which fails
+// temp-fixture cleanup with EBUSY and aborts the suite mid-run.
+//
+// This tool's git calls are short and one-shot, so a file monitor buys nothing:
+// disable it per invocation rather than filtering the banner downstream. Both
+// knobs are required — Git for Windows ships a system-level
+// `core.useBuiltinFSMonitor=true` (the pre-2.37 name) that setting
+// `core.fsmonitor` alone does not override.
+const GIT_NO_FSMONITOR = ['-c', 'core.fsmonitor=false', '-c', 'core.useBuiltinFSMonitor=false'];
+
 export function gitIn(root, ...args) {
   const timeout = gitTimeoutMs(args);
   try {
-    return execFileSync('git', args, { cwd: root, encoding: 'utf-8', timeout }).trim();
+    return execFileSync('git', [...GIT_NO_FSMONITOR, ...args], { cwd: root, encoding: 'utf-8', timeout }).trim();
   } catch (err) {
     if (isTimeoutLikeError(err)) {
       throw new Error(`${describeGitCommand(args)} timed out after ${timeoutSeconds(timeout)}s. If your network is slow, retry or set ${gitTimeoutEnvVar(args)} to a larger value.`);
@@ -548,7 +566,7 @@ function git(...args) {
 function gitQuiet(...args) {
   const timeout = gitTimeoutMs(args);
   try {
-    return execFileSync('git', args, {
+    return execFileSync('git', [...GIT_NO_FSMONITOR, ...args], {
       cwd: ROOT, encoding: 'utf-8', timeout, stdio: ['pipe', 'pipe', 'pipe'],
     }).trim();
   } catch (err) {
