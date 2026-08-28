@@ -820,9 +820,13 @@ render();
 }
 
 function main(argv) {
+  // --root points the whole build at another user layer (see profiles.mjs). It is
+  // the only argument buildModel already understood; main just never exposed it.
+  const rootIdx = argv.indexOf('--root');
+  const root = rootIdx >= 0 ? resolve(argv[rootIdx + 1]) : ROOT;
   const outIdx = argv.indexOf('--out');
-  const out = outIdx >= 0 ? argv[outIdx + 1] : join(ROOT, 'output', 'pipeline-artifact.html');
-  const model = buildModel();
+  const out = outIdx >= 0 ? argv[outIdx + 1] : join(root, 'output', 'pipeline-artifact.html');
+  const model = buildModel({ root });
   const html = renderHtml(model);
   writeFileSync(resolve(out), html);
   const laneCounts = model.lanes.map(l => `${l.id}=${model.rows.filter(r => r.lane === l.id).length}`).join(' ');

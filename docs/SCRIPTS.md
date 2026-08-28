@@ -631,7 +631,29 @@ node build-artifact.mjs                       # writes output/pipeline-artifact.
 node build-artifact.mjs --out /tmp/page.html  # anywhere else
 ```
 
+`--root <dir>` builds the page from another user layer entirely — its `portals.yml`, `data/pipeline.md`, `config/profile.yml` and `config/lanes.yml` instead of this checkout's. That is how `profiles.mjs` (below) renders an artifact for someone other than the repo owner; on its own the flag is rarely worth typing by hand.
+
 Each row also carries a match score from `callback-score.mjs` (above), sorted highest first by default, and the facts `enrich-jd.mjs` read from its description. The page is a build output, never hand-edited: rows come from `data/pipeline.md` through `swarm.mjs`'s parser, lanes from `config/lanes.yml`, posting dates and trust scores from `data/scan-history.tsv`, scores and status from `data/applications.md`, and the panel from `data/expired-jobs.md` plus `data/discard.log`. Freshness bands derive from `max_posting_age_days` in `portals.yml`, so the page cannot disagree with the scanner about what counts as stale. No network access and no model calls — regenerate it after any scan.
+
+---
+
+## profiles
+
+`profiles.mjs` runs career-ops for a second person. A profile is a directory under `profiles/` holding a complete user layer — their CV, targeting, portals, pipeline and tracker — plus the `CAREER_OPS_*` environment overrides that point the existing scripts at it. No script is forked and nothing is reimplemented: this is the same override mechanism the test suite uses for fixture isolation, made user-facing.
+
+```bash
+node profiles.mjs new alex                    # scaffold profiles/alex/
+node profiles.mjs list                        # every profile, with what is still missing
+node profiles.mjs run alex scan.mjs --since 10
+node profiles.mjs artifact alex               # profiles/alex/output/pipeline-artifact.html
+node profiles.mjs env alex                    # print the overrides, for a shell or a scheduled task
+```
+
+`run` accepts any script in the repo, so a profile gets the whole pipeline — scan, liveness, prune, swarm, evaluation — against its own data. It executes with the working directory set to the profile, so a path that somehow escapes the override map lands in the profile directory rather than on top of the owner's tracker.
+
+Scaffolding copies the shared config rather than linking it, so a profile's lanes and portals can diverge; it never overwrites, so re-running it on a profile already in use only tops up what is missing. The generated `cv.md` is a stub — replace it before scanning or evaluating, or every score in that profile is measured against a placeholder.
+
+Profiles are user layer. `profiles/` is gitignored in full, for the same reason `cv.md` and `data/` are: it holds another person's CV and job search.
 
 ---
 
