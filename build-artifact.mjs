@@ -288,6 +288,9 @@ export function buildModel({ root = ROOT, now = new Date(), profileRoot = null, 
   const hasTrust = rows.some(r => r.trust !== null);
   return {
     generated: now.toISOString().slice(0, 10),
+    // The date says which day the data is from; this says which hydration the
+    // reader is being served. `hydrationState` needs the time, not the day.
+    built: now.toISOString(),
     hasTrust,
     maxAge,
     bands,
@@ -343,6 +346,38 @@ function keywordCount(kw, rows) {
 
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+/**
+ * Which hydration the reader is looking at, decided when the page opens.
+ *
+ * The artifact is a static file rebuilt by the scheduled task at 07:00 and
+ * 19:00 (`schtasks /ri 720 /du 24:00`), so the build stamp is the only
+ * evidence a reader has that the numbers in front of them are current:
+ *
+ *   'live'    the build falls inside the window the reader is standing in —
+ *             the data was hydrated for this view
+ *   'missed'  the most recent window opened and no build came out of it, so
+ *             the hydration did not fire
+ *   'stale'   the build predates that window too — an older hydration is
+ *             still being served
+ *
+ * Exported so the branch is testable, and injected into the page by source so
+ * the page and the test can never disagree about it.
+ */
+export function hydrationState(builtIso, now) {
+  if (!builtIso) return 'missed';
+  var built = new Date(builtIso).getTime();
+  if (!isFinite(built)) return 'missed';
+  var last = new Date(now.getTime());
+  last.setMinutes(0, 0, 0);
+  var h = last.getHours();
+  // Before 07:00 the current window is yesterday evening's; setHours(-5)
+  // rolls the date back for us.
+  last.setHours(h >= 19 ? 19 : h >= 7 ? 7 : -5);
+  if (built >= last.getTime()) return 'live';
+  if (built >= last.getTime() - 12 * 3600 * 1000) return 'missed';
+  return 'stale';
+}
+
 export function renderHtml(model) {
   const data = JSON.stringify(model).replace(/</g, '\\u003c');
   // The artifact host supplies its own document skeleton, but the same file is
@@ -392,6 +427,11 @@ h1,h2,th,.ui{font-family:"Segoe UI",-apple-system,BlinkMacSystemFont,"Helvetica 
 .wrap{max-width:1320px;margin:0 auto;padding:32px 24px 72px}
 header{display:flex;flex-direction:column;gap:6px}
 .eyebrow{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent)}
+.hyd{margin-left:18px;display:inline-flex;align-items:center;gap:6px;letter-spacing:.1em}
+.hyd:empty{display:none}
+.hyd::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor;
+  box-shadow:0 0 0 3px color-mix(in srgb,currentColor 20%,transparent)}
+.hyd.live{color:var(--fresh)} .hyd.missed{color:var(--stale)} .hyd.stale{color:var(--none)}
 h1{font-size:clamp(28px,4.4vw,42px);line-height:1.05;margin:0;letter-spacing:-.022em;font-weight:650}
 .sub{color:var(--text-2);max-width:70ch;margin:2px 0 0}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:1px;
@@ -566,7 +606,7 @@ footer b{color:var(--text-2);font-weight:600}
 
 <div class="wrap">
 <header>
-  <div class="eyebrow" id="eyebrow"></div>
+  <div class="eyebrow"><span id="eyebrow"></span><span class="hyd" id="hyd"></span></div>
   <h1>Corridor Pipeline</h1>
   <p class="sub">Every pending posting the scanner has surfaced, classified into role families by the same
   keyword mechanism that admitted it. Generated from <span class="mono">data/pipeline.md</span> — rebuild with
@@ -706,6 +746,7 @@ const LC = {devrel:'var(--devrel)',tcsm:'var(--tcsm)',gtm:'var(--gtm)',core:'var
   ].join('\\n');
   document.head.appendChild(s);
 }
+${hydrationState.toString()}
 const PAGE = 200;
 const el = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -713,6 +754,14 @@ const rows = M.rows;
 
 el('eyebrow').textContent =
   \`Generated \${M.generated} · \${rows.length} pending · \${new Set(rows.map(r=>r.c)).size} companies · scan window \${M.maxAge}d\`;
+
+const HYD_LABEL = { live: 'hydrated for this view', missed: 'hydration did not fire', stale: 'stale hydration' };
+const hyd = hydrationState(M.built, new Date());
+el('hyd').className = 'hyd ' + hyd;
+el('hyd').textContent = HYD_LABEL[hyd];
+el('hyd').title = M.built
+  ? 'Last build ' + new Date(M.built).toLocaleString() + '. Hydration runs 07:00 and 19:00.'
+  : 'This page carries no build stamp.';
 
 const dated = rows.filter(r => r.age !== null).map(r => r.age).sort((a,b)=>a-b);
 el('stats').innerHTML = [

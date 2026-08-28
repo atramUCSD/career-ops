@@ -457,6 +457,7 @@ export const USER_PATHS = [
   'skills-lock.json',
   'config/alerts.example.yml',
   'config/lanes.example.yml',
+  'config/artifacts.example.yml',
 ];
 
 // Local user layer — a fork's own files, declared OUTSIDE the system layer.
