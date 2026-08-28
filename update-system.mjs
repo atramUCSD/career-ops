@@ -442,6 +442,8 @@ export const USER_PATHS = [
   // so an update must leave them exactly where it found them.
   'swarm.mjs',
   'lanes.mjs',
+  'channel-trust.mjs',
+  'build-hub.mjs',
   'build-artifact.mjs',
   'profiles.mjs',
   'callback-score.mjs',

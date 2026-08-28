@@ -29,6 +29,8 @@ import { parsePendingRows, classifyRows } from './swarm.mjs';
 import { loadLanes, LANES_PATH } from './lanes.mjs';
 import { matchedTitleKeywords, buildTitleFilter } from './scan.mjs';
 import { buildScorer, calibrate, SIGNALS, BANDS } from './callback-score.mjs';
+import { profileDir } from './profiles.mjs';
+import { buildChannelTrust } from './channel-trust.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
@@ -182,7 +184,19 @@ export function keywordYield(positives, addedRows, pendingRows) {
   return [...stats.values()].sort((a, b) => a.unique - b.unique || a.added - b.added);
 }
 
-export function buildModel({ root = ROOT, now = new Date() } = {}) {
+/**
+ * Build the page model.
+ *
+ * `root` is where the DATA comes from and `profileRoot` is whose INTENT scores
+ * it. They are the same directory for the repo owner. For anyone else they are
+ * not: one scan produces one corpus, and each additional profile is a
+ * projection of that corpus through its own target roles and lanes, keeping the
+ * rows its own archetypes claim. A posting both people target appears for both
+ * — the projection is a relevance test, not an ownership one.
+ */
+export function buildModel({ root = ROOT, now = new Date(), profileRoot = null, profileName = null } = {}) {
+  // Only the two intent files move; every data read below stays on `root`.
+  const intentRoot = profileRoot || root;
   const portals = yaml.load(readFileSync(join(root, 'portals.yml'), 'utf-8')) || {};
   const positives = portals.title_filter?.positive || [];
   const maxAge = portals.max_posting_age_days || 45;
@@ -190,7 +204,7 @@ export function buildModel({ root = ROOT, now = new Date() } = {}) {
   // LANES_PATH is already absolute (or an explicit env override); joining it
   // onto root would produce a path that never resolves and silently classify
   // every posting as `core`.
-  const lanes = loadLanes(root === ROOT ? LANES_PATH : join(root, 'config', 'lanes.yml'));
+  const lanes = loadLanes(intentRoot === ROOT ? LANES_PATH : join(intentRoot, 'config', 'lanes.yml'));
   const history = loadHistory(root);
   const apps = loadApplications(root);
   const titleFilter = { positive: positives };
@@ -200,7 +214,7 @@ export function buildModel({ root = ROOT, now = new Date() } = {}) {
   const today = new Date(now.toISOString().slice(0, 10) + 'T00:00:00Z');
 
   const jdFacts = loadJdFacts(root);
-  const rows = parsed.map(r => {
+  let rows = parsed.map(r => {
     const h = history.byUrl.get(r.url);
     // Some boards publish the location only on the rendered page, so the
     // browser pass in enrich-jd writes it back. The pipeline row still wins.
@@ -232,8 +246,8 @@ export function buildModel({ root = ROOT, now = new Date() } = {}) {
   // Response-likelihood prior. Runs after rows exist because two of its
   // signals — how many reqs a company has open, how often a company+title pair
   // has been seen — are properties of the pipeline, not of a single row.
-  const profile = existsSync(join(root, 'config/profile.yml'))
-    ? yaml.load(readFileSync(join(root, 'config/profile.yml'), 'utf-8')) || {}
+  const profile = existsSync(join(intentRoot, 'config/profile.yml'))
+    ? yaml.load(readFileSync(join(intentRoot, 'config/profile.yml'), 'utf-8')) || {}
     : {};
   const scoreRow = buildScorer({ profile, lanes, rows, history: history.added, facts: jdFacts });
   for (const r of rows) {
@@ -241,6 +255,7 @@ export function buildModel({ root = ROOT, now = new Date() } = {}) {
     r.cb = s.score;
     r.cbBand = s.band;
     r.why = s.signals;
+    r.family = s.family;
     if (s.gate) r.gate = s.gate;
     // The facts the drawer shows. Only rows whose description was actually
     // read carry one, so "no f" is exactly the unread set the chip counts.
@@ -252,6 +267,15 @@ export function buildModel({ root = ROOT, now = new Date() } = {}) {
       }
     }
   }
+
+  // The projection. `family` is the scorer's own relevance verdict: a title
+  // matching none of this profile's target roles, in none of its lanes, is
+  // someone else's row. Deliberately applied AFTER scoring — how many reqs a
+  // company has open and how often a title repeats are properties of the whole
+  // corpus, and reading them off the slice would change the score a row gets
+  // purely because of who is looking at it.
+  const dropped = profileRoot ? rows.filter(r => r.family === 'unmatched').length : 0;
+  if (profileRoot) rows = rows.filter(r => r.family !== 'unmatched');
 
   const laneMeta = [
     ...lanes.map(l => ({ id: l.id, label: l.archetype, max: l.max_evaluations ?? null })),
@@ -286,6 +310,27 @@ export function buildModel({ root = ROOT, now = new Date() } = {}) {
         return m.set(k, (m.get(k) || 0) + 1);
       }, new Map())].map(([reason, n]) => ({ reason, n })).sort((a, b) => b.n - a.n),
     },
+    who: {
+      name: profileName,
+      label: profile.candidate?.full_name || profileName || 'this profile',
+      primary: profile.target_roles?.primary || [],
+      archetypes: (profile.target_roles?.archetypes || []).map(a => ({
+        name: a.name, level: a.level || '', fit: a.fit || '',
+      })),
+      floor: profile.compensation?.minimum ?? null,
+      target: profile.compensation?.target_range || '',
+      location: profile.candidate?.location || '',
+      currency: profile.compensation?.currency || '',
+      companies: (portals.tracked_companies || []).filter(c => c.enabled !== false).length,
+      boards: (portals.job_boards || []).filter(b => b.enabled !== false).length,
+    },
+    // Published rather than implied: a projection that drops most of the corpus
+    // is a misconfigured profile, and the reader has to be able to see that.
+    projection: profileRoot ? { kept: rows.length, dropped } : null,
+    // Ingestion trust, computed from the same scan history the rows came out of.
+    // It stays on `root` even under a projection: the channels are a property of
+    // the corpus, not of whoever is looking at it.
+    channels: buildChannelTrust({ root }),
     signals: SIGNALS,
     cbBands: BANDS.map(b => ({ id: b.id, label: b.label, min: b.min === -Infinity ? 0 : b.min })),
     calibration: calibrate(rows),
@@ -300,7 +345,11 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '
 
 export function renderHtml(model) {
   const data = JSON.stringify(model).replace(/</g, '\\u003c');
-  return `<title>Corridor Pipeline</title>
+  // The artifact host supplies its own document skeleton, but the same file is
+  // also opened straight off disk, where a browser with no charset declaration
+  // guesses windows-1252 and turns every em dash and middot into mojibake.
+  return `<meta charset="utf-8">
+<title>${model.who.name ? esc(model.who.name[0].toUpperCase() + model.who.name.slice(1)) + ' ' : ''}Corridor Pipeline</title>
 <style>
 :root{
   --ground:#e9edee; --surface:#f7f9f9; --surface-2:#dfe6e7;
@@ -309,6 +358,7 @@ export function renderHtml(model) {
   --accent:#0f6f6b; --accent-soft:#0f6f6b1a;
   --devrel:#7a4fb0; --tcsm:#0f6f6b; --gtm:#a06a1f; --core:#4a6068;
   --fresh:#2c7a51; --recent:#3f7f6d; --aging:#9a7420; --stale:#a04f2a; --none:#8b8b8b;
+  --tier-a:#2c7a51; --tier-s:#9a7420; --tier-i:#a04f2a;
   --shadow:0 1px 2px #12242c14, 0 8px 24px #12242c0f;
 }
 @media (prefers-color-scheme: dark){
@@ -319,6 +369,7 @@ export function renderHtml(model) {
     --accent:#4fc9be; --accent-soft:#4fc9be1f;
     --devrel:#b78ee6; --tcsm:#4fc9be; --gtm:#d3a63f; --core:#9db4bb;
     --fresh:#54c98a; --recent:#5cbba6; --aging:#d3a63f; --stale:#e0824f; --none:#7e909a;
+    --tier-a:#54c98a; --tier-s:#d3a63f; --tier-i:#e0824f;
     --shadow:0 1px 2px #0006, 0 10px 28px #0004;
   }
 }
@@ -329,6 +380,7 @@ export function renderHtml(model) {
   --accent:#4fc9be; --accent-soft:#4fc9be1f;
   --devrel:#b78ee6; --tcsm:#4fc9be; --gtm:#d3a63f; --core:#9db4bb;
   --fresh:#54c98a; --recent:#5cbba6; --aging:#d3a63f; --stale:#e0824f; --none:#7e909a;
+  --tier-a:#54c98a; --tier-s:#d3a63f; --tier-i:#e0824f;
   --shadow:0 1px 2px #0006, 0 10px 28px #0004;
 }
 *{box-sizing:border-box}
@@ -460,6 +512,55 @@ details h3{font-family:"Segoe UI",sans-serif;font-size:12px;letter-spacing:.1em;
 .zero td{color:var(--stale)}
 footer{margin-top:26px;color:var(--text-3);font-size:12.5px;max-width:78ch}
 footer b{color:var(--text-2);font-weight:600}
+
+/* ---- mega menu ------------------------------------------------------
+   The spine of the page. Every label carries the count of what is behind
+   it, so the strip reads as a summary before anything is clicked, and the
+   drop panel names the sub-sections with their own counts so a reader knows
+   what a tab holds before committing to it. Below 860px the drop panel is
+   suppressed and the strip becomes a scrolling tab bar — the counts survive,
+   which is the part that carries information. */
+.nav{position:sticky;top:0;z-index:10;margin:22px 0 24px;background:var(--ground);
+  border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.tabs{display:flex;gap:0;overflow-x:auto;scrollbar-width:thin}
+.tab{position:relative;flex:0 0 auto;display:flex;align-items:baseline;gap:8px;
+  font-family:"Segoe UI",sans-serif;font-size:13.5px;font-weight:600;letter-spacing:.01em;
+  padding:13px 18px;border:0;border-bottom:2px solid transparent;background:none;
+  color:var(--text-2);cursor:pointer;white-space:nowrap;transition:color .13s,border-color .13s}
+.tab:hover{color:var(--text)}
+.tab[aria-selected="true"]{color:var(--text);border-bottom-color:var(--accent)}
+.tab .tn{font-family:"Cascadia Mono",Consolas,ui-monospace,monospace;font-size:11px;
+  font-variant-numeric:tabular-nums;color:var(--text-3);font-weight:500}
+.tab[aria-selected="true"] .tn{color:var(--accent)}
+.mega{position:absolute;left:0;right:0;top:100%;z-index:11;display:none;
+  background:var(--surface);border:1px solid var(--line);border-top:0;box-shadow:var(--shadow);
+  padding:16px 18px;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px 22px}
+.navitem{position:static}
+.navitem:hover .mega,.navitem:focus-within .mega{display:grid}
+.megaitem{display:flex;flex-direction:column;gap:2px;font-family:"Segoe UI",sans-serif}
+.megaitem .mk{font-size:12.5px;font-weight:620;color:var(--text)}
+.megaitem .mv{font-family:"Cascadia Mono",Consolas,ui-monospace,monospace;font-size:11px;
+  font-variant-numeric:tabular-nums;color:var(--text-3)}
+.megaitem .md{font-size:11.5px;color:var(--text-2);line-height:1.45}
+@media (max-width:860px){.mega{display:none!important}}
+.panel[hidden]{display:none}
+.panel h2{font-size:17px;margin:0 0 4px;letter-spacing:-.01em}
+.panel .lede{color:var(--text-2);max-width:74ch;margin:0 0 18px;font-size:13.5px}
+.tier{display:inline-block;font-family:"Segoe UI",sans-serif;font-size:10px;font-weight:680;
+  letter-spacing:.09em;text-transform:uppercase;padding:3px 7px;border-radius:2px;
+  border:1px solid currentColor;white-space:nowrap}
+.tier.authoritative{color:var(--tier-a)} .tier.structural{color:var(--tier-s)}
+.tier.indexed{color:var(--tier-i)} .tier.unclassified{color:var(--none)}
+.pct{display:block;height:3px;border-radius:2px;background:var(--line);margin-top:5px;width:60px;overflow:hidden}
+.pct i{display:block;height:100%;background:var(--accent)}
+.card{border:1px solid var(--line);border-radius:3px;background:var(--surface);padding:14px 16px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-bottom:20px}
+.card h3{margin:0 0 6px;font-family:"Segoe UI",sans-serif;font-size:11px;letter-spacing:.11em;
+  text-transform:uppercase;color:var(--text-3);font-weight:650}
+.card p{margin:0;font-size:13px;color:var(--text-2);line-height:1.5}
+.miniwrap{overflow-x:auto;border:1px solid var(--line);border-radius:3px;background:var(--surface);margin-bottom:22px}
+.miniwrap .mini{min-width:640px}
+.miniwrap .mini th{background:var(--surface-2);padding:9px 10px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 
@@ -474,6 +575,11 @@ footer b{color:var(--text-2);font-weight:600}
 
 <div class="stats" id="stats"></div>
 
+<nav class="nav" aria-label="Sections">
+  <div class="tabs" role="tablist" id="tabs"></div>
+</nav>
+
+<section class="panel" id="panel-pipeline" role="tabpanel" aria-labelledby="tab-pipeline" tabindex="0">
 <div class="bar">
   <div class="group"><div class="glab">Role family</div><div class="chips" id="lanes"></div></div>
   <div class="group"><div class="glab">Match</div><div class="chips" id="cbbands"></div></div>
@@ -502,6 +608,69 @@ footer b{color:var(--text-2);font-weight:600}
 </div>
 <div class="empty" id="empty" hidden>No postings match those filters.</div>
 <div class="empty" id="more" hidden></div>
+</section>
+
+<section class="panel" id="panel-channels" role="tabpanel" aria-labelledby="tab-channels" tabindex="0" hidden>
+  <h2>Ingestion channels</h2>
+  <p class="lede">How much each channel that feeds this pipeline can be believed. The tier is not a ranking of
+  how good the board is — it records what the channel's own API can prove when a posting disappears. Every
+  number here is folded from <span class="mono">data/scan-history.tsv</span>,
+  <span class="mono">data/portal-health.tsv</span> and <span class="mono">portals.yml</span> at build time; none
+  of it is typed in.</p>
+  <div id="chanbody"></div>
+</section>
+
+<section class="panel" id="panel-scoring" role="tabpanel" aria-labelledby="tab-scoring" tabindex="0" hidden>
+  <h2>Scoring model</h2>
+  <p class="lede">What the match number is made of, which rules can zero a row, and whether any of it has been
+  checked against a real reply yet.</p>
+  <div id="scoringbody"></div>
+  <footer>
+    <p><b>What the match number is.</b> <span class="mono">100 × eligibility × fit × timing</span>, out of 100.
+    <b>Eligibility</b> is 0 or 1 — a TS/SCI or polygraph requirement, a years-of-experience floor above 8, a
+    required doctorate, or an advertised ceiling under the walk-away makes the row a 0. <b>Fit</b> is how many
+    of the three hats the description demands — designer, developer, AI advocate — modulated by named
+    frameworks, clearance advantage, degree demand, seniority and title family. <b>Timing</b> only discounts:
+    freshness, applicant pool, employer volume, repost pattern. Hover any score to see every multiplier.</p>
+    <p><b>A 0 is not a hidden row.</b> Gated postings stay in place, stay linked, and name the rule that killed
+    them, so a rule that starts eating good reqs is visible on the page that applied it. Fit in the A–G sense is
+    still scored separately and downstream; this number decides what is worth reading, not what is worth doing.</p>
+    <p><b>Facts come from the description.</b> <span class="mono">node enrich-jd.mjs</span> fetches each posting
+    once, caches it, and reduces it to <span class="mono">data/jd-facts.tsv</span>. A posting whose description
+    could not be read is scored on its title family alone, capped below any confirmed two-hat match, and says so
+    in its own tooltip — a guess never outranks a fact.</p>
+    <p><b>It is a prior, not a prediction.</b> The weights are hand-set, not trained on outcomes. They stay
+    honest only once <span class="mono">data/applications.md</span> carries replies — the panel below reports
+    the observed reply rate per band as soon as there is one.</p>
+    <p><b>No protected characteristic is an input</b>, and none is inferable from one. The score reads the
+    posting's own text and the profile's own stated targets, clearances and comp floor. Location is used as a
+    proxy for how many people are competing for the req, never as a statement about any applicant.</p>
+    <p><b>What the family column means.</b> A posting enters the pipeline because its title matched a
+    <span class="mono">title_filter.positive</span> keyword in <span class="mono">portals.yml</span>. The same
+    matched keyword — shown as written — is what assigns the role family, so the column below is both the
+    classification and the audit trail for why the row is here at all.</p>
+    <p><b>What status is not telling you yet.</b> Evaluation runs downstream of this page. Until a posting is
+    scored, it reads <span class="mono">pending</span> and carries no score; the column fills in from
+    <span class="mono">data/applications.md</span> as evaluations land.</p>
+    <p><b>Ages are upper bounds.</b> A missing posted date means the vendor's list payload shipped none, not
+    that the posting is new. Those rows sort last under an age sort and are filterable as
+    <span class="mono">unknown</span>.</p>
+  </footer>
+</section>
+
+<section class="panel" id="panel-coverage" role="tabpanel" aria-labelledby="tab-coverage" tabindex="0" hidden>
+  <h2>Coverage</h2>
+  <p class="lede">What the scanner caught, what it dropped, and what it has since confirmed gone. A keyword
+  with no unique hits can be deleted without losing a posting.</p>
+  <div id="covbody"></div>
+</section>
+
+<section class="panel" id="panel-profile" role="tabpanel" aria-labelledby="tab-profile" tabindex="0" hidden>
+  <h2>Whose search this is</h2>
+  <p class="lede">The targeting that scored every row on this page. A posting is here because it matched one of
+  these archetypes or one of these lanes; a posting that matched neither belongs to someone else's page.</p>
+  <div id="profbody"></div>
+</section>
 
 <div class="scrim" id="scrim" hidden></div>
 <aside class="drawer" id="drawer" hidden role="dialog" aria-modal="true" aria-labelledby="dwtitle" tabindex="-1">
@@ -509,47 +678,34 @@ footer b{color:var(--text-2);font-weight:600}
   <div id="dwbody"></div>
 </aside>
 
-<details id="cfg">
-  <summary>Scanner configuration — keyword yield, removals, retired postings</summary>
-  <div class="body" id="cfgbody"></div>
-</details>
 
-<footer>
-  <p><b>What the match number is.</b> <span class="mono">100 × eligibility × fit × timing</span>, out of 100.
-  <b>Eligibility</b> is 0 or 1 — a TS/SCI or polygraph requirement, a years-of-experience floor above 8, a
-  required doctorate, or an advertised ceiling under the walk-away makes the row a 0. <b>Fit</b> is how many
-  of the three hats the description demands — designer, developer, AI advocate — modulated by named
-  frameworks, clearance advantage, degree demand, seniority and title family. <b>Timing</b> only discounts:
-  freshness, applicant pool, employer volume, repost pattern. Hover any score to see every multiplier.</p>
-  <p><b>A 0 is not a hidden row.</b> Gated postings stay in place, stay linked, and name the rule that killed
-  them, so a rule that starts eating good reqs is visible on the page that applied it. Fit in the A–G sense is
-  still scored separately and downstream; this number decides what is worth reading, not what is worth doing.</p>
-  <p><b>Facts come from the description.</b> <span class="mono">node enrich-jd.mjs</span> fetches each posting
-  once, caches it, and reduces it to <span class="mono">data/jd-facts.tsv</span>. A posting whose description
-  could not be read is scored on its title family alone, capped below any confirmed two-hat match, and says so
-  in its own tooltip — a guess never outranks a fact.</p>
-  <p><b>It is a prior, not a prediction.</b> The weights are hand-set, not trained on outcomes. They stay
-  honest only once <span class="mono">data/applications.md</span> carries replies — the panel below reports
-  the observed reply rate per band as soon as there is one.</p>
-  <p><b>No protected characteristic is an input</b>, and none is inferable from one. The score reads the
-  posting's own text and the profile's own stated targets, clearances and comp floor. Location is used as a
-  proxy for how many people are competing for the req, never as a statement about any applicant.</p>
-  <p><b>What the family column means.</b> A posting enters the pipeline because its title matched a
-  <span class="mono">title_filter.positive</span> keyword in <span class="mono">portals.yml</span>. The same
-  matched keyword — shown as written — is what assigns the role family, so the column below is both the
-  classification and the audit trail for why the row is here at all.</p>
-  <p><b>What status is not telling you yet.</b> Evaluation runs downstream of this page. Until a posting is
-  scored, it reads <span class="mono">pending</span> and carries no score; the column fills in from
-  <span class="mono">data/applications.md</span> as evaluations land.</p>
-  <p><b>Ages are upper bounds.</b> A missing posted date means the vendor's list payload shipped none, not
-  that the posting is new. Those rows sort last under an age sort and are filterable as
-  <span class="mono">unknown</span>.</p>
-</footer>
+
 </div>
 
 <script>
 const M = ${data};
 const LC = {devrel:'var(--devrel)',tcsm:'var(--tcsm)',gtm:'var(--gtm)',core:'var(--core)'};
+// lanes.yml is user layer and holds ten lanes today, but only the original four
+// have a named token. Anything else got var(--core) — six lanes rendering as the
+// same grey, which is the column declining to say anything. Give every unnamed
+// lane a hue spaced around the wheel and emit its row-stripe rules here: the
+// stylesheet cannot know the lane ids in advance. The dark tone is lighter
+// because a 42% lightness disappears against the dark ground exactly as the grey did.
+{
+  const extra = M.lanes.map(l => l.id).filter(id => !LC[id]);
+  const hue = i => Math.round((i * 360) / Math.max(extra.length, 1) + 18) % 360;
+  extra.forEach((id, i) => { LC[id] = \`hsl(\${hue(i)} 46% 42%)\`; });
+  const rules = (sel, light) => extra
+    .map((id, i) => \`\${sel}tr[data-lane=\${id}]{--lc:hsl(\${hue(i)} \${light ? '46% 42%' : '52% 66%'})}\`)
+    .join('\\n');
+  const s = document.createElement('style');
+  s.textContent = [
+    rules('', true),
+    \`@media (prefers-color-scheme: dark){\${rules(':root:not([data-theme="light"]) ', false)}}\`,
+    rules(':root[data-theme="dark"] ', false),
+  ].join('\\n');
+  document.head.appendChild(s);
+}
 const PAGE = 200;
 const el = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -770,7 +926,7 @@ document.querySelector('th[data-k="cb"]').setAttribute('aria-sort','descending')
 
 // ---- configuration panel --------------------------------------------
 const y = M.yields;
-el('cfgbody').innerHTML = \`
+el('scoringbody').innerHTML = \`
 <h3>Match rubric — 100 × eligibility × fit × timing</h3>
 <p style="color:var(--text-2);font-size:13px;margin:0 0 10px">
   Every signal is a multiplier, so the score is a product and not a sum. <b>Eligibility</b> is the only
@@ -797,6 +953,10 @@ el('cfgbody').innerHTML = \`
 \${M.calibration.length ? \`<table class="mini"><thead><tr><th>Band</th><th class="num">Applied</th><th class="num">Replied</th><th class="num">Rate</th></tr></thead><tbody>
 \${M.calibration.map(c=>\`<tr><td>\${esc(c.band)}</td><td class="num">\${c.applied}</td><td class="num">\${c.replied}</td><td class="num">\${Math.round(c.replied/c.applied*100)}%</td></tr>\`).join('')}
 </tbody></table>\` : ''}
+\`;
+
+// ---- coverage panel -------------------------------------------------
+el('covbody').innerHTML = \`
 <h3>Keyword yield — \${y.length} positives against \${M.historyAdded} scanner-added postings</h3>
 <p style="color:var(--text-2);font-size:13px;margin:0 0 10px">
   <b>Unique</b> is the count only that keyword caught. A keyword with zero unique hits can be deleted
@@ -814,6 +974,155 @@ el('cfgbody').innerHTML = \`
 \${M.expired.rows.slice(0,10).map(r=>\`<tr><td class="mono" style="white-space:nowrap">\${esc(r.removed)}</td><td class="mono" style="font-size:12px">\${esc(r.evidence)}</td><td>\${esc(r.company)}</td></tr>\`).join('') || '<tr><td colspan="3">none</td></tr>'}
 </tbody></table>\`;
 
+// ---- channels panel -------------------------------------------------
+// Ingestion trust, rendered from the same evidence check-liveness reasons over.
+const CH = M.channels;
+const TIERLAB = {
+  authoritative: 'Authoritative', structural: 'Structural',
+  indexed: 'Indexed', unclassified: 'Unclassified',
+};
+const pctbar = n => \`<span class="pct"><i style="width:\${n}%"></i></span>\`;
+el('chanbody').innerHTML = \`
+<div class="cards">\${CH.tiers.map(t => \`<div class="card">
+  <h3><span class="tier \${t.tier}">\${TIERLAB[t.tier] || t.tier}</span></h3>
+  <p><b>\${t.rows}</b> of \${CH.total} rows (\${t.pct}%) across \${t.channels} channel\${t.channels === 1 ? '' : 's'}.
+  \${t.dated} carry a posted date; \${t.flagged} carry a trust flag.</p>
+  <p style="margin-top:8px;color:var(--text-3);font-size:12px">\${esc(t.note)}</p>
+</div>\`).join('')}</div>
+<h3>Every channel that has produced a row</h3>
+<p style="color:var(--text-2);font-size:13px;margin:0 0 10px">
+  <b>Dated</b> is the honest reliability signal: a channel that publishes no posted date bypasses
+  <span class="mono">max_posting_age_days</span> entirely, so nothing it contributes can ever be aged out.
+  <b>Rung 1</b> is the share whose URL a free ATS API can settle without a browser. <b>Reachable</b> counts
+  this channel's companies that answered at the last health probe — a channel whose companies were never
+  probed reports 0 / 0 rather than a reassuring zero.</p>
+<table class="mini"><thead><tr>
+  <th>Channel</th><th>Tier</th><th class="num">Rows</th><th class="num">Cos.</th>
+  <th class="num">Dated</th><th class="num">Rung 1</th><th class="num">Flagged</th>
+  <th class="num">Reachable</th><th>Config</th></tr></thead><tbody>
+\${CH.channels.map(c => \`<tr>
+  <td class="mono">\${esc(c.portal)}</td>
+  <td><span class="tier \${c.tier}">\${TIERLAB[c.tier] || c.tier}</span></td>
+  <td class="num">\${c.rows}</td>
+  <td class="num">\${c.companies}</td>
+  <td class="num">\${c.datedPct}%\${pctbar(c.datedPct)}</td>
+  <td class="num">\${c.rung1Pct}%\${pctbar(c.rung1Pct)}</td>
+  <td class="num">\${c.flagged || '—'}</td>
+  <td class="num">\${c.probed ? c.reachable + ' / ' + c.probed : '—'}</td>
+  <td style="font-size:12px;color:var(--text-3)">\${c.configured ? c.configured + ' entr' + (c.configured === 1 ? 'y' : 'ies') : 'company list'}\${c.aggregator ? ' · aggregator' : ''}</td>
+</tr>\`).join('')}
+</tbody></table>
+<h3>Trust flags — \${CH.flags.reduce((a, f) => a + f.n, 0)} raised across \${CH.total} rows</h3>
+<p style="color:var(--text-2);font-size:13px;margin:0 0 10px">
+  A flag is a penalty, not a rejection: <span class="mono">providers/_trust-validator.mjs</span> never drops a
+  posting for one. <span class="mono">company_domain_mismatch</span> costs 15 points, taking an otherwise clean
+  row to 85 and the <b>medium</b> band — which is what an indexed channel republishing someone else's posting
+  should score, and why the count tracks the indexed row count so closely.</p>
+<table class="mini"><thead><tr><th>Flag</th><th class="num">Rows</th></tr></thead><tbody>
+\${CH.flags.map(f => \`<tr><td class="mono">\${esc(f.flag)}</td><td class="num">\${f.n}</td></tr>\`).join('') || '<tr><td colspan="2">none</td></tr>'}
+</tbody></table>\`;
+
+// ---- profile panel --------------------------------------------------
+const W = M.who;
+el('profbody').innerHTML = \`
+<div class="cards">
+  <div class="card"><h3>Candidate</h3><p><b>\${esc(W.label)}</b>\${W.location ? '<br>' + esc(W.location) : ''}</p></div>
+  <div class="card"><h3>Compensation floor</h3><p>\${W.floor ? '<b>' + esc(W.floor) + '</b>' : 'not set'}\${W.target ? '<br>target ' + esc(W.target) : ''}</p>
+    <p style="margin-top:8px;color:var(--text-3);font-size:12px">An advertised ceiling under this floor gates the row to 0.</p></div>
+  <div class="card"><h3>Sources scanned</h3><p><b>\${W.companies}</b> companies · <b>\${W.boards}</b> job boards</p></div>
+  \${M.projection ? \`<div class="card"><h3>Projection</h3><p><b>\${M.projection.kept}</b> kept · <b>\${M.projection.dropped}</b> dropped</p>
+    <p style="margin-top:8px;color:var(--text-3);font-size:12px">Dropped rows matched none of the archetypes or lanes below. They belong to another profile's page, not to this one.</p></div>\` : ''}
+</div>
+<h3>Target roles</h3>
+<p style="color:var(--text-2);font-size:13px;margin:0 0 10px">
+  The title decides the family and the lane is only the fallback. A posting whose title matches one of these
+  archetypes carries that archetype's family; one that matches none of them, in none of the lanes below, is
+  not this profile's row at all.</p>
+<table class="mini"><thead><tr><th>Archetype</th><th>Level</th><th>Fit</th></tr></thead><tbody>
+\${W.archetypes.map(a => \`<tr><td>\${esc(a.name)}</td><td style="color:var(--text-3);font-size:12px">\${esc(a.level)}</td><td style="color:var(--text-3);font-size:12px">\${esc(a.fit)}</td></tr>\`).join('') || '<tr><td colspan="3">none declared</td></tr>'}
+</tbody></table>
+<h3>Lanes</h3>
+<table class="mini"><thead><tr><th>Lane</th><th>What it collects</th><th class="num">Pending</th></tr></thead><tbody>
+\${M.lanes.map(l => \`<tr><td><span class="lanetag" style="--lc:\${LC[l.id] || 'var(--core)'}">\${l.id}</span></td><td>\${esc(l.label)}</td><td class="num">\${rows.filter(r => r.lane === l.id).length}</td></tr>\`).join('')}
+</tbody></table>\`;
+
+// ---- the mega menu --------------------------------------------------
+// Panels are already in the DOM and merely hidden, so a tab switch costs no
+// render and the browser's own find-in-page still reaches every panel that is
+// open. The count on each label is the point of the menu: the strip states
+// magnitudes before anything is clicked.
+const unknownAge = rows.filter(r => r.age === null).length;
+const TABS = [
+  { id: 'pipeline', label: 'Pipeline', n: rows.length + ' pending', mega: [
+    ...M.lanes.map(l => ({ k: l.id, v: rows.filter(r => r.lane === l.id).length + ' pending', d: l.label })),
+    { k: 'Unread descriptions', v: rows.filter(r => !r.f).length + ' rows', d: 'scored on the title alone' },
+    { k: 'Unknown age', v: unknownAge + ' rows', d: 'the board published no posted date' },
+  ] },
+  { id: 'channels', label: 'Channels', n: CH.channels.length + ' live', mega:
+    CH.tiers.map(t => ({ k: TIERLAB[t.tier] || t.tier, v: t.channels + ' channels · ' + t.rows + ' rows', d: t.note })) },
+  { id: 'scoring', label: 'Scoring', n: M.signals.length + ' signals', mega: [
+    { k: 'Match rubric', v: M.signals.length + ' multipliers', d: '100 × eligibility × fit × timing' },
+    { k: 'Gate accounting', v: M.jd.gated + ' rows at 0', d: 'the rules that zeroed a row, named' },
+    { k: 'Descriptions read', v: M.jd.read + ' of ' + M.rows.length, d: 'the rest score on their title family' },
+    { k: 'Calibration', v: M.calibration.length ? M.calibration.length + ' bands' : 'none yet', d: 'observed reply rate per band' },
+  ] },
+  { id: 'coverage', label: 'Coverage', n: M.discards.length + ' pruned', mega: [
+    { k: 'Keyword yield', v: M.yields.length + ' positives', d: 'against ' + M.historyAdded + ' scanner-added postings' },
+    { k: 'Zero-yield keywords', v: M.yields.filter(k => k.added === 0).length + ' deletable', d: 'caught nothing the others did not' },
+    { k: 'Pruned', v: M.discards.length + ' postings', d: 'dropped from the pipeline, with the reason' },
+    { k: 'Retired', v: M.expired.count + ' confirmed gone', d: 'liveness proved the posting was removed' },
+  ] },
+  { id: 'profile', label: 'Profile', n: W.archetypes.length + ' archetypes', mega: [
+    { k: esc(W.label), v: W.location || 'location not set', d: 'whose targeting scored this page' },
+    { k: 'Comp floor', v: W.floor ? String(W.floor) : 'not set', d: 'an advertised ceiling below it gates the row' },
+    { k: 'Sources', v: W.companies + ' companies · ' + W.boards + ' boards', d: 'what the scanner is pointed at' },
+    ...(M.projection ? [{ k: 'Projection', v: M.projection.dropped + ' dropped', d: 'rows matching no archetype or lane here' }] : []),
+  ] },
+];
+
+el('tabs').innerHTML = TABS.map(t => \`<div class="navitem">
+  <button class="tab" role="tab" id="tab-\${t.id}" aria-controls="panel-\${t.id}" aria-selected="false" tabindex="-1">
+    \${esc(t.label)}<span class="tn">\${esc(t.n)}</span></button>
+  <div class="mega">\${t.mega.map(m => \`<div class="megaitem">
+    <span class="mk">\${m.k}</span><span class="mv">\${esc(m.v)}</span><span class="md">\${esc(m.d)}</span></div>\`).join('')}</div>
+</div>\`).join('');
+
+function selectTab(id, focus) {
+  const t = TABS.find(x => x.id === id) ? id : TABS[0].id;
+  for (const x of TABS) {
+    const btn = el('tab-' + x.id), panel = el('panel-' + x.id), on = x.id === t;
+    btn.setAttribute('aria-selected', String(on));
+    btn.tabIndex = on ? 0 : -1;
+    panel.hidden = !on;
+    if (on && focus) btn.focus();
+  }
+  if (location.hash.slice(1) !== t) history.replaceState(null, '', '#' + t);
+}
+el('tabs').addEventListener('click', e => {
+  const b = e.target.closest('.tab');
+  if (b) selectTab(b.id.slice(4), false);
+});
+el('tabs').addEventListener('keydown', e => {
+  const i = TABS.findIndex(x => x.id === document.activeElement.id.slice(4));
+  if (i < 0) return;
+  const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+  if (step) { e.preventDefault(); selectTab(TABS[(i + step + TABS.length) % TABS.length].id, true); }
+  else if (e.key === 'Home') { e.preventDefault(); selectTab(TABS[0].id, true); }
+  else if (e.key === 'End') { e.preventDefault(); selectTab(TABS[TABS.length - 1].id, true); }
+});
+addEventListener('hashchange', () => selectTab(location.hash.slice(1), false));
+selectTab(location.hash.slice(1), false);
+
+// Every generated table gets its own horizontal scroll container, so a wide
+// table scrolls inside itself and the page body never scrolls sideways.
+for (const t of document.querySelectorAll('.panel .mini')) {
+  if (t.parentElement.classList.contains('miniwrap')) continue;
+  const w = document.createElement('div');
+  w.className = 'miniwrap';
+  t.replaceWith(w);
+  w.appendChild(t);
+}
+
 render();
 </script>
 `;
@@ -824,9 +1133,16 @@ function main(argv) {
   // the only argument buildModel already understood; main just never exposed it.
   const rootIdx = argv.indexOf('--root');
   const root = rootIdx >= 0 ? resolve(argv[rootIdx + 1]) : ROOT;
+  // --as-profile is the other half of that split: the data still comes from
+  // `root`, but the targeting that scores it comes from the named profile, and
+  // rows matching none of that profile's roles are dropped. One scan, N views.
+  const asIdx = argv.indexOf('--as-profile');
+  const profileName = asIdx >= 0 ? argv[asIdx + 1] : null;
+  const profileRoot = profileName ? profileDir(profileName) : null;
   const outIdx = argv.indexOf('--out');
-  const out = outIdx >= 0 ? argv[outIdx + 1] : join(root, 'output', 'pipeline-artifact.html');
-  const model = buildModel({ root });
+  const defaultOut = profileName ? `pipeline-${profileName}.html` : 'pipeline-artifact.html';
+  const out = outIdx >= 0 ? argv[outIdx + 1] : join(root, 'output', defaultOut);
+  const model = buildModel({ root, profileRoot, profileName });
   const html = renderHtml(model);
   writeFileSync(resolve(out), html);
   const laneCounts = model.lanes.map(l => `${l.id}=${model.rows.filter(r => r.lane === l.id).length}`).join(' ');

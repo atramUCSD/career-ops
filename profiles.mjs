@@ -33,9 +33,21 @@ import { spawnSync } from 'node:child_process';
 import { isMainModule } from './lib/is-main-module.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
-export const PROFILES_DIR = process.env.CAREER_OPS_PROFILES_DIR
-  ? resolve(process.env.CAREER_OPS_PROFILES_DIR)
-  : join(ROOT, 'profiles');
+/**
+ * Read at call time, not at module load.
+ *
+ * The whole suite runs in one process, so whichever test imports this module
+ * first would otherwise latch the override for every test after it — and once
+ * build-artifact.mjs started importing profileDir, that first importer stopped
+ * being the profiles test. A latched PROFILES_DIR does not fail loudly: the
+ * scaffold succeeds, just under the repo's own `profiles/` instead of the
+ * sandbox, writing into the user layer the test was isolating itself from.
+ */
+export function profilesDir() {
+  return process.env.CAREER_OPS_PROFILES_DIR
+    ? resolve(process.env.CAREER_OPS_PROFILES_DIR)
+    : join(ROOT, 'profiles');
+}
 
 /**
  * A profile name becomes a directory name, so it is restricted rather than
@@ -51,7 +63,7 @@ export function profileDir(name) {
   if (!validName(name)) {
     throw new Error(`invalid profile name "${name}" — letters, digits, dot, dash and underscore only`);
   }
-  return join(PROFILES_DIR, name);
+  return join(profilesDir(), name);
 }
 
 /**
@@ -150,16 +162,21 @@ export function scaffold(name, { root = ROOT } = {}) {
   // lanes.yml absent is not an error anywhere — loadLanes returns [] and every
   // posting silently classifies as `core`. Copy it so that never happens by
   // accident in a fresh profile.
-  copy(join(root, 'config', 'lanes.yml'), 'config/lanes.yml');
+  //
+  // The EXAMPLE first, the owner's live lanes only as a fallback. Lane keywords
+  // are targeting, and a profile that inherits the owner's lanes claims every
+  // posting the owner's scan admits — which is exactly the cross-profile bleed
+  // a separate profile exists to prevent.
   copy(join(root, 'config', 'lanes.example.yml'), 'config/lanes.yml');
+  copy(join(root, 'config', 'lanes.yml'), 'config/lanes.yml');
   copy(join(root, 'templates', 'portals.example.yml'), 'portals.yml');
 
   return { dir, created };
 }
 
 export function listProfiles() {
-  if (!existsSync(PROFILES_DIR)) return [];
-  return readdirSync(PROFILES_DIR, { withFileTypes: true })
+  if (!existsSync(profilesDir())) return [];
+  return readdirSync(profilesDir(), { withFileTypes: true })
     .filter(e => e.isDirectory() && validName(e.name))
     .map(e => e.name)
     .sort();

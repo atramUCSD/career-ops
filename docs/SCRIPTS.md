@@ -631,9 +631,45 @@ node build-artifact.mjs                       # writes output/pipeline-artifact.
 node build-artifact.mjs --out /tmp/page.html  # anywhere else
 ```
 
+The page is a five-tab instrument rather than one long table: **Pipeline** (the rows), **Channels** (ingestion trust, from `channel-trust.mjs` below), **Scoring** (the rubric, gates and calibration), **Coverage** (keyword yield, pruned and retired postings) and **Profile** (whose search this is). Every tab label carries its own live count, so the menu states magnitudes rather than only naming sections.
+
+`--as-profile <name>` renders the same corpus through another profile's targeting. The data still comes from this checkout — one scan, one pipeline, one scan history — but `config/profile.yml` and `config/lanes.yml` are read from `profiles/<name>/`, and a row whose title matches none of that profile's target roles and sits in none of its lanes is dropped. The relevance test is the scorer's own `family` verdict, so there is no second matching implementation to drift; a posting both people target appears on both pages, which is the point. The kept/dropped split is printed on the Profile tab, because a projection that discards most of the corpus means a misconfigured profile and the reader has to be able to see that. The filter runs *after* scoring: how many reqs a company has open and how often a title repeats are properties of the whole corpus, and reading them off the slice would change a row's score purely because of who is looking at it.
+
 `--root <dir>` builds the page from another user layer entirely — its `portals.yml`, `data/pipeline.md`, `config/profile.yml` and `config/lanes.yml` instead of this checkout's. That is how `profiles.mjs` (below) renders an artifact for someone other than the repo owner; on its own the flag is rarely worth typing by hand.
 
 Each row also carries a match score from `callback-score.mjs` (above), sorted highest first by default, and the facts `enrich-jd.mjs` read from its description. The page is a build output, never hand-edited: rows come from `data/pipeline.md` through `swarm.mjs`'s parser, lanes from `config/lanes.yml`, posting dates and trust scores from `data/scan-history.tsv`, scores and status from `data/applications.md`, and the panel from `data/expired-jobs.md` plus `data/discard.log`. Freshness bands derive from `max_posting_age_days` in `portals.yml`, so the page cannot disagree with the scanner about what counts as stale. No network access and no model calls — regenerate it after any scan.
+
+---
+
+## channel-trust
+
+`channel-trust.mjs` folds the scan history into one row per ingestion channel, so the question "how much can this source be believed" is answered from the files on disk instead of from a written assessment that went stale on the next scan. It is a library — `build-artifact.mjs` renders it as the Channels tab — and it reads `data/scan-history.tsv`, `data/portal-health.tsv` and `portals.yml`.
+
+Each channel is placed in a trust tier that records what its API can *prove* when a posting disappears, not how good the board is:
+
+| Tier | Meaning |
+|------|---------|
+| `authoritative` | The employer's own ATS with a public per-job endpoint. A 404 there is proof the posting is gone, and liveness resolves at rung 1. |
+| `structural` | The employer's ATS behind a tenant indirection whose error codes are ambiguous — Workday answers 403 for an unpublished posting, iCIMS returns the same status for "gone" and "wrong board". A removal needs corroboration. |
+| `indexed` | A copy of someone else's posting. Stale in either direction, and raises `company_domain_mismatch` by construction. |
+| `unclassified` | No tier declared for that provider. Reported as-is rather than folded into a tier it has not earned. |
+
+Tiers live in one exported `TIERS` table keyed by provider id, so adding a provider is a one-line edit. Per channel it reports volume, distinct companies, **posted-date coverage** (the honest reliability signal — a channel that publishes no dates bypasses `max_posting_age_days` entirely, so nothing it contributes can ever be aged out), rung-1 share via `liveness-api.mjs`'s own predicate, trust-flag counts, reachability joined from `portal-health.tsv` through the companies that channel actually produced, and whether `portals.yml` declares it an aggregator. `company_domain_mismatch` is a flag, not a rejection: `providers/_trust-validator.mjs` never drops on it.
+
+---
+
+## build-hub
+
+`build-hub.mjs` renders the entry page in front of the per-profile artifacts: one card per profile with its name, pending count, last build time and link.
+
+```bash
+node build-hub.mjs                     # writes output/hub.html
+node build-hub.mjs --out /tmp/hub.html
+```
+
+It carries **no job data** — no company names, no titles, no pipeline URLs. That is the reason each person's pipeline is its own page at its own URL rather than a section of a shared one, so it is a rule about this file: a column that needs a posting to fill it belongs on the profile's own page instead. The hub is safe to share; a profile link is not.
+
+Published URLs come from `config/artifacts.yml` (user layer) — an `owner:` URL plus a `profiles:` map of name to URL. A profile with no URL renders as "not yet published" rather than a dead link, and a profile still missing its CV, profile or portals says so on its card, because a profile scoring against the scaffolded stub produces a page that looks finished and is not.
 
 ---
 
