@@ -1891,11 +1891,43 @@ Paste job URLs below as \`- [ ] {url}\` then run \`/career-ops pipeline\`.
 const PENDING_MARKERS = ['## Pending', '## Pendientes'];
 const PROCESSED_MARKERS = ['## Processed', '## Procesadas'];
 
+// Trust enrichment at the shared write path. scan.mjs validates its own offers
+// up front (the fields also feed its summary and its scan-history rows for
+// filtered/cooldown postings), but the other pipeline writers — scan-ats-full.mjs,
+// scan-hn.mjs, scan-interamt.mjs, plugins.mjs — import appendToPipeline directly,
+// so a posting's trust flags used to depend on which CLI found it. Validate here
+// instead, only for offers that don't already carry a trustScore, so every writer
+// emits identical flags and a pre-validated offer is never scored twice. The
+// config comes from the same portals.yml key scan.mjs's own flow reads
+// (trust_filter); a missing or unparseable portals.yml degrades to the disabled
+// no-op — no flags, never a throw.
+function applyTrustValidation(offers) {
+  const pending = offers.filter(o => o.trustScore === undefined);
+  if (pending.length === 0) return;
+  let trustConfig;
+  try {
+    const parsed = parseYaml(readFileSync(PORTALS_PATH, 'utf-8'));
+    trustConfig = parsed && typeof parsed === 'object' ? parsed.trust_filter : undefined;
+  } catch {
+    trustConfig = undefined;
+  }
+  const validate = buildTrustValidator(trustConfig);
+  for (const job of pending) {
+    const trustResult = validate(job);
+    job.trustScore = trustResult.score;
+    job.trustFlags = trustResult.flags;
+    job.trustLevel = trustResult.level;
+  }
+}
+
 // Locked (pipeline-lock.mjs) so scan.mjs, scan-ats-full.mjs, and plugins.mjs
 // (pipeline mode) — the three current callers — can never interleave their
 // read-modify-write and silently drop each other's offers.
 export async function appendToPipeline(offers) {
   if (offers.length === 0) return;
+
+  // Identical trust flags for every writer, whichever scanner found the posting.
+  applyTrustValidation(offers);
 
   await withPipelineLock(PIPELINE_PATH, async () => {
     // Auto-create with standard skeleton if missing (fresh-install guard).
@@ -2614,7 +2646,11 @@ async function main() {
       }
 
       for (const job of jobs) {
-        // Trust enrichment — runs before filters, never drops
+        // Trust enrichment — runs before filters, never drops. Applied up
+        // front rather than at appendToPipeline (which skips offers already
+        // carrying a trustScore, so this stays the single application) because
+        // the summary and the scan-history rows for filtered/cooldown/expired
+        // postings need the fields too.
         const trustResult = trustValidator(job);
         job.trustScore = trustResult.score;
         job.trustFlags = trustResult.flags;

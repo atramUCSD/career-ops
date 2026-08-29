@@ -33,7 +33,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_USER_AGENT } from './user-agent.mjs';
+import { DEFAULT_USER_AGENT, BROWSER_LIKE_USER_AGENT } from './user-agent.mjs';
+import { classifyFullListAbsence } from './liveness-core.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 
@@ -64,6 +65,11 @@ function isSafeValue(v) {
 //   `timeoutMs`  — override the default fetch timeout (slow/rate-limited APIs).
 //   `throttleMs` — minimum interval between our requests to this provider.
 //   `accept`     — override the Accept header (providers that answer in HTML).
+//   `headers`    — extra request headers (APIs gated on a public client key).
+//                  May be an async function `(parts) => headers | null` for
+//                  rungs gated on a RUNTIME credential (an OAuth token, a
+//                  rotating JWT): resolving to null skips the rung cleanly —
+//                  no request, no verdict, never a throw.
 //   `interpret`  — read the 200 response body to decide liveness (org-level APIs
 //                  where a 200 alone doesn't prove THIS posting is live, and
 //                  per-job APIs that answer 200 for a closed posting).
@@ -365,7 +371,390 @@ const ATS_PROVIDERS = [
       return classifyLinkedInPosting(html);
     },
   },
+  {
+    id: 'arbeitsagentur',
+    // www.arbeitsagentur.de/jobsuche/jobdetail/{refnr} — the outgoing URL shape
+    // providers/arbeitsagentur.mjs builds. The per-job endpoint is
+    // /pc/v4/jobdetails/{base64url(refnr)} with the same public client key the
+    // v6 search uses. #2494's 404s hit the v4/v5 SEARCH endpoints; this v4
+    // DETAIL endpoint still answers (probed 2026-08-28: 200 JSON for ten live
+    // refnrs sampled from a fresh v6 search, 404 STELLENANGEBOT_NICHT_GEFUNDEN
+    // for an unknown one, and every v5/v6 detail variant 403s this key), so a
+    // genuine per-job answer: 200 is proof of life, a bare 404 is trustworthy.
+    //
+    // base64url, not standard base64 — "+" and "/" would break the path
+    // segment — and its output alphabet [A-Za-z0-9_-] satisfies SAFE_SEGMENT by
+    // construction, so the refnr itself (which may carry "_", e.g. partner
+    // refnr 12265-346369_JB5232982-S) never reaches the URL raw.
+    match(u) {
+      if (u.hostname !== 'www.arbeitsagentur.de') return null;
+      const m = u.pathname.match(/^\/jobsuche\/jobdetail\/([^/]+)\/?$/);
+      if (!m) return null;
+      let refnr;
+      try {
+        refnr = decodeURIComponent(m[1]);
+      } catch {
+        return null; // malformed percent-encoding → not a refnr we can claim
+      }
+      return refnr ? { ref: Buffer.from(refnr).toString('base64url') } : null;
+    },
+    api: ({ ref }) => `https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v4/jobdetails/${ref}`,
+    headers: { 'X-API-Key': 'jobboerse-jobsuche' }, // the endpoint 403s without it
+    async interpretGone(res) {
+      // This route died wholesale once (#2494). A posting-level 404 carries
+      // messages[].code STELLENANGEBOT_NICHT_GEFUNDEN in its body; a
+      // route-level 404 would not — so only the former is trusted as removal,
+      // and a dead route degrades to the browser rung instead of mass-expiring
+      // every German posting.
+      let body;
+      try {
+        body = await res.text();
+      } catch {
+        return null; // unreadable body → inconclusive, let the browser decide
+      }
+      if (!body.includes('STELLENANGEBOT_NICHT_GEFUNDEN')) return null;
+      return {
+        result: 'expired',
+        code: 'arbeitsagentur_api_gone',
+        reason: 'jobdetails 404 STELLENANGEBOT_NICHT_GEFUNDEN — posting removed',
+      };
+    },
+  },
+  {
+    id: 'jobtech',
+    // arbetsformedlingen.se/platsbanken/annonser/{id} — exactly the URL shape
+    // providers/jobtech.mjs builds from the ad id (it never trusts webpage_url).
+    // GET /ad/{id} on the JobSearch API is zero-auth and genuinely per-ad, and
+    // it answers removals with a 200 TOMBSTONE (removed: true, removed_date
+    // set, headline null — probed minutes after a real removal) long before an
+    // ad is purged to a true 404 — so liveness comes from the body, not the
+    // status code alone.
+    match(u) {
+      if (u.hostname !== 'arbetsformedlingen.se' && u.hostname !== 'www.arbetsformedlingen.se') return null;
+      const m = u.pathname.match(/^\/platsbanken\/annonser\/(\d+)\/?$/);
+      return m ? { id: m[1] } : null;
+    },
+    api: ({ id }) => `https://jobsearch.api.jobtechdev.se/ad/${id}`,
+    // The gateway is slow on healthy days (the sibling /search endpoint took
+    // 12.3s for a five-hit page; providers/jobtech.mjs budgets 25s). /ad is
+    // lighter, but the 8s ATS default would time out live ads into the browser
+    // rung for no reason.
+    timeoutMs: 15_000,
+    async interpret(res) {
+      let json;
+      try {
+        json = await res.json();
+      } catch {
+        return null; // unparseable body → inconclusive, let the browser decide
+      }
+      if (json?.removed === true) {
+        return {
+          result: 'expired',
+          code: 'jobtech_removed_tombstone',
+          reason: 'JobTech serves the ad as a removed:true tombstone — ad withdrawn',
+        };
+      }
+      if (json?.removed === false || (json?.removed === undefined && json?.headline)) {
+        return { result: 'active', code: 'jobtech_api_ok', reason: 'JobTech serves the ad without a removal mark (live)' };
+      }
+      return null; // neither shape → unrecognized payload, let the browser decide
+    },
+    async interpretGone(res) {
+      // Two 404 shapes with opposite meanings: a posting-level 404 says
+      // 'Ad not found' in its body; a route/gateway-level 404 has a different
+      // shape ({tracking_id, cause: {...}}, captured live from a bogus path)
+      // with no such marker. Trusting the latter would mass-expire every
+      // Swedish posting the day the route breaks — same #2494 reasoning as the
+      // arbeitsagentur rung above.
+      let body;
+      try {
+        body = await res.text();
+      } catch {
+        return null;
+      }
+      if (!body.includes('Ad not found')) return null;
+      return { result: 'expired', code: 'jobtech_api_gone', reason: "JobSearch 404 'Ad not found' — ad purged" };
+    },
+  },
+  {
+    id: 'francetravail',
+    // candidat.francetravail.fr/offres/recherche/detail/{id} — exactly the
+    // fallback URL shape providers/francetravail.mjs emits. Partner-origin
+    // offers live on partner hosts and never match here — this API cannot
+    // attest those pages, so it never claims them.
+    //
+    // DOCUMENTED-ONLY rung (never exercised with real credentials): response
+    // semantics come from the official OpenAPI spec (api id 84). The spec's
+    // gone signal is 204 — "L'offre n'existe pas" — and a 404 is UNDOCUMENTED
+    // for this endpoint, so it stays inconclusive (api404Authoritative: false)
+    // rather than expiring on a status the contract never defined.
+    match(u) {
+      if (u.hostname !== 'candidat.francetravail.fr') return null;
+      const m = u.pathname.match(/^\/offres\/recherche\/detail\/([A-Za-z0-9]+)$/);
+      return m ? { id: m[1] } : null;
+    },
+    api: ({ id }) => `https://api.francetravail.io/partenaire/offresdemploi/v2/offres/${id}`,
+    headers: francetravailHeaders, // OAuth bearer, resolved per run; null (creds absent) skips the rung
+    throttleMs: 150, // documented limit is 10 calls/s — stay well under it
+    api404Authoritative: false,
+    async interpret(res, { id }) {
+      let json;
+      try {
+        json = await res.json();
+      } catch {
+        json = null;
+      }
+      if (json && String(json.id ?? '') === id) {
+        return { result: 'active', code: 'francetravail_api_ok', reason: 'France Travail API returns the offer (live)' };
+      }
+      // A 200 whose body is unreadable or names a different offer proves
+      // nothing in either direction — never gone, never live.
+      return {
+        result: 'uncertain',
+        code: 'francetravail_api_unrecognized',
+        reason: 'France Travail 200 without a matching offer id — unrecognized payload',
+      };
+    },
+    async interpretOther(res) {
+      if (res.status === 401 || res.status === 403) {
+        // Credential outage (live-verified to arrive with an empty body), not
+        // evidence about this offer. Poison the batch's token so the sweep
+        // stops hammering the API with a dead bearer; every France Travail URL
+        // degrades to the browser rung instead.
+        ftCredsBroken = true;
+        ftTokenPromise = null;
+        return null;
+      }
+      if (res.status !== 204) return null; // 400/5xx/anything else → inconclusive
+      let body = '';
+      try {
+        body = await res.text();
+      } catch {
+        return null;
+      }
+      if (body !== '') return null; // a 204 with a body is not the documented gone shape
+      return {
+        result: 'expired',
+        code: 'francetravail_api_gone',
+        reason: 'France Travail 204 — the spec\'s "L\'offre n\'existe pas" (offer gone)',
+      };
+    },
+  },
+  {
+    id: 'usajobs',
+    // www.usajobs.gov/job/{controlNumber} — the public posting page, NOT the
+    // search API: the authenticated Position Search API has no per-control-
+    // number lookup at all (and historicjoa 400s one), so search-absence could
+    // never be authoritative, while the page itself answers per job with no
+    // key. Closed announcements keep serving 200 indefinitely with a
+    // server-rendered closed marker, so liveness comes from the body; a 404
+    // means removed/never-existed.
+    match(u) {
+      if (u.hostname !== 'www.usajobs.gov' && u.hostname !== 'usajobs.gov') return null;
+      const m = u.pathname.match(/^\/job\/(\d+)\/?$/)
+        // Legacy PositionURI form; it 301s to /job/{cn}, and redirects are
+        // refused module-wide, so normalize instead of following.
+        || u.pathname.match(/^\/GetJob\/ViewDetails\/(\d+)/i);
+      return m ? { id: m[1] } : null;
+    },
+    api: ({ id }) => `https://www.usajobs.gov/job/${id}`,
+    accept: 'text/html',
+    // The Akamai edge 403s non-browser UAs ('Access Denied' HTML) before the
+    // origin is ever reached; the browser-like UA clears it. A 403 that still
+    // arrives is the edge talking, not the posting — the default null for
+    // unclaimed statuses already keeps it inconclusive.
+    headers: { 'user-agent': BROWSER_LIKE_USER_AGENT },
+    async interpret(res) {
+      let html;
+      try {
+        html = await res.text();
+      } catch {
+        return null; // unreadable body → inconclusive, let the browser decide
+      }
+      if (typeof html !== 'string' || html.length === 0) return null;
+      if (html.includes('This job announcement has closed') || /"ClockDisplay"\s*:\s*"JobClosed"/.test(html)) {
+        return {
+          result: 'expired',
+          code: 'usajobs_page_closed',
+          reason: 'USAJOBS shows "This job announcement has closed" — announcement closed',
+        };
+      }
+      return { result: 'active', code: 'usajobs_page_ok', reason: 'USAJOBS serves the announcement with no closed marker (live)' };
+    },
+    async interpretGone() {
+      // The 404 for an unknown control number is BARE — no posting-level body
+      // marker exists to demand — so a broken /job route would mass-404 every
+      // federal posting. Mitigate like the greenhouse_embed rung: confirm the
+      // route still answers 200 for a sentinel announcement before trusting
+      // this 404 as posting-level.
+      if (!(await usajobsRouteAlive())) return null;
+      return {
+        result: 'expired',
+        code: 'usajobs_page_gone',
+        reason: 'USAJOBS 404 with the /job route confirmed healthy — announcement removed',
+      };
+    },
+  },
+  {
+    id: 'nav',
+    // arbeidsplassen.nav.no/stillinger/stilling/{uuid} — exactly the URL shape
+    // providers/nav.mjs emits. The feed's per-entry endpoint answers with the
+    // ad's lifecycle status, and it RETAINS INACTIVE entries for years — a
+    // genuinely dead ad presents as 200/INACTIVE, so a 404 (empty body) more
+    // likely means a mangled uuid than a removal. The 404 therefore stays
+    // inconclusive (api404Authoritative: false); the body decides.
+    match(u) {
+      if (u.hostname !== 'arbeidsplassen.nav.no') return null;
+      const m = u.pathname.match(
+        /^\/stillinger\/stilling\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/?$/
+      );
+      return m ? { uuid: m[1] } : null;
+    },
+    api: ({ uuid }) => `https://pam-stilling-feed.nav.no/api/v1/feedentry/${uuid}`,
+    headers: navHeaders, // rotating public JWT, fetched per run; null (token outage) skips the rung
+    api404Authoritative: false,
+    async interpret(res) {
+      let json;
+      try {
+        json = await res.json();
+      } catch {
+        return null; // unparseable body → inconclusive, let the browser decide
+      }
+      if (json?.status === 'INACTIVE') {
+        return { result: 'expired', code: 'nav_feedentry_inactive', reason: 'Nav feed entry is INACTIVE — ad withdrawn/expired' };
+      }
+      if (json?.status === 'ACTIVE') {
+        return { result: 'active', code: 'nav_feedentry_active', reason: 'Nav feed entry is ACTIVE (live)' };
+      }
+      return null; // unrecognized payload → browser decides
+    },
+    async interpretOther(res) {
+      // 401 = the public token rotated mid-run (or the fetch raced a rotation)
+      // — not a verdict on the ad. Drop the cached token so the next Nav URL
+      // fetches a fresh one instead of riding the dead JWT all sweep.
+      if (res.status === 401) navTokenPromise = null;
+      return null;
+    },
+  },
 ];
+
+// ── Government-channel rung prerequisites ────────────────────────────────────
+// France Travail and Nav gate their per-job endpoints on a runtime credential
+// (an OAuth token, a rotating public JWT). Each helper resolves the request
+// headers at most once per process and returns null when the prerequisite is
+// missing — checkLivenessViaApi turns that null into a clean rung skip
+// (browser fallback), never a throw and never a per-job warning.
+
+let ftTokenPromise = null; // one token fetch per run; failure paths clear it so the next offer retries
+let ftCredsBroken = false; // a deterministic credential failure degrades the whole batch, not one offer
+
+async function francetravailHeaders() {
+  if (ftCredsBroken) return null;
+  // Lazy import: the provider module rides providers/_http.mjs side effects,
+  // same reason the full-list section below defers its imports.
+  const { readCredentials } = await import('./providers/francetravail.mjs');
+  const creds = readCredentials();
+  if (!creds) return null; // credentials absent → skip silently, never warn per-offer
+  ftTokenPromise ??= (async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    try {
+      const res = await fetch('https://entreprise.francetravail.fr/connexion/oauth2/access_token?realm=%2Fpartenaire', {
+        method: 'POST',
+        headers: {
+          'user-agent': DEFAULT_USER_AGENT,
+          'content-type': 'application/x-www-form-urlencoded',
+          accept: 'application/json',
+        },
+        body: new URLSearchParams({
+          grant_type: 'client_credentials',
+          client_id: creds.clientId,
+          client_secret: creds.clientSecret,
+          scope: 'api_offresdemploiv2 o2dsoffre',
+        }).toString(),
+        redirect: 'error',
+        signal: controller.signal,
+      });
+      // 400 is the endpoint's answer for bad credentials as well as malformed
+      // requests (live-verified: invalid_client arrives as HTTP 400) —
+      // deterministic, so retrying the same creds cannot succeed. Anything
+      // else non-200 may be transient; the null-token cleanup below un-caches
+      // it so the next offer retries.
+      if (res.status === 400) ftCredsBroken = true;
+      if (res.status !== 200) return '';
+      const json = await res.json();
+      return typeof json?.access_token === 'string' ? json.access_token : '';
+    } catch {
+      return ''; // network/timeout → no token this attempt
+    } finally {
+      clearTimeout(timer);
+    }
+  })();
+  const token = await ftTokenPromise;
+  if (!token) ftTokenPromise = null; // transient failure → let the next offer retry
+  return token ? { authorization: `Bearer ${token}` } : null;
+}
+
+let navTokenPromise = null; // one token fetch per run; the nav 401 path above clears it
+
+async function navHeaders() {
+  navTokenPromise ??= (async () => {
+    const { extractPublicToken } = await import('./providers/nav.mjs');
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    try {
+      const res = await fetch('https://pam-stilling-feed.nav.no/api/publicToken', {
+        method: 'GET',
+        headers: { 'user-agent': DEFAULT_USER_AGENT, accept: 'text/plain' },
+        redirect: 'error',
+        signal: controller.signal,
+      });
+      if (res.status !== 200) return '';
+      // The body is a prefix line plus the JWT; '' when no JWT is found.
+      // Rotates ~every 35 days — fetched per run, NEVER hard-coded.
+      return extractPublicToken(await res.text());
+    } catch {
+      return '';
+    } finally {
+      clearTimeout(timer);
+    }
+  })();
+  const token = await navTokenPromise;
+  if (!token) navTokenPromise = null; // transient failure → let the next URL retry
+  return token ? { authorization: `Bearer ${token}` } : null;
+}
+
+// USAJOBS route-health sentinel: an announcement that closed in 2020 and that
+// USAJOBS serves 200 indefinitely (closed postings never 404 there — they show
+// the closed marker instead). If the sentinel answers 200, the /job route
+// works, so a 404 elsewhere is about THAT control number. Success is cached
+// for the run; failure is not, so a transient edge hiccup costs a re-probe on
+// the next 404 instead of condemning the whole sweep's 404s to the browser.
+const USAJOBS_SENTINEL = 'https://www.usajobs.gov/job/309472900';
+let usajobsRoutePromise = null;
+
+async function usajobsRouteAlive() {
+  usajobsRoutePromise ??= (async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    try {
+      const res = await fetch(USAJOBS_SENTINEL, {
+        method: 'GET',
+        headers: { 'user-agent': BROWSER_LIKE_USER_AGENT, accept: 'text/html' },
+        redirect: 'error',
+        signal: controller.signal,
+      });
+      return res.status === 200;
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
+  })();
+  const ok = await usajobsRoutePromise;
+  if (!ok) usajobsRoutePromise = null;
+  return ok;
+}
 
 // Branded hosts served by Eightfold AI. See the `eightfold` provider above for
 // why this is an allowlist and not a pattern.
@@ -499,7 +888,7 @@ export function greenhouseEmbed(rawUrl, boards = ghBoards()) {
  * Map a posting URL to its ATS API URL, or null if it isn't a known ATS posting
  * (or any extracted segment fails the strict charset). Pure + deterministic.
  * @param {string} rawUrl
- * @returns {{ ats: string, apiUrl: string, parts: Record<string, string>, timeoutMs?: number, throttleMs?: number, accept?: string, interpret?: (res: Response, parts: Record<string, string>) => Promise<{ result: 'active' | 'expired' | 'uncertain', code: string, reason: string } | null>, api404Authoritative: boolean } | null}
+ * @returns {{ ats: string, apiUrl: string, parts: Record<string, string>, timeoutMs?: number, throttleMs?: number, accept?: string, headers?: Record<string, string> | ((parts: Record<string, string>) => Promise<Record<string, string> | null>), interpret?: (res: Response, parts: Record<string, string>) => Promise<{ result: 'active' | 'expired' | 'uncertain', code: string, reason: string } | null>, api404Authoritative: boolean } | null}
  */
 export function resolveAtsApi(rawUrl) {
   let u;
@@ -525,6 +914,7 @@ export function resolveAtsApi(rawUrl) {
       interpretGone: provider.interpretGone,
       interpretOther: provider.interpretOther,
       accept: provider.accept,
+      headers: provider.headers,
       throttleMs: provider.throttleMs,
       api404Authoritative: provider.api404Authoritative !== false,
     };
@@ -556,8 +946,23 @@ export async function checkLivenessViaApi(url) {
       const apiUrl = greenhouseEmbed(url);
       return apiUrl ? { ats: 'greenhouse', apiUrl, parts: {}, interpret: undefined, timeoutMs: undefined } : null;
     })();
-  if (!resolved) return null;
-  const { ats, apiUrl, parts, interpret, interpretGone, interpretOther, accept, timeoutMs, throttleMs, api404Authoritative } = resolved;
+  // Third rung: full-list providers — the tenant's whole board in one fetch,
+  // where absence from a SUCCESSFUL fetch is as authoritative as a per-job 404.
+  if (!resolved) return checkLivenessViaFullList(url);
+  const { ats, apiUrl, parts, interpret, interpretGone, interpretOther, accept, headers, timeoutMs, throttleMs, api404Authoritative } = resolved;
+
+  // Resolve function-valued headers first (rungs gated on a runtime credential
+  // or rotating token): null means the prerequisite is unavailable and the
+  // rung is skipped cleanly — no request fired, no verdict, browser fallback.
+  let requestHeaders = headers;
+  if (typeof requestHeaders === 'function') {
+    try {
+      requestHeaders = await requestHeaders(parts);
+    } catch {
+      return null;
+    }
+    if (!requestHeaders) return null;
+  }
 
   // Wait out any provider rate limit BEFORE arming the timeout, so the spacing
   // does not eat the budget the request itself needs.
@@ -572,7 +977,7 @@ export async function checkLivenessViaApi(url) {
     try {
       res = await fetch(apiUrl, {
         method: 'GET',
-        headers: { 'user-agent': DEFAULT_USER_AGENT, accept: accept || 'application/json' },
+        headers: { 'user-agent': DEFAULT_USER_AGENT, accept: accept || 'application/json', ...requestHeaders },
         redirect: 'error', // refuse server-side redirects (SSRF + ambiguity guard)
         signal: controller.signal,
       });
@@ -604,4 +1009,102 @@ export async function checkLivenessViaApi(url) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+// ── Full-list providers ──────────────────────────────────────────────────────
+// Seven ATSs return the tenant's ENTIRE board in one 200 response, so absence
+// from a fresh successful fetch is proof of removal exactly as a per-job 404 is
+// (the rule itself is classifyFullListAbsence in liveness-core.mjs). The board
+// fetch is the scanner's own provider plugin — providers/*.mjs already carry
+// every endpoint, retry policy, and SSRF guard, so nothing is reimplemented
+// here. Each plugin's detect() only reads the hostname / first path segment of
+// `careers_url`, which a posting URL carries too, so detection is simply
+// `detect({ careers_url: url })`.
+//
+// `posting` narrows the claim to per-job URLs: a board root also satisfies
+// detect() but is not a posting, and running the absence rule on it would
+// manufacture exactly the false "expired" this module exists to avoid.
+const FULL_LIST_PROVIDERS = [
+  { module: './providers/ashby.mjs', posting: /^\/[^/]+\/[^/]+/ },
+  { module: './providers/breezy.mjs', posting: /^\/p\/[^/]+/ },
+  { module: './providers/jobvite.mjs', posting: /^\/[^/]+\/job\/[^/]+/i },
+  { module: './providers/personio.mjs', posting: /^\/job\/\d+/ },
+  { module: './providers/pinpoint.mjs', posting: /\/postings\/[^/]+/ },
+  { module: './providers/rippling.mjs', posting: /^\/[^/]+\/jobs\/[^/]+/ },
+  { module: './providers/teamtailor.mjs', posting: /^\/jobs\/\d+/ },
+];
+
+// Loaded lazily so the provider modules (and their transitive dns/ip-guard
+// side effects in providers/_http.mjs) only load when a full-list URL is
+// actually checked, not for every importer of this module.
+let fullListLoaded = null;
+async function loadFullListProviders() {
+  fullListLoaded ??= (async () => {
+    const { makeHttpCtx } = await import('./providers/_http.mjs');
+    const providers = [];
+    for (const { module, posting } of FULL_LIST_PROVIDERS) {
+      providers.push({ provider: (await import(module)).default, posting });
+    }
+    return { ctx: makeHttpCtx(), providers };
+  })();
+  return fullListLoaded;
+}
+
+// One board fetch per tenant per process: a sweep checks many postings from the
+// same board, and re-fetching per URL is what earns the 429s (app.jobvite.com
+// throttles from the second request on). A failed fetch is evicted, so a later
+// URL retries instead of inheriting a transient error.
+const boardFetches = new Map();
+function fetchBoardOnce(key, provider, entry, ctx) {
+  let p = boardFetches.get(key);
+  if (!p) {
+    p = provider.fetch(entry, ctx);
+    boardFetches.set(key, p);
+    p.catch(() => boardFetches.delete(key));
+  }
+  return p;
+}
+
+/**
+ * Full-list liveness check: fetch the whole tenant board via the scanner's own
+ * provider plugin, then classify presence/absence (liveness-core owns the rule).
+ * @param {string} url
+ * @returns {Promise<{ result: 'active' | 'expired' | 'uncertain', code: string, reason: string } | null>}
+ *   null = not a full-list posting URL, or the board fetch failed → caller
+ *   falls back to the browser rung. A failed LIST fetch says nothing about the
+ *   posting page itself, so the browser must still get to read that page —
+ *   which is why the rule's `full_list_fetch_failed` verdict maps to null here
+ *   rather than surfacing as a terminal `uncertain`. `full_list_empty` maps to
+ *   null for the same reason: parsers launder an unreadable 200 into [], and
+ *   the browser rung still catches a genuinely-all-closed board via 404/banner.
+ */
+export async function checkLivenessViaFullList(url) {
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== 'https:') return null;
+  const { ctx, providers } = await loadFullListProviders();
+  for (const { provider, posting } of providers) {
+    let hit;
+    try {
+      hit = provider.detect({ careers_url: url });
+    } catch {
+      hit = null;
+    }
+    if (!hit) continue;
+    if (!posting.test(u.pathname)) return null; // this provider's board root, not a posting
+    let jobs;
+    let fetchSucceeded = true;
+    try {
+      jobs = await fetchBoardOnce(`${provider.id} ${hit.url}`, provider, { name: u.hostname, careers_url: url }, ctx);
+    } catch {
+      fetchSucceeded = false;
+    }
+    const verdict = classifyFullListAbsence({ fetchSucceeded, jobs, targetUrl: url, provider: provider.id });
+    return verdict.code === 'full_list_fetch_failed' || verdict.code === 'full_list_empty' ? null : verdict;
+  }
+  return null;
 }

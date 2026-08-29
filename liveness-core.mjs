@@ -206,3 +206,65 @@ export function classifyLiveness({ status = 0, requestedUrl = '', finalUrl = '',
 
   return { result: 'uncertain', code: 'no_apply_control', reason: 'content present but no visible apply control found' };
 }
+
+// ── Full-list absence ────────────────────────────────────────────────────────
+// Some ATSs (Ashby, Pinpoint, Breezy, Rippling, Jobvite, Teamtailor, Personio)
+// return the tenant's ENTIRE board in one successful response. Against that
+// list, absence is proof of removal exactly as a per-job 404 is — but ONLY
+// against a fetch that actually succeeded. A failed or unreadable fetch is not
+// a full list, and absence from it proves nothing; reading it as expired is the
+// same false-expired failure every guard above defends against.
+
+// Compare a posting URL against a listed job URL: scheme, query, fragment and a
+// trailing slash never distinguish two postings on the same board, so drop them
+// and lowercase the rest (no board publishes two postings differing by case).
+function normalizeForListMatch(raw = '') {
+  let u;
+  try {
+    u = new URL(raw);
+  } catch {
+    return '';
+  }
+  return `${u.hostname}${u.pathname}`.toLowerCase().replace(/\/+$/, '');
+}
+
+export function classifyFullListAbsence({ fetchSucceeded = false, jobs, targetUrl = '', provider = 'board' } = {}) {
+  // The load-bearing branch, first: a fetch that did not succeed must NEVER
+  // read as removal.
+  if (!fetchSucceeded) {
+    return { result: 'uncertain', code: 'full_list_fetch_failed', reason: `${provider} board fetch failed — absence unproven, not expired` };
+  }
+  if (!Array.isArray(jobs)) {
+    return { result: 'uncertain', code: 'full_list_unreadable', reason: `${provider} board returned an unexpected shape — absence unproven` };
+  }
+  // Every provider parser launders an unreadable payload into [] (Pinpoint
+  // {"data": null}, an RSS feed with zero <item>s, non-array JSON), so an
+  // EMPTY successful list is indistinguishable from a broken one here —
+  // absence from it is not proof and must never classify expired.
+  if (jobs.length === 0) {
+    return { result: 'uncertain', code: 'full_list_empty', reason: `${provider} board fetch returned zero jobs — empty and unreadable are indistinguishable, absence unproven` };
+  }
+  const target = normalizeForListMatch(targetUrl);
+  // Branded job links (Teamtailor, Jobvite) and /application suffixes (Ashby)
+  // change the URL without changing the posting, so a shared job id token also
+  // counts as presence. Bounded, so id "12345" never matches inside "123456".
+  // jobIdToken yields only hex/digits/hyphens — no regex metacharacters.
+  const id = jobIdToken(targetUrl);
+  const idRe = id ? new RegExp(`(^|[^0-9a-z])${id}([^0-9a-z]|$)`, 'i') : null;
+  if (!target && !idRe) {
+    return { result: 'uncertain', code: 'full_list_no_target', reason: 'no usable posting URL or id to look for — absence unproven' };
+  }
+  for (const job of jobs) {
+    const jobUrl = typeof job?.url === 'string' ? job.url : '';
+    if (!jobUrl) continue;
+    const listed = normalizeForListMatch(jobUrl);
+    // A tracked URL may extend the listed one with a suffix path on the same
+    // posting (a Jobvite apply URL .../job/{id}/apply vs the feed's
+    // .../job/{id}), and Jobvite ids are alphanumeric so no id token can
+    // rescue the match — a target extending a listed URL also counts as present.
+    if ((target && listed && (listed === target || target.startsWith(listed + '/'))) || (idRe && idRe.test(jobUrl))) {
+      return { result: 'active', code: 'full_list_present', reason: `posting is listed on the ${provider} board (live)` };
+    }
+  }
+  return { result: 'expired', code: 'full_list_absent', reason: `full-list-absence rule: missing from a successful full ${provider} board fetch (${jobs.length} jobs listed)` };
+}

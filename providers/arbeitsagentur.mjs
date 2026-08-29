@@ -30,8 +30,10 @@
 //       remoteMaxPages: 10      # 'filter' mode: max pages to paginate (size each); default 1
 //     enabled: true
 
-// v6. The v4 search and detail endpoints both 404 as of 2026-08-04 (#2494);
-// v5 does too. v6 keeps every query parameter this provider sends
+// v6. The v4 search and detail endpoints both 404'd as of 2026-08-04 (#2494);
+// v5 does too. The v4 DETAIL endpoint has since come back (probed 2026-08-28)
+// and backs the per-job liveness rung in liveness-api.mjs; search stays here on
+// v6. v6 keeps every query parameter this provider sends
 // (was/wo/umkreis/veroeffentlichtseit/angebotsart/homeoffice/page/size) but
 // renames the response fields — see normalizeJob().
 const API_URL = 'https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v6/jobs';
