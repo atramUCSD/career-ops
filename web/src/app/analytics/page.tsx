@@ -2,6 +2,7 @@ import Link from "next/link";
 import { pipelineSummary } from "@/lib/career-ops";
 import { canonStatus, scoreNum } from "@/lib/format";
 import { cumulativeTiles } from "@/lib/funnel-tiles.mjs";
+import { barWidths } from "@/lib/chart-geometry.mjs";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +25,7 @@ export default function Analytics() {
     ...s,
     n: applications.filter((a) => canonStatus(a.status).includes(s.key)).length,
   }));
-  const maxStage = Math.max(1, ...stageCounts.map((s) => s.n));
+  const stageN = (key: string) => stageCounts.find((s) => s.key === key)?.n ?? 0;
 
   const scores = applications.map((a) => scoreNum(a.score)).filter((n) => !Number.isNaN(n));
   const avg = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
@@ -34,12 +35,11 @@ export default function Analytics() {
     { label: "3.0 – 3.9", test: (n: number) => n >= 3 && n < 4 },
     { label: "< 3.0", test: (n: number) => n < 3 },
   ].map((b) => ({ label: b.label, n: scores.filter(b.test).length }));
-  const maxBucket = Math.max(1, ...buckets.map((b) => b.n));
 
   const companyCounts = new Map<string, number>();
   for (const a of applications) if (a.company) companyCounts.set(a.company, (companyCounts.get(a.company) ?? 0) + 1);
   const topCompanies = [...companyCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
-  const maxCompany = Math.max(1, ...topCompanies.map((c) => c[1]));
+  const held = topCompanies.reduce((a, [, n]) => a + n, 0);
 
   // CUMULATIVE, unlike the stage bars above: these two tiles are achievement
   // counters whose zero-state shows a coaching nudge, so a candidate who has
@@ -47,6 +47,21 @@ export default function Analytics() {
   // told "Interviews follow replies — keep follow-ups warm"). Mirrors
   // everInterview/everOffer in stats.mjs's computeFunnel().
   const { interviews, offers } = cumulativeTiles(applications.map((a) => canonStatus(a.status)));
+
+  // One takeaway sentence per chart — the aria-label an assistive-technology
+  // user hears instead of the flattened bars, same bar as the artifact charts.
+  const stageTakeaway =
+    `Of ${total} tracked evaluations, ${stageN("APPLIED")} sit at applied, ` +
+    `${stageN("INTERVIEW")} at interview, ${stageN("OFFER")} at offer and ` +
+    `${stageN("REJECTED")} were rejected.`;
+  const scoreTakeaway = scores.length
+    ? `${scores.length} scored evaluations average ${avg.toFixed(2)}; ` +
+      `${buckets[0].n + buckets[1].n} score 4.0 or better.`
+    : "No scored evaluations yet.";
+  const companyTakeaway = topCompanies.length
+    ? `The top ${topCompanies.length} of ${companyCounts.size} companies hold ` +
+      `${held} of ${total} tracked evaluations.`
+    : "No companies tracked yet.";
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-10">
@@ -70,28 +85,19 @@ export default function Analytics() {
       </div>
 
       <Section title="Pipeline by stage">
-        {stageCounts.map((s) => (
-          <Bar
-            key={s.key}
-            label={s.label}
-            value={s.n}
-            pct={(s.n / maxStage) * 100}
-            total={total}
-            tone={s.key === "OFFER" ? "positive" : "neutral"}
-          />
-        ))}
+        <BarChart
+          items={stageCounts.map((s) => ({ label: s.label, n: s.n, positive: s.key === "OFFER" }))}
+          total={total}
+          takeaway={stageTakeaway}
+        />
       </Section>
 
       <Section title="Score distribution">
-        {buckets.map((b) => (
-          <Bar key={b.label} label={b.label} value={b.n} pct={(b.n / maxBucket) * 100} total={scores.length} />
-        ))}
+        <BarChart items={buckets} total={scores.length} takeaway={scoreTakeaway} />
       </Section>
 
       <Section title="Top companies" id="companies">
-        {topCompanies.map(([name, n]) => (
-          <Bar key={name} label={name} value={n} pct={(n / maxCompany) * 100} />
-        ))}
+        <BarChart items={topCompanies.map(([label, n]) => ({ label, n }))} takeaway={companyTakeaway} />
       </Section>
     </div>
   );
@@ -120,37 +126,47 @@ function Section({ title, children, id }: { title: string; children: React.React
   );
 }
 
-function Bar({
-  label,
-  value,
-  pct,
+/**
+ * One horizontal bar chart, server-rendered. Widths come from the shared
+ * geometry module (the same code path as the artifact's SVG charts) with a
+ * 4% floor so a small non-zero count stays visible; n = 0 renders an empty
+ * track. Labels and counts stay real text; the SVG marks are aria-hidden and
+ * the chart speaks through its takeaway aria-label.
+ */
+function BarChart({
+  items,
+  takeaway,
   total,
-  tone = "neutral",
 }: {
-  label: string;
-  value: number;
-  pct: number;
+  items: { label: string; n: number; positive?: boolean }[];
+  takeaway: string;
   total?: number;
-  tone?: "neutral" | "positive";
 }) {
-  const share = total && total > 0 ? Math.round((value / total) * 100) : null;
-  const fill =
-    tone === "positive"
-      ? "bg-gradient-to-r from-emerald-500/60 to-emerald-500/30"
-      : "bg-gradient-to-r from-foreground/25 to-foreground/10";
+  const widths = barWidths(items.map((i) => i.n), 100, 4);
   return (
-    <div className="flex items-center gap-3">
-      <div className="w-32 shrink-0 truncate text-sm text-muted">{label}</div>
-      <div className="relative h-7 flex-1 overflow-hidden rounded-md bg-surface">
-        <div
-          className={`h-full rounded-md ${fill}`}
-          style={{ width: `${Math.max(pct, value > 0 ? 4 : 0)}%` }}
-        />
-      </div>
-      <div className="w-20 shrink-0 text-right text-sm tabular-nums">
-        {value}
-        {share !== null && <span className="ml-1 text-xs text-faint">{share}%</span>}
-      </div>
+    <div role="img" aria-label={takeaway} className="space-y-2.5">
+      {items.map((it, i) => (
+        <div key={it.label} className="flex items-center gap-3">
+          <div className="w-32 shrink-0 truncate text-sm text-muted">{it.label}</div>
+          <svg className="h-7 flex-1" aria-hidden="true">
+            <rect width="100%" height="100%" rx="6" className="fill-surface" />
+            {widths[i] > 0 && (
+              <rect
+                width={`${widths[i]}%`}
+                height="100%"
+                rx="6"
+                className={it.positive ? "fill-emerald-500/50" : "fill-foreground/20"}
+              />
+            )}
+          </svg>
+          <div className="w-20 shrink-0 text-right text-sm tabular-nums">
+            {it.n}
+            {total !== undefined && total > 0 && (
+              <span className="ml-1 text-xs text-faint">{Math.round((it.n / total) * 100)}%</span>
+            )}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

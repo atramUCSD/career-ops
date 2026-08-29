@@ -18,6 +18,7 @@ import { join, dirname, relative, sep } from 'path';
 import { fileURLToPath } from 'url';
 import { load as yamlLoad } from 'js-yaml';
 import { resolveColumns, parseTrackerRow, normalizeVia } from './tracker-parse.mjs';
+import { isMainModule } from './lib/is-main-module.mjs';
 
 const CAREER_OPS = dirname(fileURLToPath(import.meta.url));
 const APPS_FILE = existsSync(join(CAREER_OPS, 'data/applications.md'))
@@ -56,25 +57,6 @@ const MACHINE_SUMMARY_FIELDS = new Set([
   // Allowlisted so it round-trips; no consumer logic yet.
   'reports_to',
 ]);
-
-// --- CLI args ---
-const args = process.argv.slice(2);
-const summaryMode = args.includes('--summary');
-const minThresholdIdx = args.indexOf('--min-threshold');
-const MIN_THRESHOLD = minThresholdIdx !== -1 && args[minThresholdIdx + 1] !== undefined
-  ? (Number.isNaN(parseInt(args[minThresholdIdx + 1])) ? 5 : parseInt(args[minThresholdIdx + 1]))
-  : 5;
-
-// Minimum per-vendor sample before a channel-yield recommendation fires. Kept
-// modest (small trackers) but high enough that one unlucky bucket isn't a claim.
-const minVendorNIdx = args.indexOf('--min-vendor-n');
-const MIN_VENDOR_N = (() => {
-  if (minVendorNIdx === -1 || args[minVendorNIdx + 1] === undefined) return 8;
-  const n = parseInt(args[minVendorNIdx + 1], 10);
-  // Reject 0/negative: a floor of 0 makes sufficientSample always true and
-  // silently defeats the "don't claim on noise" guard the whole feature rests on.
-  return Number.isNaN(n) || n < 1 ? 8 : n;
-})();
 
 // --- Status normalization (mirrors verify-pipeline.mjs) ---
 const ALIASES = {
@@ -188,7 +170,7 @@ function parseMachineSummary(content) {
 // opposed to the explicit `—` direct marker) belong to neither bucket; they
 // are counted as `unknownVia` so agencySubmitted + directSubmitted can't
 // silently undershoot the submitted total.
-function buildViaChannelAnalysis(submitted, isAdvanced, minSample = MIN_VENDOR_N) {
+function buildViaChannelAnalysis(submitted, isAdvanced, minSample = 8) {
   const viaOf = (e) => String(e.via ?? '').trim();
   const isDirect = (v) => v === '—' || v === '-';
   const agencySubmitted = submitted.filter(e => { const v = viaOf(e); return v !== '' && !isDirect(v); });
@@ -564,9 +546,9 @@ risk_summary:
 }
 
 // --- Parse applications.md ---
-function parseTracker() {
-  if (!existsSync(APPS_FILE)) return [];
-  const content = readFileSync(APPS_FILE, 'utf-8');
+function parseTracker(appsFile = APPS_FILE) {
+  if (!existsSync(appsFile)) return [];
+  const content = readFileSync(appsFile, 'utf-8');
   const lines = content.split('\n');
   const colmap = resolveColumns(lines);
   const entries = [];
@@ -589,12 +571,12 @@ function parseTracker() {
 // missing root means there are simply no reports. Only genuinely unexpected
 // errors rethrow, matching readTextIfExists. Identical to the guard in
 // upskill.mjs so both sites behave the same.
-function withinReports(candidate) {
-  const repoRelative = relative(CAREER_OPS, candidate).split(sep).join('/');
+function withinReports(candidate, root = CAREER_OPS) {
+  const repoRelative = relative(root, candidate).split(sep).join('/');
   if (!repoRelative.startsWith('reports/') || repoRelative.includes('..')) return false;
   let realRoot;
   try {
-    realRoot = realpathSync(join(CAREER_OPS, 'reports'));
+    realRoot = realpathSync(join(root, 'reports'));
   } catch (err) {
     if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return false;
     throw err;
@@ -927,8 +909,11 @@ function buildPatternSignals(enriched) {
 }
 
 // --- Main analysis ---
-function analyze() {
-  const entries = parseTracker();
+export function analyze({ minThreshold = 5, minVendorN = 8, root = CAREER_OPS } = {}) {
+  const appsFile = existsSync(join(root, 'data/applications.md'))
+    ? join(root, 'data/applications.md')
+    : join(root, 'applications.md');
+  const entries = parseTracker(appsFile);
 
   if (entries.length === 0) {
     return { error: 'No applications found in tracker.' };
@@ -945,11 +930,11 @@ function analyze() {
     let reportData = null;
     if (reportMatch) {
       const candidates = new Set([
-        join(dirname(APPS_FILE), reportMatch[1]),
-        join(CAREER_OPS, reportMatch[1]),
+        join(dirname(appsFile), reportMatch[1]),
+        join(root, reportMatch[1]),
       ]);
       for (const candidate of candidates) {
-        if (!withinReports(candidate)) continue;
+        if (!withinReports(candidate, root)) continue;
         reportData = parseReport(candidate);
         if (reportData) break;
       }
@@ -978,11 +963,11 @@ function analyze() {
 
   // Count entries beyond "Evaluated"
   const beyondEvaluated = enriched.filter(e => e.normalizedStatus !== 'evaluated');
-  if (beyondEvaluated.length < MIN_THRESHOLD) {
+  if (beyondEvaluated.length < minThreshold) {
     return {
-      error: `Not enough data: ${beyondEvaluated.length}/${MIN_THRESHOLD} applications beyond "Evaluated". Keep applying and come back later.`,
+      error: `Not enough data: ${beyondEvaluated.length}/${minThreshold} applications beyond "Evaluated". Keep applying and come back later.`,
       current: beyondEvaluated.length,
-      threshold: MIN_THRESHOLD,
+      threshold: minThreshold,
     };
   }
 
@@ -1115,14 +1100,14 @@ function analyze() {
       advanced: data.advanced,
       advanceRate: data.total > 0 ? Math.round((data.advanced / data.total) * 100) : 0,
       sharePct: submitted.length > 0 ? Math.round((data.total / submitted.length) * 100) : 0,
-      sufficientSample: data.total >= MIN_VENDOR_N,
+      sufficientSample: data.total >= minVendorN,
     }))
     .sort((a, b) => b.total - a.total);
 
   const identifiedCount = submitted.length - (vendorMap.get('unknown')?.total || 0);
   const vendorAnalysis = {
     scope: ['greenhouse', 'lever', 'ashby', 'workday', 'icims'],
-    minSampleForClaim: MIN_VENDOR_N,
+    minSampleForClaim: minVendorN,
     submitted: submitted.length,
     identified: identifiedCount,
     coveragePct: submitted.length > 0 ? Math.round((identifiedCount / submitted.length) * 100) : 0,
@@ -1137,7 +1122,7 @@ function analyze() {
   // recruiter relationships to invest in — this shows which ones convert.
   // Rows only carry `via` when the tracker has the optional Via column
   // (#1596); without it every bucket is empty and nothing is claimed.
-  const viaChannelAnalysis = buildViaChannelAnalysis(submitted, isAdvanced);
+  const viaChannelAnalysis = buildViaChannelAnalysis(submitted, isAdvanced, minVendorN);
 
   // --- Score threshold analysis ---
   const positiveScores = scoresByOutcome.positive.filter(s => s > 0);
@@ -1396,17 +1381,38 @@ function printSummary(result) {
   console.log('');
 }
 
-// --- Run ---
-if (args.includes('--self-test')) {
-  runSelfTest();
+// --- CLI ---
+function main(args) {
+  if (args.includes('--self-test')) {
+    runSelfTest();
+  }
+
+  const summaryMode = args.includes('--summary');
+  const minThresholdIdx = args.indexOf('--min-threshold');
+  const minThreshold = minThresholdIdx !== -1 && args[minThresholdIdx + 1] !== undefined
+    ? (Number.isNaN(parseInt(args[minThresholdIdx + 1])) ? 5 : parseInt(args[minThresholdIdx + 1]))
+    : 5;
+
+  // Minimum per-vendor sample before a channel-yield recommendation fires. Kept
+  // modest (small trackers) but high enough that one unlucky bucket isn't a claim.
+  const minVendorNIdx = args.indexOf('--min-vendor-n');
+  const minVendorN = (() => {
+    if (minVendorNIdx === -1 || args[minVendorNIdx + 1] === undefined) return 8;
+    const n = parseInt(args[minVendorNIdx + 1], 10);
+    // Reject 0/negative: a floor of 0 makes sufficientSample always true and
+    // silently defeats the "don't claim on noise" guard the whole feature rests on.
+    return Number.isNaN(n) || n < 1 ? 8 : n;
+  })();
+
+  const result = analyze({ minThreshold, minVendorN });
+
+  if (summaryMode) {
+    printSummary(result);
+  } else {
+    console.log(JSON.stringify(result, null, 2));
+  }
+
+  if (result.error) process.exit(1);
 }
 
-const result = analyze();
-
-if (summaryMode) {
-  printSummary(result);
-} else {
-  console.log(JSON.stringify(result, null, 2));
-}
-
-if (result.error) process.exit(1);
+if (isMainModule(import.meta.url)) main(process.argv.slice(2));

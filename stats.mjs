@@ -453,7 +453,7 @@ export function computeRunStats(content) {
   // that is full of rows the header can no longer describe.
   if (rows.length === 0) {
     return driftedRows > 0
-      ? { totalRuns: 0, driftedRows, failedRuns: 0, lastRunDate: null, avgFoundPerRun: 0, avgNewPerRun: 0, filterRemovalPct: 0 }
+      ? { totalRuns: 0, driftedRows, failedRuns: 0, lastRunDate: null, avgFoundPerRun: 0, avgNewPerRun: 0, filterRemovalPct: 0, runs: [] }
       : null;
   }
   // Inclusion by 'completed', not exclusion by known failure names: any
@@ -477,6 +477,8 @@ export function computeRunStats(content) {
     avgFoundPerRun: completed.length ? round1(sum(completed, 'found') / completed.length) : 0,
     avgNewPerRun: completed.length ? round1(sum(completed, 'newAdded') / completed.length) : 0,
     filterRemovalPct: pct(sum(completed, 'filtered'), sum(completed, 'found')),
+    // Per-run series (chronological file order) for time-series consumers.
+    runs: rows,
   };
 }
 

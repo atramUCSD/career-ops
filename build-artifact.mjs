@@ -22,7 +22,7 @@
  *   node build-artifact.mjs --out page.html
  */
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as yaml from 'js-yaml';
 import { parsePendingRows, classifyRows } from './swarm.mjs';
@@ -31,7 +31,18 @@ import { matchedTitleKeywords, buildTitleFilter } from './scan.mjs';
 import { buildScorer, calibrate, SIGNALS, BANDS } from './callback-score.mjs';
 import { profileDir } from './profiles.mjs';
 import { buildChannelTrust } from './channel-trust.mjs';
+import { resolveColumns, parseTrackerRow } from './tracker-parse.mjs';
+import { parseExpiredLog } from './expired-log.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
+import { cumulativeTiles } from './web/src/lib/funnel-tiles.mjs';
+import { scaleLinear, barWidths, histogramBins, stackedSegments, sparklinePath, shadePct } from './web/src/lib/chart-geometry.mjs';
+import { computeRunStats } from './stats.mjs';
+import { analyze as analyzeVelocity, loadBenchmarks } from './funnel-velocity.mjs';
+import { loadCanonicalStates } from './tracker-utils.mjs';
+import { loadTrackerRows, loadFollowupRows, loadRepostClusters, buildCompanyCards, getCompanyCard, loadStatusLogSource } from './company-history.mjs';
+import { parseObservations, fold } from './salary-gap.mjs';
+import { parseReportGaps, aggregateGaps, knownSkillsText, extractSkills } from './upskill.mjs';
+import { analyze as analyzePatterns } from './analyze-patterns.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 
@@ -91,6 +102,7 @@ function loadHistory(root) {
     const c = line.split('\t');
     const row = {
       url: c[idx.url],
+      seen: c[idx.first_seen] || '',
       title: c[idx.title] || '',
       company: c[idx.company] || '',
       posted: c[idx.posted_at] || '',
@@ -112,25 +124,29 @@ function loadHistory(root) {
  */
 function loadApplications(root) {
   const text = readIf(join(root, 'data/applications.md'));
+  const lines = text.split(/\r?\n/);
+  // Header-aware column mapping (tracker-parse.mjs), not fixed positions — an
+  // inserted column (e.g. Location, #946) must not shift score into status.
+  const colmap = resolveColumns(lines);
   const byKey = new Map();
-  for (const line of text.split(/\r?\n/)) {
-    if (!line.startsWith('|') || /^\|\s*[-#]/.test(line)) continue;
-    const cells = line.split('|').map(s => s.trim());
-    const [, , , company, role, score, status] = cells;
-    if (!company || company === 'Company') continue;
-    byKey.set(`${company}|${role}`.toLowerCase(), { score, status });
+  const list = [];
+  for (const line of lines) {
+    const row = parseTrackerRow(line, colmap);
+    if (!row || !row.company) continue;
+    byKey.set(`${row.company}|${row.role}`.toLowerCase(), { score: row.score, status: row.status });
+    list.push({ num: row.num, company: row.company, role: row.role });
   }
-  return byKey;
+  return { byKey, list };
 }
 
 function loadExpired(root) {
-  const text = readIf(join(root, 'data/expired-jobs.md'));
-  const count = Number(text.match(/_(\d+) postings? recorded\._/)?.[1] || 0);
-  const rows = text.split(/\r?\n/)
-    .filter(l => l.startsWith('| 20'))
-    .map(l => l.split('|').map(s => s.trim()))
-    .map(c => ({ removed: c[1], company: c[2], title: c[3], evidence: c[6] }));
-  return { count, rows };
+  // Count comes from the parsed rows, not the "_N postings recorded._" prose:
+  // expired-log.mjs derives that sentence from the table it writes, and a row
+  // deleted by hand stays deleted (the file is canonical), so the prose can
+  // only ever be stale — never more right than the rows.
+  const rows = [...parseExpiredLog(readIf(join(root, 'data/expired-jobs.md'))).values()]
+    .map(r => ({ removed: r.removed, company: r.company, title: r.title, evidence: r.evidence }));
+  return { count: rows.length, rows };
 }
 
 /**
@@ -194,7 +210,158 @@ export function keywordYield(positives, addedRows, pendingRows) {
  * rows its own archetypes claim. A posting both people target appears for both
  * — the projection is a relevance test, not an ownership one.
  */
-export function buildModel({ root = ROOT, now = new Date(), profileRoot = null, profileName = null } = {}) {
+// ---- analytics panels -------------------------------------------------------
+// Same degrade contract as readIf: a missing or malformed side file renders an
+// absent panel, never a throw. Each loader traps its own errors so one bad
+// analytics file cannot take down the whole page build.
+
+/** data/alert-log.tsv — the hydration-reliability timeline scripts/alert.cmd writes. */
+function loadAlerts(root) {
+  const lines = readIf(join(root, 'data/alert-log.tsv')).split(/\r?\n/).filter(Boolean);
+  if (lines.length < 2) return [];
+  const idx = Object.fromEntries(lines[0].split('\t').map((c, i) => [c, i]));
+  if (idx.when == null || idx.result == null) return [];
+  return lines.slice(1).map(l => {
+    const c = l.split('\t');
+    const result = c[idx.result] || '';
+    return { when: c[idx.when] || '', stage: c[idx.stage] || '', ok: result === 'ok', result };
+  }).filter(a => a.when);
+}
+
+/** funnel-velocity, trimmed to what the page renders. Null when nothing can be measured. */
+function loadVelocity(root, now) {
+  try {
+    const benchPath = existsSync(join(root, 'config/benchmarks.yml'))
+      ? join(root, 'config/benchmarks.yml')
+      : join(ROOT, 'templates/benchmarks.yml');
+    const v = analyzeVelocity({
+      trackerContent: readIf(join(root, 'data/applications.md')),
+      logContent: readIf(join(root, 'data/status-log.tsv')),
+      benchmarks: loadBenchmarks(benchPath).benchmarks,
+      states: loadCanonicalStates(join(ROOT, 'templates/states.yml')),
+      todayStr: now.toISOString().slice(0, 10),
+    });
+    return { hops: Object.values(v.velocity), waiting: v.waiting };
+  } catch { return null; }
+}
+
+/**
+ * company-history cards for the companies on this page, plus the repost
+ * clusters (computed once, shared by the drawer and the Coverage panel).
+ * statusLog is pre-loaded by the async CLI path; the sync build-hub path
+ * passes nothing and the source reports itself absent.
+ */
+function loadCompanyData(root, companies, statusLog, now) {
+  const out = { cards: {}, reposts: [], scanned: false };
+  try {
+    const tracker = loadTrackerRows(root);
+    const followups = loadFollowupRows(root);
+    // portalsPath passed explicitly so a fixture root never falls back to the env override.
+    const scanHistory = loadRepostClusters(root, undefined, join(root, 'portals.yml'));
+    const sl = statusLog || { loaded: false, appliedDateByNum: new Map(), medianResponseDays: null };
+    const result = buildCompanyCards({
+      trackerRows: tracker.rows,
+      followupRows: followups.rows,
+      repostClusters: scanHistory.clusters,
+      aggregators: scanHistory.aggregators,
+      sourcesLoaded: { tracker: tracker.loaded, followups: followups.loaded, scanHistory: scanHistory.loaded, statusLog: sl.loaded },
+      statusLogAppliedByNum: sl.appliedDateByNum,
+      medianResponseDays: sl.medianResponseDays,
+    }, { now });
+    out.scanned = scanHistory.loaded;
+    out.reposts = scanHistory.clusters.map(c => ({
+      company: c.company, role: c.role, n: c.repostCount, span: c.daysSpan, last: c.lastSeen,
+    }));
+    for (const name of companies) {
+      const card = getCompanyCard(result, name, scanHistory.aggregators);
+      // Only cards that say something: an all-defaults card on every row is noise.
+      if (card.responsiveness.label === 'no-history' && card.postingChurn.clusters.length === 0
+          && card.explanations.length === 0) continue;
+      out.cards[name] = {
+        resp: card.responsiveness.label,
+        respDays: card.responsiveness.medianResponseDays,
+        churn: card.postingChurn.label,
+        clusters: card.postingChurn.clusters,
+        notes: card.explanations,
+      };
+    }
+  } catch { /* degrade to empty */ }
+  return out;
+}
+
+/** salary-gap fold over data/salary-observations.tsv; null when no observations exist. */
+function loadSalary(root, appRows, profile) {
+  try {
+    const obs = parseObservations(readIf(join(root, 'data/salary-observations.tsv')));
+    if (!obs.length) return null;
+    const apps = {};
+    for (const a of appRows) apps[String(a.num)] = { company: a.company, role: a.role };
+    const target = profile.compensation?.target_range;
+    const folded = fold(obs, apps, target
+      ? { amount: String(target), currency: profile.compensation?.currency || null } : null);
+    const pick = o => (o ? { amount: o.amount, currency: o.currency } : null);
+    return {
+      applications: folded.applications.map(a => ({
+        num: a.num, company: a.company, role: a.role,
+        advertised: pick(a.advertised), actual: pick(a.actual),
+        advToActPct: a.advToActPct, desiredToActPct: a.desiredToActPct,
+      })),
+      byCurrency: folded.aggregates.byCurrency,
+      quality: {
+        orphans: folded.quality.orphans.length,
+        unparseable: folded.quality.unparseable.length,
+        withoutActual: folded.quality.withoutActual,
+      },
+    };
+  } catch { return null; }
+}
+
+/** upskill aggregation over the evaluation reports the tracker links; null when none carry gaps. */
+function loadUpskill(root) {
+  try {
+    const lines = readIf(join(root, 'data/applications.md')).split(/\r?\n/);
+    const colmap = resolveColumns(lines);
+    const reports = [];
+    for (const line of lines) {
+      const row = parseTrackerRow(line, colmap);
+      if (!row) continue;
+      const m = String(row.report || '').match(/\]\(([^)]+)\)/);
+      if (!m) continue;
+      // Tracker links are relative to data/; legacy links are root-relative.
+      for (const cand of new Set([join(root, 'data', m[1]), join(root, m[1])])) {
+        // Lexical reports/ containment — same guard shape as upskill.mjs withinReports.
+        const rel = relative(root, cand).split(sep).join('/');
+        if (!rel.startsWith('reports/') || rel.includes('..')) continue;
+        const txt = readIf(cand);
+        if (!txt) continue;
+        const g = parseReportGaps(txt);
+        reports.push({ num: row.num, score: g.score, gapText: g.gapText });
+        break;
+      }
+    }
+    if (!reports.length) return null;
+    const known = extractSkills(knownSkillsText(
+      readIf(join(root, 'cv.md')), readIf(join(root, 'config/profile.yml')), () => {}));
+    const agg = aggregateGaps(reports, known);
+    if (!agg.gaps.length) return null;
+    return { gaps: agg.gaps.slice(0, 12), totalLowFit: agg.totalLowFit, reports: reports.length };
+  } catch { return null; }
+}
+
+/** analyze-patterns, trimmed. Its not-enough-data error is carried, not hidden. */
+function loadPatterns(root) {
+  try {
+    const p = analyzePatterns({ root });
+    if (p.error) return { error: p.error };
+    return {
+      total: p.metadata.total,
+      funnel: p.funnel,
+      recommendations: (p.recommendations || []).slice(0, 6).map(r => ({ action: r.action, impact: r.impact })),
+    };
+  } catch { return null; }
+}
+
+export function buildModel({ root = ROOT, now = new Date(), profileRoot = null, profileName = null, statusLog = null } = {}) {
   // Only the two intent files move; every data read below stays on `root`.
   const intentRoot = profileRoot || root;
   const portals = yaml.load(readFileSync(join(root, 'portals.yml'), 'utf-8')) || {};
@@ -222,7 +389,7 @@ export function buildModel({ root = ROOT, now = new Date(), profileRoot = null, 
     // The pipeline row wins; scan-history backfills the 20% with no posted date.
     const posted = r.posted || h?.posted?.slice(0, 10) || null;
     const age = posted ? Math.round((today - new Date(posted + 'T00:00:00Z')) / 864e5) : null;
-    const app = apps.get(`${r.company}|${r.title}`.toLowerCase());
+    const app = apps.byKey.get(`${r.company}|${r.title}`.toLowerCase());
     return {
       u: r.url,
       c: r.company || '—',
@@ -286,6 +453,48 @@ export function buildModel({ root = ROOT, now = new Date(), profileRoot = null, 
   // No provider in this config has ever written a trust score, so the column
   // would render as 547 dashes. It appears only once the data exists.
   const hasTrust = rows.some(r => r.trust !== null);
+  const readCount = rows.filter(r => jdFacts.get(r.u)?.ok === '1').length;
+  const gates = [...rows.filter(r => r.gate).reduce((m, r) => {
+    const k = r.gate.replace(/\d+/g, 'N');
+    return m.set(k, (m.get(k) || 0) + 1);
+  }, new Map())].map(([reason, n]) => ({ reason, n })).sort((a, b) => b.n - a.n);
+  // Bar widths ride on the model rather than being recomputed in the page
+  // script, so the gate table's bars share the same geometry the charts use.
+  barWidths(gates.map(g => g.n), 100).forEach((w, i) => { gates[i].w = w; });
+  // Funnel counters for the progress chart. The top stages are pipeline
+  // counts; the applied / interview / offer tail comes from the applications
+  // tracker, with the cumulative math from funnel-tiles.mjs (an offer proves
+  // the interview that led to it).
+  const appList = [...apps.byKey.values()];
+  const tiles = cumulativeTiles(appList.map(a => (a.status || '').toUpperCase()));
+  const funnel = [
+    { label: 'Scanner-added (all time)', n: history.added.length },
+    { label: 'Pending now', n: rows.length },
+    { label: 'Description read', n: readCount },
+    { label: 'Match ≥ 42', n: rows.filter(r => r.cbBand === 'premier' || r.cbBand === 'strong').length },
+    { label: 'Applied', n: appList.length },
+    { label: 'Reached interview', n: tiles.interviews },
+    { label: 'Offer', n: tiles.offers },
+  ];
+  // Weekly scanner additions per channel, oldest week first — the sparkline
+  // series. Twelve fixed buckets so every row shares one x- and y-scale.
+  const SPARK_WEEKS = 12;
+  const seriesByPortal = new Map();
+  for (const h of history.added) {
+    const seen = (h.seen || '').slice(0, 10);
+    if (!seen) continue;
+    const w = Math.floor((today - new Date(seen + 'T00:00:00Z')) / (7 * 864e5));
+    if (w < 0 || w >= SPARK_WEEKS) continue;
+    const key = h.portal || 'unknown';
+    if (!seriesByPortal.has(key)) seriesByPortal.set(key, Array(SPARK_WEEKS).fill(0));
+    seriesByPortal.get(key)[SPARK_WEEKS - 1 - w]++;
+  }
+  const channelSeries = [...seriesByPortal]
+    .map(([portal, weeks]) => ({ portal, weeks, total: weeks.reduce((a, b) => a + b, 0) }))
+    .sort((a, b) => b.total - a.total);
+
+  // Analytics panels — every loader degrades to null/empty on a missing file.
+  const companyData = loadCompanyData(root, new Set(rows.map(r => r.c)), statusLog, now);
   return {
     generated: now.toISOString().slice(0, 10),
     // The date says which day the data is from; this says which hydration the
@@ -306,13 +515,12 @@ export function buildModel({ root = ROOT, now = new Date(), profileRoot = null, 
     // Gate accounting is published, not implied: a rule that starts eating good
     // reqs has to be visible on the page that applied it.
     jd: {
-      read: rows.filter(r => jdFacts.get(r.u)?.ok === '1').length,
+      read: readCount,
       gated: rows.filter(r => r.gate).length,
-      gates: [...rows.filter(r => r.gate).reduce((m, r) => {
-        const k = r.gate.replace(/\d+/g, 'N');
-        return m.set(k, (m.get(k) || 0) + 1);
-      }, new Map())].map(([reason, n]) => ({ reason, n })).sort((a, b) => b.n - a.n),
+      gates,
     },
+    funnel,
+    channelSeries,
     who: {
       name: profileName,
       label: profile.candidate?.full_name || profileName || 'this profile',
@@ -337,6 +545,14 @@ export function buildModel({ root = ROOT, now = new Date(), profileRoot = null, 
     signals: SIGNALS,
     cbBands: BANDS.map(b => ({ id: b.id, label: b.label, min: b.min === -Infinity ? 0 : b.min })),
     calibration: calibrate(rows),
+    runStats: computeRunStats(readIf(join(root, 'data/scan-runs.tsv'))),
+    alerts: loadAlerts(root),
+    velocity: loadVelocity(root, now),
+    companyCards: companyData.cards,
+    reposts: { clusters: companyData.reposts, scanned: companyData.scanned },
+    salary: loadSalary(root, apps.list, profile),
+    upskill: loadUpskill(root),
+    patterns: loadPatterns(root),
   };
 }
 
@@ -345,6 +561,155 @@ function keywordCount(kw, rows) {
 }
 
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// ---- server-rendered charts -----------------------------------------------
+// The geometry lives in web/src/lib/chart-geometry.mjs (shared with the web
+// app); this side only turns numbers into markup at build time. Every chart is
+// an addition — the tables stay, the counts stay printed as text — and every
+// fill or stroke is a var(--token) from the page's existing set, so the charts
+// follow the theme the same way the .cbbar/.agebar/.pct bars always have.
+
+// Mirrors the client-side bandColor(): freshness band index → token.
+const FRESH_COLORS = ['var(--fresh)', 'var(--recent)', 'var(--aging)', 'var(--stale)'];
+const freshColor = i => FRESH_COLORS[i] || 'var(--stale)';
+
+/** One labeled row of the graduated .pct bar pattern: label | bar | count. */
+const hbarRows = (items, widths) => items.map((s, i) =>
+  `<span class="hl">${esc(s.label)}</span><span class="hb"><i style="width:${widths[i]}%"></i></span><span class="hn">${s.n}</span>`).join('');
+
+/** (a) Progress funnel — left-aligned bars on one baseline, never tapered. */
+function chartFunnel(m) {
+  const widths = barWidths(m.funnel.map(s => s.n), 100);
+  const applied = m.funnel.find(s => s.label === 'Applied')?.n ?? 0;
+  const aria = `Of ${m.funnel[0].n} scanner-added postings, ${m.funnel[1].n} are pending, `
+    + `${m.funnel[2].n} have their description read, ${m.funnel[3].n} match at 42 or better, `
+    + `${applied} applied, ${m.funnel[5].n} reached interview and ${m.funnel[6].n} hold an offer.`;
+  const caveat = applied < 25
+    ? `<p class="chartnote">With only ${applied} application${applied === 1 ? '' : 's'} recorded, the lower stages are
+       too small to read as rates — treat them as a tally, not a conversion funnel.</p>` : '';
+  return `<h3>Progress funnel — scanner to offer</h3>
+<div class="hbars" role="img" aria-label="${esc(aria)}">${hbarRows(m.funnel, widths)}</div>${caveat}`;
+}
+
+/** (f) Company concentration — top companies by pending rows, same pattern. */
+function chartCompanies(m) {
+  if (!m.rows.length) return '';
+  const byCo = new Map();
+  for (const r of m.rows) byCo.set(r.c, (byCo.get(r.c) || 0) + 1);
+  const top = [...byCo].sort((a, b) => b[1] - a[1]).slice(0, 12)
+    .map(([label, n]) => ({ label, n }));
+  const held = top.reduce((a, s) => a + s.n, 0);
+  const aria = `The top ${top.length} of ${byCo.size} companies hold ${held} of `
+    + `${m.rows.length} pending postings (${Math.round(held / m.rows.length * 100)}%).`;
+  return `<h3>Company concentration — top ${top.length} of ${byCo.size} companies</h3>
+<div class="hbars" role="img" aria-label="${esc(aria)}">${hbarRows(top, barWidths(top.map(s => s.n), 100))}</div>`;
+}
+
+/** (b) Score histogram with band boundaries; the band regions are clickable
+ * and forward to the existing Match chips (see the #cbhist listener). */
+function chartHistogram(m) {
+  if (!m.rows.length) return '';
+  const W = 440, H = 92; // plot box; labels sit below at y 96..118
+  const bins = histogramBins(m.rows.map(r => r.cb), 5, 100);
+  const maxN = Math.max(0, ...bins.map(b => b.n));
+  const sy = scaleLinear(maxN, 76);
+  const sx = scaleLinear(100, W);
+  const modal = bins.find(b => b.n === maxN);
+  const aria = `Most of the ${m.rows.length} pending rows score between ${modal.x0} and ${modal.x1}; `
+    + `${m.jd.gated} are gated to 0.`;
+  // Bands ascending by floor, each region ending where the better one starts.
+  // A sliver band (blocked spans scores 0..1, ~4 units of the 440 viewBox)
+  // still needs a click target a pointer can hit and a label that stays inside
+  // the viewBox: widen narrow rects to a minimum, clamp the label x, and paint
+  // narrow regions last so their widened targets sit on top of wide neighbours.
+  const asc = [...m.cbBands].reverse();
+  const regionParts = asc.map((b, i) => {
+    const lo = b.min, hi = i + 1 < asc.length ? asc[i + 1].min : 100;
+    const x = sx(lo), w = sx(hi) - x;
+    const tx = Math.min(Math.max(sx((lo + hi) / 2), 20), W - 20);
+    const html = `<rect data-cbband="${b.id}" x="${x}" y="0" width="${Math.max(w, 14)}" height="${H}" fill="transparent"><title>${esc(b.label)} — click to filter the pipeline</title></rect>`
+      + `<text x="${tx}" y="${H + 14}" text-anchor="middle" font-size="9" fill="var(--text-3)">${b.id}</text>`
+      + (lo > 0 ? `<line x1="${x}" y1="0" x2="${x}" y2="${H}" stroke="var(--line)" stroke-dasharray="3 3"/>` : '');
+    return { w, html };
+  });
+  const regions = regionParts.sort((a, b) => b.w - a.w).map(p => p.html).join('');
+  const bars = bins.map(b => {
+    if (!b.n) return '';
+    const h = sy(b.n), x = sx(b.x0);
+    return `<rect x="${x + 1}" y="${H - h}" width="${sx(b.x1) - x - 2}" height="${h}" fill="var(--accent)"/>`
+      + `<text x="${sx((b.x0 + b.x1) / 2)}" y="${H - h - 3}" text-anchor="middle" font-size="8" fill="var(--text-2)">${b.n}</text>`;
+  }).join('');
+  return `<h3>Score distribution — ${m.rows.length} pending rows</h3>
+<svg id="cbhist" viewBox="0 0 ${W} ${H + 20}" role="img" aria-label="${esc(aria)}">
+<line x1="0" y1="${H}" x2="${W}" y2="${H}" stroke="var(--line)"/>${bars}${regions}</svg>
+<p class="chartnote">Click a band to filter the pipeline table to it — same filter as the Match chips.</p>`;
+}
+
+/** (c) Age mix per match band — stacked strips, unknown age its own segment. */
+function chartAgeStrips(m) {
+  if (!m.rows.length) return '';
+  const segs = [...m.bands.map(b => b.id), 'unknown'];
+  const color = i => i < m.bands.length ? freshColor(i) : 'var(--none)';
+  const fresh = r => r.age !== null && r.age <= 14;
+  const pct = (a, b) => (b ? Math.round(a / b * 100) : 0);
+  const top = m.rows.filter(r => r.cbBand === 'premier' || r.cbBand === 'strong');
+  const unknownN = m.rows.filter(r => r.age === null).length;
+  const aria = `${pct(top.filter(fresh).length, top.length)}% of rows matching at 42 or better are 14 days `
+    + `old or fresher, against ${pct(m.rows.filter(fresh).length, m.rows.length)}% of all pending rows; `
+    + `${unknownN} rows have no posted date.`;
+  const legend = `<div class="legend">${segs.map((id, i) => `<span><i style="background:${color(i)}"></i>${esc(id)}</span>`).join('')}</div>`;
+  const strips = m.cbBands.map(b => {
+    const inBand = m.rows.filter(r => r.cbBand === b.id);
+    const counts = segs.map(id => inBand.filter(r => r.band === id).length);
+    const tiled = stackedSegments(counts, 100);
+    const printed = counts.map((n, i) => (n ? `${esc(segs[i])} ${n}` : '')).filter(Boolean).join(' · ') || 'none';
+    return `<span class="hl">${esc(b.label)}</span>`
+      + `<span class="strip">${tiled.map((s, i) => (s.w ? `<i style="width:${s.w}%;background:${color(i)}"></i>` : '')).join('')}</span>`
+      + `<span class="hn">${inBand.length}</span>`
+      + `<span class="sc">${printed}</span>`;
+  }).join('');
+  return `<h3>Age mix by match band</h3>${legend}
+<div class="strips" role="img" aria-label="${esc(aria)}">${strips}</div>`;
+}
+
+/** (d) Channel sparklines — every row on ONE shared y-scale. */
+function chartSparklines(m) {
+  if (!m.channelSeries.length) return '';
+  const yMax = Math.max(...m.channelSeries.map(c => Math.max(...c.weeks)));
+  const rowsHtml = m.channelSeries.map(c =>
+    `<span class="hl mono">${esc(c.portal)}</span>`
+    + `<svg class="spark" viewBox="0 0 120 24" preserveAspectRatio="none"><path d="${sparklinePath(c.weeks, 120, 20, yMax)}" transform="translate(0,2)"/></svg>`
+    + `<span class="hn">${c.total}</span>`).join('');
+  const top = m.channelSeries[0];
+  const aria = `Weekly scanner additions over the last 12 weeks, every channel on one shared scale; `
+    + `${top.portal} leads with ${top.total} row${top.total === 1 ? '' : 's'} added.`;
+  return `<h3>Additions per channel — last 12 weeks</h3>
+<div class="hbars sparks" role="img" aria-label="${esc(aria)}">${rowsHtml}</div>
+<p class="chartnote">One shared y-scale across every row — a flat line is genuinely quiet, not rescaled.</p>`;
+}
+
+/** (e) Channel-by-freshness heatmap — a shaded .mini table, every count printed. */
+function chartHeatmap(m) {
+  if (!m.rows.length) return '';
+  const cols = [...m.bands.map(b => b.id), 'unknown'];
+  const byPortal = new Map();
+  for (const r of m.rows) {
+    const key = r.portal || 'unknown';
+    if (!byPortal.has(key)) byPortal.set(key, Object.fromEntries(cols.map(c => [c, 0])));
+    byPortal.get(key)[r.band]++;
+  }
+  const rowsOut = [...byPortal].map(([portal, counts]) => ({ portal, counts, total: cols.reduce((a, c) => a + counts[c], 0) }))
+    .sort((a, b) => b.total - a.total);
+  let peak = { portal: '', band: '', n: 0 };
+  for (const r of rowsOut) for (const c of cols) if (r.counts[c] > peak.n) peak = { portal: r.portal, band: c, n: r.counts[c] };
+  const aria = `Pending rows by channel and age band; the densest cell is ${peak.portal} at ${peak.band} `
+    + `with ${peak.n} of ${m.rows.length} rows.`;
+  const cell = n => `<td class="num" style="background:color-mix(in srgb, var(--accent) ${shadePct(n, peak.n)}%, transparent)${n ? '' : ';color:var(--text-3)'}">${n}</td>`;
+  return `<h3>Pending rows by channel and age</h3>
+<table class="mini heat" role="img" aria-label="${esc(aria)}"><thead><tr><th>Channel</th>${cols.map(c => `<th class="num">${esc(c)}</th>`).join('')}<th class="num">Total</th></tr></thead><tbody>
+${rowsOut.map(r => `<tr><td class="mono">${esc(r.portal)}</td>${cols.map(c => cell(r.counts[c])).join('')}<td class="num">${r.total}</td></tr>`).join('')}
+</tbody></table>`;
+}
 
 /**
  * Which hydration the reader is looking at, decided when the page opens.
@@ -376,6 +741,115 @@ export function hydrationState(builtIso, now) {
   if (built >= last.getTime()) return 'live';
   if (built >= last.getTime() - 12 * 3600 * 1000) return 'missed';
   return 'stale';
+}
+
+/** (g) Scanner runs — new postings per run, from data/scan-runs.tsv. */
+function chartRuns(m) {
+  const s = m.runStats;
+  if (!s || !s.runs || !s.runs.length) return '';
+  const runs = s.runs.slice(-20);
+  const items = runs.map(r => ({ label: r.date + (r.status !== 'completed' ? ` (${r.status})` : ''), n: r.newAdded }));
+  const widths = barWidths(items.map(i => i.n), 100);
+  const aria = `${s.totalRuns} scanner runs recorded; the last ${runs.length} added `
+    + `${runs.reduce((a, r) => a + r.newAdded, 0)} new postings; a completed run averages `
+    + `${s.avgFoundPerRun} found and ${s.avgNewPerRun} added.`;
+  const failed = s.failedRuns ? ` ${s.failedRuns} failed run${s.failedRuns === 1 ? '' : 's'} excluded from the averages.` : '';
+  const drifted = s.driftedRows ? ` ${s.driftedRows} row${s.driftedRows === 1 ? '' : 's'} no longer match the file header and were excluded.` : '';
+  return `<h3>Scanner runs — new postings per run</h3>
+<div class="hbars" role="img" aria-label="${esc(aria)}">${hbarRows(items, widths)}</div>
+<p class="chartnote">${s.totalRuns} runs in <span class="mono">data/scan-runs.tsv</span> — a completed run averages
+${s.avgFoundPerRun} found and ${s.avgNewPerRun} added; filters remove ${s.filterRemovalPct}% of what is found.${failed}${drifted}</p>`;
+}
+
+/** (h) Hydration reliability — one cell per pipeline stage result in data/alert-log.tsv. */
+function chartAlerts(m) {
+  if (!m.alerts.length) return '';
+  const fails = m.alerts.filter(a => !a.ok);
+  const cells = m.alerts.slice(-60).map(a =>
+    `<i class="${a.ok ? '' : 'bad'}" title="${esc(`${a.when} ${a.stage}: ${a.result}`)}"></i>`).join('');
+  const aria = `${m.alerts.length} hydration pipeline stage results recorded; ${fails.length} failed.`;
+  const failRows = fails.slice(-5).map(f =>
+    `<tr><td class="mono">${esc(f.when)}</td><td>${esc(f.stage)}</td><td>${esc(f.result)}</td></tr>`).join('');
+  return `<h3>Hydration reliability — alert log</h3>
+<div class="alertstrip" role="img" aria-label="${esc(aria)}">${cells}</div>
+<p class="chartnote">Each cell is one pipeline stage result from <span class="mono">data/alert-log.tsv</span>, oldest to
+newest — ${fails.length ? `${fails.length} of ${m.alerts.length} failed.` : `all ${m.alerts.length} passed.`}</p>
+${fails.length ? `<table class="mini"><thead><tr><th>When</th><th>Stage</th><th>Result</th></tr></thead><tbody>${failRows}</tbody></table>` : ''}`;
+}
+
+/** Repost patterns from scan history — evidence, not a verdict. */
+function sectionReposts(m) {
+  if (!m.reposts || !m.reposts.scanned || !m.reposts.clusters.length) return '';
+  const rows = m.reposts.clusters.slice(0, 15).map(c =>
+    `<tr><td>${esc(c.company)}</td><td>${esc(c.role)}</td><td>${c.n}&times;</td><td>${c.span}d</td><td class="mono">${esc(c.last)}</td></tr>`).join('');
+  return `<h3>Repost patterns</h3>
+<table class="mini"><thead><tr><th>Company</th><th>Role</th><th>Seen</th><th>Span</th><th>Last seen</th></tr></thead><tbody>${rows}</tbody></table>
+<p class="chartnote">A posting that keeps reappearing can mean an unfilled req, a rolling pipeline, or ghost
+hiring — the count is evidence, not a verdict. Aggregator boards are excluded from detection.</p>`;
+}
+
+/** Stage velocity + waiting list, with the right-censoring caveat rendered, not laundered away. */
+function sectionVelocity(m) {
+  if (!m.velocity) return '';
+  const { hops, waiting } = m.velocity;
+  const measured = hops.filter(h => !h.insufficientData);
+  const censoredTotal = hops.reduce((a, h) => a + h.censored, 0);
+  const hopRows = hops.map(h => `<tr><td>${esc(h.from)} &rarr; ${esc(h.to)}</td>
+<td>${h.median !== null ? h.median + 'd' : '—'}</td><td>${h.p75 !== null ? h.p75 + 'd' : '—'}</td>
+<td>${h.n}</td><td>${h.censored}</td></tr>`).join('');
+  const waitRows = waiting.items.slice(0, 10).map(w =>
+    `<tr><td>#${esc(String(w.num))}</td><td>${esc(w.company)}</td><td class="mono">${esc(w.appliedDate || 'unknown')}</td>
+<td>${w.elapsedDays ?? '—'}</td><td>${w.beyondTypicalWindow ? 'beyond the typical reply window' : ''}</td></tr>`).join('');
+  return `<h3>Stage velocity</h3>
+${measured.length
+    ? `<table class="mini"><thead><tr><th>Hop</th><th>Median</th><th>p75</th><th>n</th><th>Still waiting</th></tr></thead><tbody>${hopRows}</tbody></table>`
+    : '<p class="chartnote">No hop has the 3 completed transitions a median needs yet.</p>'}
+<p class="chartnote">Medians cover only hops that completed. The ${censoredTotal} application${censoredTotal === 1 ? '' : 's'} still
+sitting in a from-state are right-censored — excluded, not resolved — so a fast-looking median can simply mean
+the slow cases have not answered yet. Same-day hops are excluded as data-entry artifacts.</p>
+<h3>Waiting on a reply</h3>
+${waiting.inFlight
+    ? `<table class="mini"><thead><tr><th>#</th><th>Company</th><th>Applied</th><th>Days</th><th></th></tr></thead><tbody>${waitRows}</tbody></table>
+<p class="chartnote">${waiting.inFlight} in flight; the typical first-response window is ${waiting.windowDays[0]}–${waiting.windowDays[1]} days${waiting.unknownDates ? `; ${waiting.unknownDates} row${waiting.unknownDates === 1 ? '' : 's'} carry no applied date` : ''}.</p>`
+    : '<p class="chartnote">Nothing is currently waiting on a reply.</p>'}`;
+}
+
+/** Salary trail — advertised vs confirmed, per application and per currency. */
+function sectionSalary(m) {
+  if (!m.salary) return '';
+  const rows = m.salary.applications.map(a =>
+    `<tr><td>#${esc(String(a.num))}</td><td>${esc(a.company || '')}</td><td>${esc(a.role || '')}</td>
+<td>${a.advertised ? esc(a.advertised.amount) : '—'}</td><td>${a.actual ? esc(a.actual.amount) : '—'}</td>
+<td>${a.advToActPct !== null ? (a.advToActPct > 0 ? '+' : '') + a.advToActPct + '%' : '—'}</td></tr>`).join('');
+  const cur = Object.entries(m.salary.byCurrency).map(([c, agg]) =>
+    `${agg.confirmed} confirmed in ${esc(c)}${agg.medianAdvToActPct !== null ? `, median advertised→actual ${agg.medianAdvToActPct > 0 ? '+' : ''}${Math.round(agg.medianAdvToActPct)}%` : ''}`).join('; ');
+  return `<h3>Salary — advertised vs actual</h3>
+<table class="mini"><thead><tr><th>#</th><th>Company</th><th>Role</th><th>Advertised</th><th>Actual</th><th>Gap</th></tr></thead><tbody>${rows}</tbody></table>
+<p class="chartnote">${cur || 'No confirmed comp yet — the trail fills in as observations land in'}
+<span class="mono">data/salary-observations.tsv</span>${m.salary.quality.withoutActual ? ` · ${m.salary.quality.withoutActual} without a confirmed number` : ''}.</p>`;
+}
+
+/** Skill gaps the evaluation reports keep naming, minus what the CV already covers. */
+function sectionUpskill(m) {
+  if (!m.upskill) return '';
+  const rows = m.upskill.gaps.map(g =>
+    `<tr><td>${esc(g.skill)}</td><td>${esc(g.tier)}</td><td>${g.reports}</td><td>${g.lowFitReports}</td><td>${g.weightedScore}</td></tr>`).join('');
+  return `<h3>Skill gaps named by evaluation reports</h3>
+<table class="mini"><thead><tr><th>Skill</th><th>Tier</th><th>Reports</th><th>Low-fit</th><th>Weight</th></tr></thead><tbody>${rows}</tbody></table>
+<p class="chartnote">Aggregated from the ${m.upskill.reports} evaluation report${m.upskill.reports === 1 ? '' : 's'} the tracker
+links; skills already on the CV or profile are excluded. ${m.upskill.totalLowFit} report${m.upskill.totalLowFit === 1 ? '' : 's'} scored below the low-fit line.</p>`;
+}
+
+/** Outcome patterns from analyze-patterns.mjs — including its own not-enough-data verdict. */
+function sectionPatterns(m) {
+  if (!m.patterns) return '';
+  if (m.patterns.error) return `<h3>Outcome patterns</h3><p class="chartnote">${esc(m.patterns.error)}</p>`;
+  const funnelRows = Object.entries(m.patterns.funnel).map(([st, n]) => `<tr><td>${esc(st)}</td><td>${n}</td></tr>`).join('');
+  const recs = m.patterns.recommendations.map(r => `<li><b>${esc(r.impact || '')}</b> ${esc(r.action)}</li>`).join('');
+  return `<h3>Outcome patterns</h3>
+<table class="mini"><thead><tr><th>Status</th><th>n</th></tr></thead><tbody>${funnelRows}</tbody></table>
+${recs ? `<ul class="chartnote">${recs}</ul>` : ''}
+<p class="chartnote">From ${m.patterns.total} tracker rows via <span class="mono">analyze-patterns.mjs</span>.</p>`;
 }
 
 export function renderHtml(model) {
@@ -601,6 +1075,33 @@ footer b{color:var(--text-2);font-weight:600}
 .miniwrap{overflow-x:auto;border:1px solid var(--line);border-radius:3px;background:var(--surface);margin-bottom:22px}
 .miniwrap .mini{min-width:640px}
 .miniwrap .mini th{background:var(--surface-2);padding:9px 10px}
+/* ---- charts ---------------------------------------------------------
+   Server-rendered additions to the tables, never replacements. The bar
+   rows graduate the one-bar .cbbar/.pct pattern; every fill is a token. */
+.chart{margin:0 0 20px}
+.chart h3{font-family:"Segoe UI",sans-serif;font-size:12px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--text-3);margin:18px 0 8px;font-weight:650}
+.chartnote{color:var(--text-3);font-size:12px;max-width:70ch;margin:6px 0 0}
+ul.chartnote{padding-left:18px}
+.alertstrip{display:flex;gap:3px;flex-wrap:wrap;margin:8px 0}
+.alertstrip i{width:10px;height:14px;border-radius:2px;background:var(--fresh)}
+.alertstrip i.bad{background:var(--stale)}
+.hbars,.strips{display:grid;grid-template-columns:auto 1fr auto;gap:5px 10px;align-items:center;max-width:640px}
+.hbars .hl,.strips .hl{font-family:"Segoe UI",sans-serif;font-size:12px;color:var(--text-2);white-space:nowrap}
+.hbars .hb{display:block;height:10px;border-radius:2px;background:var(--line);overflow:hidden}
+.hbars .hb i{display:block;height:100%;background:var(--accent)}
+.hbars .hn,.strips .hn{font-family:"Cascadia Mono",Consolas,ui-monospace,monospace;font-size:11px;
+  font-variant-numeric:tabular-nums;color:var(--text-2);text-align:right}
+.strips .strip{display:flex;height:12px;border-radius:2px;overflow:hidden;background:var(--line)}
+.strips .strip i{display:block;height:100%}
+.strips .sc{grid-column:2/4;font-size:11px;color:var(--text-3);margin:-3px 0 3px}
+.legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:11px;color:var(--text-2);margin:0 0 8px}
+.legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px}
+#cbhist{width:100%;max-width:640px;height:auto;display:block}
+#cbhist [data-cbband]{cursor:pointer}
+#cbhist text{font-family:"Segoe UI",sans-serif}
+.spark{width:100%;max-width:220px;height:24px;display:block}
+.spark path{fill:none;stroke:var(--accent);stroke-width:1.5;vector-effect:non-scaling-stroke}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 
@@ -657,13 +1158,16 @@ footer b{color:var(--text-2);font-weight:600}
   number here is folded from <span class="mono">data/scan-history.tsv</span>,
   <span class="mono">data/portal-health.tsv</span> and <span class="mono">portals.yml</span> at build time; none
   of it is typed in.</p>
+  <div class="chart">${chartSparklines(model)}${chartHeatmap(model)}</div>
   <div id="chanbody"></div>
+  ${chartRuns(model)}${chartAlerts(model)}
 </section>
 
 <section class="panel" id="panel-scoring" role="tabpanel" aria-labelledby="tab-scoring" tabindex="0" hidden>
   <h2>Scoring model</h2>
   <p class="lede">What the match number is made of, which rules can zero a row, and whether any of it has been
   checked against a real reply yet.</p>
+  <div class="chart">${chartHistogram(model)}${chartAgeStrips(model)}</div>
   <div id="scoringbody"></div>
   <footer>
     <p><b>What the match number is.</b> <span class="mono">100 × eligibility × fit × timing</span>, out of 100.
@@ -702,7 +1206,18 @@ footer b{color:var(--text-2);font-weight:600}
   <h2>Coverage</h2>
   <p class="lede">What the scanner caught, what it dropped, and what it has since confirmed gone. A keyword
   with no unique hits can be deleted without losing a posting.</p>
+  <div class="chart">${chartFunnel(model)}${chartCompanies(model)}</div>
   <div id="covbody"></div>
+  ${sectionReposts(model)}
+</section>
+
+<section class="panel" id="panel-outcomes" role="tabpanel" aria-labelledby="tab-outcomes" tabindex="0" hidden>
+  <h2>Outcomes</h2>
+  <p class="lede">What happened after applying — how fast stages move, what comp the trail confirms, and which
+  gaps the evaluation reports keep naming. Everything here is folded from the tracker and its side files at
+  build time; a section with nothing to say is absent, not zeroed.</p>
+  ${sectionVelocity(model)}${sectionSalary(model)}${sectionUpskill(model)}${sectionPatterns(model)}
+  ${!model.velocity && !model.salary && !model.upskill && !model.patterns ? '<p class="chartnote">Nothing to report yet — this panel fills in as applications and evaluations land.</p>' : ''}
 </section>
 
 <section class="panel" id="panel-profile" role="tabpanel" aria-labelledby="tab-profile" tabindex="0" hidden>
@@ -925,6 +1440,18 @@ function openDrawer(r){
     ? Object.entries(f).map(([k,v]) => \`<dt>\${esc(FACTLAB[k]||k)}</dt><dd>\${esc(
         k === 'comp_low' || k === 'comp_high' ? money(v) : String(v).replace(/,/g,', '))}</dd>\`).join('')
     : '<dt>—</dt><dd>No description was read; this row is scored on its title alone.</dd>';
+  // Company history card (build-time company-history.mjs join); absent = no block.
+  const ch = (M.companyCards || {})[r.c];
+  const CHLAB = { 'silent-on-you': 'Silent on you', 'responded-before': 'Responded before', 'mixed': 'Mixed replies', 'no-history': 'No history' };
+  const CHURNLAB = { 'reposts-detected': 'Reposts detected', 'none-detected': 'None detected', 'no-scan-data': 'No scan data', 'aggregator-not-evaluated': 'Aggregator — not evaluated' };
+  let chBlock = '';
+  if (ch) {
+    const cl = (ch.clusters || []).map(c => '<br>' + esc(c.role) + ' — seen ' + c.repostCount + '&times; over ' + c.daysSpan + ' days').join('');
+    chBlock = '<h3>Company history</h3><dl class="dwf">'
+      + '<dt>Responsiveness</dt><dd>' + esc(CHLAB[ch.resp] || ch.resp) + (ch.respDays != null ? ' · median reply ' + ch.respDays + 'd' : '') + '</dd>'
+      + '<dt>Posting churn</dt><dd>' + esc(CHURNLAB[ch.churn] || ch.churn) + cl + '</dd></dl>'
+      + (ch.notes || []).map(n => '<p class="chartnote">' + esc(n) + '</p>').join('');
+  }
   el('dwbody').innerHTML = \`
     <h2 id="dwtitle">\${esc(r.t)}</h2>
     <div class="dwco">\${esc(r.c)} · \${esc(r.l) || 'no location published'} · \${r.age===null?'age unknown':r.age+' days old'}</div>
@@ -932,6 +1459,13 @@ function openDrawer(r){
     \${r.gate ? \`<p class="dwgate"><b>Gated to 0:</b> \${esc(r.gate)}. The row stays visible and stays applicable — check the rule if this looks wrong.</p>\` : ''}
     <h3>How the number was reached</h3>
     <div class="lad">\${lad}</div>
+    <h3>Classification</h3>
+    <dl class="dwf">
+      <dt>Title family</dt><dd>\${esc(r.family || '—')}</dd>
+      <dt>Lane keywords</dt><dd>\${(r.kw||[]).length ? r.kw.map(k=>'<span class="kw">'+esc(k)+'</span>').join(' ') : '—'}</dd>
+      <dt>Ingestion portal</dt><dd>\${esc(r.portal) || '—'}</dd>
+    </dl>
+    \${chBlock}
     <h3>What the description said</h3>
     <dl class="dwf">\${facts}</dl>
     <a class="dwlink" href="\${esc(r.u)}" rel="noopener">Open the posting ↗</a>
@@ -991,7 +1525,7 @@ el('scoringbody').innerHTML = \`
   it. Descriptions read: <b>\${M.jd.read}</b> of \${M.rows.length}. The rest are scored on their title
   family alone and say so in their own tooltip.</p>
 <table class="mini"><thead><tr><th>Rule that fired</th><th class="num">Rows</th></tr></thead><tbody>
-\${M.jd.gates.map(g=>\`<tr><td>\${esc(g.reason)}</td><td class="num">\${g.n}</td></tr>\`).join('') || '<tr><td colspan="2">none</td></tr>'}
+\${M.jd.gates.map(g=>\`<tr><td>\${esc(g.reason)}<span class="pct" role="img" aria-label="\${g.n} of \${M.jd.gated} gated rows fell to this rule"><i style="width:\${g.w||0}%"></i></span></td><td class="num">\${g.n}</td></tr>\`).join('') || '<tr><td colspan="2">none</td></tr>'}
 </tbody></table>
 <h3>Calibration</h3>
 <p style="color:var(--text-2);font-size:13px;margin:0 0 10px">\${
@@ -1006,6 +1540,7 @@ el('scoringbody').innerHTML = \`
 
 // ---- coverage panel -------------------------------------------------
 el('covbody').innerHTML = \`
+<p style="color:var(--text-2);font-size:13px;margin:0 0 10px"><b>\${M.processed}</b> rows already processed — checked off in data/pipeline.md and out of the pending table.</p>
 <h3>Keyword yield — \${y.length} positives against \${M.historyAdded} scanner-added postings</h3>
 <p style="color:var(--text-2);font-size:13px;margin:0 0 10px">
   <b>Unique</b> is the count only that keyword caught. A keyword with zero unique hits can be deleted
@@ -1014,13 +1549,14 @@ el('covbody').innerHTML = \`
 <table class="mini"><thead><tr><th>Keyword</th><th class="num">Added</th><th class="num">Unique</th><th class="num">Pending</th><th>Only this keyword caught</th></tr></thead><tbody>
 \${y.map(k=>\`<tr class="\${k.added===0?'zero':''}"><td class="mono">\${esc(k.keyword)}</td><td class="num">\${k.added}</td><td class="num">\${k.unique}</td><td class="num">\${k.pending}</td><td style="color:var(--text-3);font-size:12px">\${esc(k.sample)}</td></tr>\`).join('')}
 </tbody></table>
+\${M.dead.length ? '<p style="color:var(--text-2);font-size:13px;margin:10px 0 0"><b>' + M.dead.length + ' dead keyword' + (M.dead.length === 1 ? '' : 's') + '</b> — matching no pending row this build: ' + M.dead.map(k => '<span class="kw">' + esc(k) + '</span>').join(' ') + '</p>' : ''}
 <h3>Pruned from the pipeline — \${M.discards.length} postings</h3>
-<table class="mini"><thead><tr><th>When</th><th>Reason</th></tr></thead><tbody>
-\${M.discards.slice(-15).reverse().map(d=>\`<tr><td class="mono" style="white-space:nowrap">\${esc((d.ts||'').slice(0,10))}</td><td style="font-size:12px">\${esc(d.reason)}</td></tr>\`).join('') || '<tr><td colspan="2">none</td></tr>'}
+<table class="mini"><thead><tr><th>When</th><th>Posting</th><th>Reason</th></tr></thead><tbody>
+\${M.discards.slice(-15).reverse().map(d=>\`<tr><td class="mono" style="white-space:nowrap">\${esc((d.ts||'').slice(0,10))}</td><td class="mono" style="font-size:11px;word-break:break-all"><a href="\${esc(d.url)}" rel="noopener" style="color:var(--accent)">\${esc(d.url)}</a></td><td style="font-size:12px">\${esc(d.reason)}</td></tr>\`).join('') || '<tr><td colspan="3">none</td></tr>'}
 </tbody></table>
 <h3>Retired postings — \${M.expired.count} confirmed gone</h3>
-<table class="mini"><thead><tr><th>Removed (est.)</th><th>Evidence</th><th>Company</th></tr></thead><tbody>
-\${M.expired.rows.slice(0,10).map(r=>\`<tr><td class="mono" style="white-space:nowrap">\${esc(r.removed)}</td><td class="mono" style="font-size:12px">\${esc(r.evidence)}</td><td>\${esc(r.company)}</td></tr>\`).join('') || '<tr><td colspan="3">none</td></tr>'}
+<table class="mini"><thead><tr><th>Removed (est.)</th><th>Evidence</th><th>Company</th><th>Title</th></tr></thead><tbody>
+\${M.expired.rows.slice(0,10).map(r=>\`<tr><td class="mono" style="white-space:nowrap">\${esc(r.removed)}</td><td class="mono" style="font-size:12px">\${esc(r.evidence)}</td><td>\${esc(r.company)}</td><td style="font-size:12px">\${esc(r.title)}</td></tr>\`).join('') || '<tr><td colspan="4">none</td></tr>'}
 </tbody></table>\`;
 
 // ---- channels panel -------------------------------------------------
@@ -1076,7 +1612,9 @@ const W = M.who;
 el('profbody').innerHTML = \`
 <div class="cards">
   <div class="card"><h3>Candidate</h3><p><b>\${esc(W.label)}</b>\${W.location ? '<br>' + esc(W.location) : ''}</p></div>
-  <div class="card"><h3>Compensation floor</h3><p>\${W.floor ? '<b>' + esc(W.floor) + '</b>' : 'not set'}\${W.target ? '<br>target ' + esc(W.target) : ''}</p>
+  <div class="card"><h3>Primary targets</h3><p>\${W.primary.length ? W.primary.map(p => esc(p)).join(' · ') : 'none declared'}</p>
+    <p style="margin-top:8px;color:var(--text-3);font-size:12px">A title containing one of these scores as a primary-family match.</p></div>
+  <div class="card"><h3>Compensation floor</h3><p>\${W.floor ? '<b>' + esc(W.floor) + (W.currency ? ' ' + esc(W.currency) : '') + '</b>' : 'not set'}\${W.target ? '<br>target ' + esc(W.target) : ''}</p>
     <p style="margin-top:8px;color:var(--text-3);font-size:12px">An advertised ceiling under this floor gates the row to 0.</p></div>
   <div class="card"><h3>Sources scanned</h3><p><b>\${W.companies}</b> companies · <b>\${W.boards}</b> job boards</p></div>
   \${M.projection ? \`<div class="card"><h3>Projection</h3><p><b>\${M.projection.kept}</b> kept · <b>\${M.projection.dropped}</b> dropped</p>
@@ -1091,8 +1629,8 @@ el('profbody').innerHTML = \`
 \${W.archetypes.map(a => \`<tr><td>\${esc(a.name)}</td><td style="color:var(--text-3);font-size:12px">\${esc(a.level)}</td><td style="color:var(--text-3);font-size:12px">\${esc(a.fit)}</td></tr>\`).join('') || '<tr><td colspan="3">none declared</td></tr>'}
 </tbody></table>
 <h3>Lanes</h3>
-<table class="mini"><thead><tr><th>Lane</th><th>What it collects</th><th class="num">Pending</th></tr></thead><tbody>
-\${M.lanes.map(l => \`<tr><td><span class="lanetag" style="--lc:\${LC[l.id] || 'var(--core)'}">\${l.id}</span></td><td>\${esc(l.label)}</td><td class="num">\${rows.filter(r => r.lane === l.id).length}</td></tr>\`).join('')}
+<table class="mini"><thead><tr><th>Lane</th><th>What it collects</th><th class="num">Pending</th><th class="num">Eval cap</th></tr></thead><tbody>
+\${M.lanes.map(l => \`<tr><td><span class="lanetag" style="--lc:\${LC[l.id] || 'var(--core)'}">\${l.id}</span></td><td>\${esc(l.label)}</td><td class="num">\${rows.filter(r => r.lane === l.id).length}</td><td class="num">\${l.max ?? '—'}</td></tr>\`).join('')}
 </tbody></table>\`;
 
 // ---- the mega menu --------------------------------------------------
@@ -1120,6 +1658,12 @@ const TABS = [
     { k: 'Zero-yield keywords', v: M.yields.filter(k => k.added === 0).length + ' deletable', d: 'caught nothing the others did not' },
     { k: 'Pruned', v: M.discards.length + ' postings', d: 'dropped from the pipeline, with the reason' },
     { k: 'Retired', v: M.expired.count + ' confirmed gone', d: 'liveness proved the posting was removed' },
+  ] },
+  { id: 'outcomes', label: 'Outcomes', n: (M.velocity ? M.velocity.waiting.inFlight : 0) + ' in flight', mega: [
+    { k: 'Stage velocity', v: (M.velocity ? M.velocity.hops.filter(h => !h.insufficientData).length : 0) + ' hops measured', d: 'median days per stage transition' },
+    { k: 'Waiting on replies', v: (M.velocity ? M.velocity.waiting.inFlight : 0) + ' applications', d: 'in flight, longest silence first' },
+    { k: 'Salary trail', v: M.salary ? M.salary.applications.length + ' tracked' : 'none yet', d: 'advertised vs confirmed comp' },
+    { k: 'Skill gaps', v: M.upskill ? M.upskill.gaps.length + ' named' : 'none yet', d: 'aggregated from evaluation reports' },
   ] },
   { id: 'profile', label: 'Profile', n: W.archetypes.length + ' archetypes', mega: [
     { k: esc(W.label), v: W.location || 'location not set', d: 'whose targeting scored this page' },
@@ -1162,6 +1706,17 @@ el('tabs').addEventListener('keydown', e => {
 addEventListener('hashchange', () => selectTab(location.hash.slice(1), false));
 selectTab(location.hash.slice(1), false);
 
+// The histogram's band regions drive the SAME filter as the Match chips:
+// forward the click to the chip so state.cbband, aria-pressed and the render
+// all go through the one existing code path, then show the filtered table.
+const hist = document.getElementById('cbhist');
+if (hist) hist.addEventListener('click', e => {
+  const band = e.target.closest('[data-cbband]');
+  if (!band) return;
+  const chip = document.querySelector('#cbbands [data-cbband="' + band.getAttribute('data-cbband') + '"]');
+  if (chip) { chip.click(); selectTab('pipeline', false); }
+});
+
 // Every generated table gets its own horizontal scroll container, so a wide
 // table scrolls inside itself and the page body never scrolls sideways.
 for (const t of document.querySelectorAll('.panel .mini')) {
@@ -1177,7 +1732,7 @@ render();
 `;
 }
 
-function main(argv) {
+async function main(argv) {
   // --root points the whole build at another user layer (see profiles.mjs). It is
   // the only argument buildModel already understood; main just never exposed it.
   const rootIdx = argv.indexOf('--root');
@@ -1191,7 +1746,10 @@ function main(argv) {
   const outIdx = argv.indexOf('--out');
   const defaultOut = profileName ? `pipeline-${profileName}.html` : 'pipeline-artifact.html';
   const out = outIdx >= 0 ? argv[outIdx + 1] : join(root, 'output', defaultOut);
-  const model = buildModel({ root, profileRoot, profileName });
+  // company-history's status-log source is async; buildModel must stay sync
+  // (build-hub.mjs imports it), so the CLI pre-loads the source and passes it in.
+  const statusLog = await loadStatusLogSource();
+  const model = buildModel({ root, profileRoot, profileName, statusLog });
   const html = renderHtml(model);
   writeFileSync(resolve(out), html);
   const laneCounts = model.lanes.map(l => `${l.id}=${model.rows.filter(r => r.lane === l.id).length}`).join(' ');
