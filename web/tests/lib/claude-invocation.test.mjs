@@ -102,6 +102,46 @@ test("toolScopeFor: evaluate and fix-portal keep Write and Bash on purpose", () 
   }
 });
 
+test("toolScopeFor: tailor gets Write only — Bash and Edit stay DENIED by name", () => {
+  // Given the bulk-prepare tailor worker, whose whole contract is Writing two
+  // precomputed scratch files (CV HTML + drafted-answers JSON) the backend then
+  // renders and stamps — and whose prompt deliberately ingests untrusted
+  // posting/report content, so Bash (capability enough to submit) must never
+  // reach it: "cannot submit" holds by construction, not by a prompt line
+  const scope = toolScopeFor("tailor");
+
+  // Then it gets its OWN scope, not the persisting one
+  assert.equal(scope, TOOL_SCOPES.tailor);
+  const allowed = toolNames(scope.allowed);
+  const denied = toolNames(scope.disallowed);
+  assert.ok(allowed.includes("Write"), "tailor needs Write");
+  for (const tool of ["Read", "WebFetch", "Glob", "Grep"]) {
+    assert.ok(allowed.includes(tool), `tailor needs ${tool}`);
+  }
+  // Every other write-capable tool is denied BY NAME, never merely omitted
+  for (const tool of ["Bash", "Edit", "MultiEdit", "NotebookEdit"]) {
+    assert.ok(denied.includes(tool), `tailor must explicitly deny ${tool}`);
+    assert.ok(!allowed.includes(tool), `tailor must not allow ${tool}`);
+  }
+
+  // And sub-agents stay denied — write access never includes fan-out
+  assert.ok(denied.includes("Task"), "tailor must deny Task");
+
+  // And the grant is per-kind, not a loosened default: kinds nobody has
+  // reviewed — near-misses of "tailor" included — still resolve read-only, so
+  // the one unrecoverable default stays locked
+  for (const kind of ["taylor", "tailors", "prepare", "some-future-kind"]) {
+    assert.equal(toolScopeFor(kind), TOOL_SCOPES.readOnly, `${kind} must stay read-only`);
+  }
+
+  // And the argv that actually ships carries the grant — Write in, Bash out
+  const argv = claudeCliArgs({ kind: "tailor", prompt: "x" });
+  const argAllowed = toolNames(argValue(argv, "--allowedTools"));
+  assert.ok(argAllowed.includes("Write"), "tailor argv must allow Write");
+  assert.ok(!argAllowed.includes("Bash"), "tailor argv must not allow Bash");
+  assert.ok(toolNames(argValue(argv, "--disallowedTools")).includes("Bash"), "tailor argv must deny Bash");
+});
+
 test("toolScopeFor: every kind blocks sub-agents", () => {
   // Given Task spawns sub-agents (runaway cost) and is never wanted here
   for (const kind of KNOWN_KINDS) {
@@ -171,22 +211,25 @@ test("claudeCliArgs: the pdf command line grants no write-capable tool", () => {
   }
 });
 
-test("claudeCliArgs: loads no MCP servers", () => {
+test("claudeCliArgs: pdf and tailor load no MCP servers", () => {
   // Given MCP tools would appear in neither the allow nor the deny list, so a
-  // write tool arriving from the user's MCP config would be invisible to every
-  // check here
-  const args = claudeCliArgs({ kind: "pdf", prompt: "x" });
+  // write (or browser-click) tool arriving from the user's MCP config would be
+  // invisible to every check here — and tailor's batches of workers ingest
+  // untrusted posting text while needing no MCP server at all
+  for (const kind of ["pdf", "tailor"]) {
+    const args = claudeCliArgs({ kind, prompt: "x" });
 
-  // Then MCP config is locked down for pdf
-  assert.ok(args.includes("--strict-mcp-config"), "pdf argv must pass --strict-mcp-config");
-  assert.ok(!args.includes("--mcp-config"), "no MCP server may be loaded");
+    // Then MCP config is locked down
+    assert.ok(args.includes("--strict-mcp-config"), `${kind} argv must pass --strict-mcp-config`);
+    assert.ok(!args.includes("--mcp-config"), "no MCP server may be loaded");
+  }
 });
 
 test("claudeCliArgs: other kinds keep their MCP servers", () => {
   // Given #2185 is about pdf. Locking MCP config for every kind would silently stop
   // a user's configured server (the optional Canva one, say) from loading on an
   // evaluation — a behaviour change the issue never asked for. #2507 covers the
-  // same gap for the other kinds.
+  // same gap for the remaining kinds.
   for (const kind of ["research", "evaluate", "fix-portal"]) {
     assert.ok(
       !claudeCliArgs({ kind, prompt: "x" }).includes("--strict-mcp-config"),

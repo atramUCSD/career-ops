@@ -68,21 +68,32 @@ function scopeFrom(allowed) {
 }
 
 /**
- * The two scopes that exist. `persisting` kinds run the REAL mode and write
+ * The three scopes that exist. `persisting` kinds run the REAL mode and write
  * canonical artifacts (reserve-report-num.mjs / merge-tracker.mjs /
  * verify-portals.mjs), so they need Write + Bash. `readOnly` kinds produce their
  * result through the response stream and need no write tool at all — pdf emits
  * its CV in a `<<cv-html>>` envelope the backend persists (#2185), and research
- * only reports.
+ * only reports. `tailor` (bulk-prepare) sits between: its whole contract is
+ * Writing two precomputed scratch files (the CV HTML + drafted-answers JSON the
+ * backend renders and stamps), so it gets Write and nothing else that can touch
+ * a file — Bash and Edit stay denied BY NAME, because its
+ * prompt deliberately ingests untrusted posting/report content and Bash is
+ * capability enough to submit; "cannot submit" must hold by construction, not
+ * by a prompt line.
  *
- * @type {{persisting: ToolScope, readOnly: ToolScope}}
+ * @type {{persisting: ToolScope, readOnly: ToolScope, tailor: ToolScope}}
  */
 export const TOOL_SCOPES = Object.freeze({
   persisting: scopeFrom("Read,WebFetch,WebSearch,Write,Edit,Bash,Glob,Grep"),
   readOnly: scopeFrom("Read,WebFetch,WebSearch,Glob,Grep"),
+  tailor: scopeFrom("Read,WebFetch,Write,Glob,Grep"),
 });
 
-/** Kinds that legitimately write files. Everything else is read-only. */
+/**
+ * Kinds that legitimately need the FULL persisting scope (Write + Bash).
+ * `tailor` is deliberately not here — it resolves to its own Write-only scope
+ * in toolScopeFor, pinned by its own test. Everything else is read-only.
+ */
 const PERSISTING_KINDS = new Set(["evaluate", "fix-portal"]);
 
 /**
@@ -91,7 +102,7 @@ const PERSISTING_KINDS = new Set(["evaluate", "fix-portal"]);
  * Unknown kinds still resolve (read-only, see toolScopeFor); this is the set a
  * test can enumerate, not a validity check.
  */
-export const KNOWN_KINDS = Object.freeze(["pdf", "research", "evaluate", "fix-portal"]);
+export const KNOWN_KINDS = Object.freeze(["pdf", "research", "evaluate", "fix-portal", "tailor"]);
 
 /**
  * Resolve the tool scope for a worker kind.
@@ -103,6 +114,7 @@ export const KNOWN_KINDS = Object.freeze(["pdf", "research", "evaluate", "fix-po
  * @returns {ToolScope}
  */
 export function toolScopeFor(kind) {
+  if (kind === "tailor") return TOOL_SCOPES.tailor;
   return PERSISTING_KINDS.has(kind) ? TOOL_SCOPES.persisting : TOOL_SCOPES.readOnly;
 }
 
@@ -138,14 +150,16 @@ export function claudeCliArgs({ kind, prompt }) {
     "--verbose",
     "--include-partial-messages",
     "--permission-mode", "acceptEdits",
-    // pdf only, deliberately. --strict-mcp-config with no --mcp-config loads ZERO
-    // MCP servers, so the tool lists below describe everything the agent can
-    // reach — without it an MCP server from the user's own config could supply a
-    // write tool that appears in neither list. #2185 is about pdf, and applying
-    // this to every kind would silently stop a configured MCP server (e.g. the
-    // optional Canva server) from loading on evaluate/research runs. The same gap
-    // for the other kinds is #2507.
-    ...(kind === "pdf" ? ["--strict-mcp-config"] : []),
+    // pdf and tailor, deliberately. --strict-mcp-config with no --mcp-config
+    // loads ZERO MCP servers, so the tool lists below describe everything the
+    // agent can reach — without it an MCP server from the user's own config
+    // could supply a write (or browser-click) tool that appears in neither
+    // list. tailor needs no MCP server (its whole contract is two file writes)
+    // and its batches ingest untrusted posting text, so it is locked down like
+    // pdf. Applying this to every kind would silently stop a configured MCP
+    // server (e.g. the optional Canva server) from loading on evaluate/research
+    // runs; that remaining gap is #2507.
+    ...(kind === "pdf" || kind === "tailor" ? ["--strict-mcp-config"] : []),
     "--allowedTools", scope.allowed,
     "--disallowedTools", scope.disallowed,
   ];

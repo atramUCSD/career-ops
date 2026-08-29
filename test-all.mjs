@@ -15322,6 +15322,42 @@ try {
               : 'it does not pass `kind` through verbatim (a remapped kind hands pdf another kind\'s scope)';
           fail(`web run route no longer delegates its argv — ${why}, so the value checks above may not describe what pdf actually ships (#2185)`);
         }
+
+        // The same structural rule for the bulk-prepare path, whose files claim
+        // this section's coverage in their headers: the prepare route spells no
+        // tool flag and builds no argv itself, and prepare-fanout.mjs is the ONE
+        // claudeCliArgs call site, passing the literal `tailor` kind (a remapped
+        // kind there would hand the batch another kind's scope while every value
+        // check above stays green).
+        const preparePaths = {
+          'api/prepare/route.ts': { file: join(ROOT, 'web', 'src', 'app', 'api', 'prepare', 'route.ts'), callSites: 0 },
+          'prepare-fanout.mjs': { file: join(webLib, 'prepare-fanout.mjs'), callSites: 1 },
+        };
+        const prepareMissing = Object.entries(preparePaths).filter(([, p]) => !existsSync(p.file)).map(([name]) => name);
+        if (prepareMissing.length > 0) {
+          // web/ IS here, so a missing file is a move, not an absence.
+          fail(`web/ exists but ${prepareMissing.join(', ')} is missing — the bulk-prepare argv delegation cannot verify (was it moved?)`);
+        } else {
+          const problems = [];
+          for (const [name, { file, callSites }] of Object.entries(preparePaths)) {
+            const code = stripJsComments(readFileSync(file, 'utf-8'))
+              .split('\n')
+              .filter((l) => !/^\s*import\b/.test(l))
+              .join('\n');
+            const spelled = ['--allowedTools', '--disallowedTools', '--permission-mode'].filter((flag) => code.includes(flag));
+            if (spelled.length > 0) problems.push(`${name} spells ${spelled.join(', ')} itself`);
+            const sites = (code.match(/claudeCliArgs\s*\(/g) ?? []).length;
+            if (sites !== callSites) problems.push(`${name} builds argv at ${sites} site(s), expected ${callSites}`);
+            if (callSites === 1 && !/claudeCliArgs\s*\(\s*\{\s*kind:\s*"tailor"\s*,/.test(code)) {
+              problems.push(`${name} does not pass the literal "tailor" kind to claudeCliArgs`);
+            }
+          }
+          if (problems.length === 0) {
+            pass('web bulk-prepare delegates its whole argv — no tool flag spelled, one tailor-kind call site (#2185)');
+          } else {
+            fail(`web bulk-prepare no longer delegates its argv — ${problems.join('; ')}, so the value checks above may not describe what the tailor workers actually ship (#2185)`);
+          }
+        }
       }
     }
   }

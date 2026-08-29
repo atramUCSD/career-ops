@@ -9,7 +9,8 @@ import { ATS_SOURCES } from "@/lib/explore";
 import { daysSince, seniorityFromTitle, sourceFromUrl, SENIORITY_ORDER, type Seniority } from "@/lib/inbox";
 import { FacetChips } from "./facet-chips";
 import { TriageRow, type RowScore } from "./triage-row";
-import { ShortlistTray, type ShortItem } from "./shortlist-tray";
+import { characterizeBatch, ShortlistTray, type PrepProgress, type ShortItem } from "./shortlist-tray";
+import { readSavedCliId, resolveCliId } from "@/lib/saved-cli";
 import { cn } from "@/lib/cn";
 
 const SHORTLIST_KEY = "career-ops:shortlist";
@@ -19,8 +20,9 @@ const BATCH = 20;
 
 // The inbox as a TRIAGE surface: Abundance → Triage → Shortlist → Opt-in Score.
 // Default is a small fresh batch (never the full wall); free facets + Save/Skip narrow
-// it; only "Score shortlist" spends tokens. 🔴 The shell is agnostic to what makes a
-// role relevant — order is freshness with a single documented plug point.
+// it; only "Score shortlist" and "Prepare shortlist" spend tokens (both behind the
+// tray's explicit confirm). 🔴 The shell is agnostic to what makes a role relevant —
+// order is freshness with a single documented plug point.
 export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
   const { jobs, startJob } = useJobs();
 
@@ -175,6 +177,105 @@ export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
     setShortlist([]); // sent — the rows flip to Scoring… → badge via scoreByUrl
   };
 
+  // Prepare cost estimate — sibling of `estimate`, sampled from tailor workers;
+  // while no tailor history exists, pdf runs seed it (same content-tailoring
+  // worker class). {} when there are no samples at all — the tray says so.
+  const prepEstimate = useMemo(() => {
+    let samples = jobs.filter((j) => j.kind === "tailor" && j.status === "done" && j.cost?.tokens).map((j) => j.cost!);
+    if (!samples.length) samples = jobs.filter((j) => j.kind === "pdf" && j.status === "done" && j.cost?.tokens).map((j) => j.cost!);
+    if (!samples.length || shortlist.length === 0) return {};
+    const avgT = samples.reduce((a, c) => a + c.tokens, 0) / samples.length;
+    const usds = samples.filter((s) => s.usd != null).map((s) => s.usd!);
+    const avgUsd = usds.length ? usds.reduce((a, c) => a + c, 0) / usds.length : undefined;
+    return { tokens: Math.round(avgT * shortlist.length), usd: avgUsd != null ? +(avgUsd * shortlist.length).toFixed(2) : undefined };
+  }, [jobs, shortlist.length]);
+
+  // Free batch characterization for "Prepare N" — from scores already on the
+  // client. null slot = blocked: no completed evaluation to tailor against
+  // (never shortlisted for scoring, still running, or a run with no score).
+  const prepBatch = useMemo(
+    () =>
+      characterizeBatch(
+        shortlist.map((it) => {
+          const s = scoreByUrl.get(it.url);
+          return s && !s.running && s.score != null ? s.score : null;
+        }),
+      ),
+    [shortlist, scoreByUrl],
+  );
+
+  const [prep, setPrep] = useState<PrepProgress>({ running: false, label: null, byUrl: {} });
+
+  // "Prepare shortlist" — the tray's second spend. POSTs the batch to /api/prepare
+  // and reads the same NDJSON event stream job-store reads from /api/run; per-item
+  // {type:"item"} outcomes flip the tray rows the way score results flip triage
+  // rows. The shortlist is NOT cleared: rows stay visible carrying their badge.
+  // Preparation only — nothing on this path (client or server) submits anything.
+  const prepareShortlist = async () => {
+    if (prep.running) return;
+    const urls = shortlist.map((it) => it.url);
+    const cliId = readSavedCliId() || (await resolveCliId());
+    if (!cliId) {
+      setPrep({ running: false, label: "No CLI configured — open Config and click Save config", byUrl: {} });
+      return;
+    }
+    setPrep({ running: true, label: "Starting…", byUrl: {} });
+    const byUrl: PrepProgress["byUrl"] = {};
+    let summary = "";
+    const finish = (label: string) => {
+      setPrep({ running: false, label, byUrl: { ...byUrl } });
+      // Every prepared item already wrote a real report/tracker note — tell
+      // server-snapshot surfaces (Today, pipeline) to refetch (job-store pattern).
+      window.dispatchEvent(new CustomEvent("co-job-done", { detail: { kind: "prepare" } }));
+    };
+    try {
+      const res = await fetch("/api/prepare", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ urls, cliId }),
+      });
+      if (!res.ok || !res.body) {
+        const e = await res.json().catch(() => ({}));
+        setPrep({ running: false, label: e.error || "Failed to start", byUrl: {} });
+        return;
+      }
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buf.indexOf("\n")) !== -1) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          try {
+            const ev = JSON.parse(line);
+            if (ev.type === "status") {
+              setPrep((p) => ({ ...p, label: ev.label }));
+            } else if (ev.type === "item" && typeof ev.url === "string") {
+              byUrl[ev.url] = ev.status === "prepared" ? "prepared" : "failed";
+              setPrep((p) => ({ ...p, byUrl: { ...byUrl } }));
+            } else if (ev.type === "done") {
+              // finish happens on stream-close (job-store pattern); latch the summary
+              summary = `Prepared ${ev.prepared ?? 0} of ${urls.length}${ev.failed ? ` · ${ev.failed} failed` : ""} — review before anything is sent`;
+            } else if (ev.type === "error") {
+              finish(ev.msg || "Error");
+              return;
+            }
+          } catch {
+            /* skip malformed line */
+          }
+        }
+      }
+      finish(summary || "Interrupted — check what landed before re-running");
+    } catch {
+      finish("Connection error");
+    }
+  };
+
   // The parent (PipelineView) renders the rich empty-inbox card; here we always
   // have ≥1 raw posting.
   if (inbox.length === 0) return null;
@@ -280,10 +381,14 @@ export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
       <ShortlistTray
         items={shortlist}
         estimate={estimate}
+        prepEstimate={prepEstimate}
+        batch={prepBatch}
+        prep={prep}
         hasCli={hasCli}
         onRemove={(url) => setShortlist((s) => s.filter((x) => x.url !== url))}
         onClear={() => setShortlist([])}
         onScore={scoreShortlist}
+        onPrepare={prepareShortlist}
       />
     </div>
   );
