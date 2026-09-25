@@ -27,7 +27,12 @@ function runDoctor(cwd, args, env) {
       cwd,
       // Order matters: the empty dir must override an ambient CLAUDE_CONFIG_DIR
       // from the developer's own shell, while a scenario's explicit env still wins.
-      env: { ...process.env, CLAUDE_CONFIG_DIR: EMPTY_CONFIG_DIR, ...env },
+      // GMAIL_* stripped: test-all imports modules that dotenv-load the repo
+      // .env, and real credentials would add an alert-readiness warning.
+      env: {
+        ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GMAIL_'))),
+        CLAUDE_CONFIG_DIR: EMPTY_CONFIG_DIR, ...env,
+      },
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();

@@ -29,7 +29,7 @@ const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1/users/me';
 const STATE_PATH = 'data/gmail-state.json'; // the plugin's own processed-id cursor
 
 /** Exchange the long-lived refresh token for a short-lived access token. */
-async function getAccessToken({ clientId, clientSecret, refreshToken }, fetchFn = globalThis.fetch) {
+export async function getAccessToken({ clientId, clientSecret, refreshToken }, fetchFn = globalThis.fetch) {
   const res = await fetchFn(TOKEN_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
