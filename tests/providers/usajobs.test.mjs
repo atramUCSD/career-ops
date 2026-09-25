@@ -217,6 +217,20 @@ try {
   } else {
     fail(`usajobs.fetch() partial threw=${partialThrew}, result=${JSON.stringify(partial)}`);
   }
+
+  // queries[] — structured params, one request each, and they win over keywords
+  const queryParams = [];
+  await usajobs.fetch(
+    { name: 'Q', usajobs: { keywords: ['ignored'], queries: [{ series: '2210', keyword: 'web' }, { title: 'UX' }, { bogus: 1 }] } },
+    { fetchJson: async (url) => { queryParams.push(Object.fromEntries(new URL(url).searchParams)); return page(); } },
+  );
+  if (queryParams.length === 2
+      && queryParams[0].JobCategoryCode === '2210' && queryParams[0].Keyword === 'web' && !queryParams[0].PositionTitle
+      && queryParams[1].PositionTitle === 'UX' && !queryParams[1].Keyword && !queryParams[1].JobCategoryCode) {
+    pass('usajobs.fetch() maps queries[] to JobCategoryCode/Keyword/PositionTitle and overrides keywords');
+  } else {
+    fail(`usajobs.fetch() queries sent ${JSON.stringify(queryParams)}`);
+  }
 } catch (e) {
   fail(`usajobs provider tests crashed: ${e.message}`);
 } finally {

@@ -82,11 +82,16 @@ export function resolveQueries(entry) {
  * @param {string} query
  * @param {string} location
  * @param {number} start
+ * @param {number} [postedWithinSec] f_TPR window; 0/absent = no recency filter
  */
-export function buildSearchUrl(query, location, start) {
+export function buildSearchUrl(query, location, start, postedWithinSec = 0) {
   const u = new URL(`https://${SEARCH_HOST}${SEARCH_PATH}`);
   u.searchParams.set('keywords', query);
   if (location) u.searchParams.set('location', location);
+  // Without f_TPR results are relevance-sorted and mostly weeks old, so the
+  // page caps fill with postings already seen. f_TPR keys on (re)post time.
+  // Probed 2026-09-24: f_WT/f_E/f_JT/sortBy are ignored by this guest endpoint.
+  if (postedWithinSec > 0) u.searchParams.set('f_TPR', `r${postedWithinSec}`);
   u.searchParams.set('start', String(start));
   return u.href;
 }
@@ -170,6 +175,8 @@ export default {
       );
     }
     const location = typeof entry?.location === 'string' ? entry.location.trim() : '';
+    // Default one day: scans run twice daily, so every window overlaps the last.
+    const postedWithin = entry?.posted_within_sec === 0 ? 0 : resolveCap(entry?.posted_within_sec, 86400, 60 * 86400);
     const maxJobs = resolveCap(entry?.max_jobs, DEFAULT_MAX_JOBS);
     const maxPages = resolveCap(entry?.max_pages, MAX_PAGES, MAX_PAGES);
     const pageCap = ctx.maxPages && ctx.maxPages > 0 ? Math.min(ctx.maxPages, maxPages) : maxPages;
@@ -189,7 +196,7 @@ export default {
 
         let html;
         try {
-          html = await ctx.fetchText(buildSearchUrl(query, location, start), {
+          html = await ctx.fetchText(buildSearchUrl(query, location, start, postedWithin), {
             headers: { accept: 'text/html' },
             // A server-side redirect off www.linkedin.com is an SSRF vector, and
             // this endpoint has no legitimate reason to redirect.

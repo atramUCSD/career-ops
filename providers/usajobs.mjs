@@ -51,6 +51,15 @@
 //     usajobs:
 //       keywords: ["software engineer"]  # optional: falls back to
 //                                        # config/profile.yml target_roles
+//       queries:                         # optional, preferred: structured
+//         - { series: "2210", keyword: "web" }   # JobCategoryCode (OPM series,
+//         - { series: "0343;1084", keyword: "user experience" } # ";" = any-of)
+//         - { title: "UX" }                      # PositionTitle
+//                                        # Private-sector role names like
+//                                        # "UI/UX Engineer" match ~0 federal
+//                                        # postings, and Keyword has no OR —
+//                                        # so run several narrow queries and
+//                                        # merge. queries wins over keywords.
 //       locationName: "Washington, DC"   # optional; API expects "City, State"
 //       radius: 50                       # miles around locationName
 //       days: 30                         # DatePosted window (API caps at 60)
@@ -70,15 +79,23 @@ let warnedNoKey = false;
 /**
  * Reads and sanitizes the entry's `usajobs:` config block.
  * @param {{ usajobs?: any }} entry
- * @returns {{ keywords: string[], locationName: string, radius: number, days: number, size: number }}
+ * @returns {{ keywords: string[], queries: Array<{keyword?: string, series?: string, title?: string}>, locationName: string, radius: number, days: number, size: number }}
  */
 export function parseUsajobsConfig(entry) {
   const cfg = (entry && entry.usajobs) || {};
   const keywords = Array.isArray(cfg.keywords)
     ? cfg.keywords.filter(k => typeof k === 'string' && k.trim()).map(k => k.trim())
     : [];
+  const str = v => (typeof v === 'string' || typeof v === 'number') && String(v).trim() ? String(v).trim() : undefined;
+  const queries = Array.isArray(cfg.queries)
+    ? cfg.queries
+      .filter(q => q && typeof q === 'object')
+      .map(q => ({ keyword: str(q.keyword), series: str(q.series), title: str(q.title) }))
+      .filter(q => q.keyword || q.series || q.title)
+    : [];
   return {
     keywords,
+    queries,
     locationName: typeof cfg.locationName === 'string' ? cfg.locationName.trim() : '',
     radius: intInRange(cfg.radius, 0, 0, 1000),  // miles; only sent when locationName is set
     days: intInRange(cfg.days, 30, 0, 60),       // DatePosted accepts 0–60 (docs)
@@ -159,23 +176,29 @@ export default {
       return [];
     }
 
-    let { keywords, locationName, radius, days, size } = parseUsajobsConfig(entry);
-    // Same convention vdab.mjs/jobbankca.mjs use: no keywords of its own →
-    // fall back to config/profile.yml's target_roles.
-    if (!keywords.length) keywords = resolveProfileKeywords();
-    if (!keywords.length) {
-      throw new Error(`usajobs: entry "${entry.name || '(unnamed)'}" has no usajobs.keywords[] and profile.yml provided no target_roles`);
+    let { keywords, queries, locationName, radius, days, size } = parseUsajobsConfig(entry);
+    if (!queries.length) {
+      // Same convention vdab.mjs/jobbankca.mjs use: no keywords of its own →
+      // fall back to config/profile.yml's target_roles.
+      if (!keywords.length) keywords = resolveProfileKeywords();
+      queries = keywords.map(keyword => ({ keyword }));
+    }
+    if (!queries.length) {
+      throw new Error(`usajobs: entry "${entry.name || '(unnamed)'}" has no usajobs.queries[]/keywords[] and profile.yml provided no target_roles`);
     }
 
     const byUrl = new Map();
     const errors = [];
     let succeeded = 0;
-    for (const kw of keywords) {
+    for (const q of queries) {
+      const kw = [q.series && `series ${q.series}`, q.keyword, q.title && `title ${q.title}`].filter(Boolean).join(' / ');
       const params = new URLSearchParams({
-        Keyword: kw,
         ResultsPerPage: String(size),
         DatePosted: String(days),
       });
+      if (q.keyword) params.set('Keyword', q.keyword);
+      if (q.series) params.set('JobCategoryCode', q.series);
+      if (q.title) params.set('PositionTitle', q.title);
       if (locationName) {
         params.set('LocationName', locationName);
         if (radius > 0) params.set('Radius', String(radius));
@@ -220,7 +243,7 @@ export default {
     // Total outage = every keyword failed. A keyword that answered with zero
     // results is not an outage — key off the success count.
     if (succeeded === 0 && errors.length) {
-      throw new Error(`usajobs: all ${keywords.length} keyword request(s) failed — ${errors[0]}`);
+      throw new Error(`usajobs: all ${queries.length} keyword request(s) failed — ${errors[0]}`);
     }
 
     return [...byUrl.values()];

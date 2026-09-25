@@ -85,6 +85,12 @@ try {
   } else {
     fail(`buildSearchUrl() params wrong: ${url.search}`);
   }
+  const recent = new URL(buildSearchUrl('UX Engineer', '', 0, 86400));
+  if (recent.searchParams.get('f_TPR') === 'r86400' && !url.searchParams.has('f_TPR')) {
+    pass('buildSearchUrl() adds f_TPR only when a window is given');
+  } else {
+    fail(`buildSearchUrl() f_TPR wrong: ${recent.search} / ${url.search}`);
+  }
   if (!new URL(buildSearchUrl('x', '', 0)).searchParams.has('location')) {
     pass('buildSearchUrl() omits an empty location');
   } else {
