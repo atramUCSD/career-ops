@@ -71,7 +71,7 @@ export function stripHtml(html) {
  * one stray mention of Figma in a benefits paragraph cannot manufacture a
  * designer role.
  */
-const HATS = {
+export const HATS = {
   designer: [
     /user research/i, /wireframe/i, /prototyp/i, /\bfigma\b/i, /usability/i,
     /design system/i, /\bwcag\b|section 508|accessib/i, /interaction design/i,

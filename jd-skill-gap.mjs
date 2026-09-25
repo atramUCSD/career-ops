@@ -364,7 +364,7 @@ function classifySkillGaps(jdSkills, cvText) {
 }
 
 // ── Exports (for test-all.mjs and other consumers) ───────────────────
-export { extractJdSkills, skillMentionedInText, classifySkillGaps, diagnoseExtraction };
+export { extractJdSkills, skillMentionedInText, classifySkillGaps, diagnoseExtraction, splitSkillsSection };
 
 // ── CLI ──────────────────────────────────────────────────────────────
 
