@@ -450,6 +450,8 @@ export const USER_PATHS = [
   'enrich-jd.mjs',
   'notify-email.mjs',
   'gmail-send.mjs',
+  'gmail-replies.mjs',
+  'scripts/mint-gmail-token.mjs',
   'expired-log.mjs',
   'prune-pipeline.mjs',
   'scripts/alert.cmd',

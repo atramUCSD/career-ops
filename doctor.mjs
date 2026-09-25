@@ -17,7 +17,15 @@ import { resolveExtractorMode } from './browser-extract.mjs';
 import { parseConfigByExtension } from './jsonc-parse.mjs';
 import { validateFlags } from './lib/cli-flags.mjs';
 import { geminiNodeFloor } from './lib/gemini-node-floor.mjs';
-import { credentialsFrom } from './gmail-send.mjs';
+
+// gmail-send.mjs is fork-local (USER_PATHS in update-system.mjs), so an install
+// upgraded from upstream may not have it; doctor must still run there.
+let credentialsFrom = null;
+try {
+  ({ credentialsFrom } = await import('./gmail-send.mjs'));
+} catch (err) {
+  if (err?.code !== 'ERR_MODULE_NOT_FOUND') throw err;
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -206,6 +214,7 @@ function checkTrackedBakFiles(root) {
 // Warning tier only, never a failure: `missing` is reserved for the four
 // cold-start prerequisites AGENTS.md lists, and the alert is not one of them.
 function checkAlertReadiness(root) {
+  if (!credentialsFrom) return null;
   const configPath = join(root, 'config', 'alerts.yml');
   const configured = existsSync(configPath);
   const { missing: missingEnv } = credentialsFrom(process.env);
