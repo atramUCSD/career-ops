@@ -34,10 +34,25 @@ REM to re-scrape — only a second render of the same corpus through someone
 REM else's targeting. A broken profile config must never take the mail down
 REM with it: the mail is the critical path and these pages are not, so a
 REM failure here logs a row and the chain continues.
+REM
+REM A profile with its own config\alerts.yml is fully separate instead: its own
+REM scan, pipeline, page and mail. Same fail-stop rule as the owner's chain — a
+REM failed scan skips that profile's mail so its postings are not marked seen.
 if exist profiles (
   for /d %%p in (profiles\*) do (
-    call node build-artifact.mjs --as-profile "%%~nxp" --out "output\pipeline-%%~nxp.html"
-    if errorlevel 1 echo !TS!	profile %%~nxp	FAILED - continuing>> "%LOG%"
+    if exist "%%p\config\alerts.yml" (
+      call node profiles.mjs run "%%~nxp" scan.mjs --since 45
+      if errorlevel 1 (
+        echo !TS!	profile %%~nxp scan	FAILED - mail skipped>> "%LOG%"
+      ) else (
+        call node build-artifact.mjs --root "%%p"
+        call node notify-email.mjs --root "%%p"
+        if errorlevel 1 (echo !TS!	profile %%~nxp alert	FAILED - continuing>> "%LOG%") else (echo !TS!	profile %%~nxp	ok>> "%LOG%")
+      )
+    ) else (
+      call node build-artifact.mjs --as-profile "%%~nxp" --out "output\pipeline-%%~nxp.html"
+      if errorlevel 1 echo !TS!	profile %%~nxp	FAILED - continuing>> "%LOG%"
+    )
   )
 )
 
