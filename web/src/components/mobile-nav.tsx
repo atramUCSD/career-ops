@@ -9,6 +9,7 @@ import { CoMark } from "@/components/co-mark";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { WorkerPills } from "@/components/jobs/worker-pills";
 import { UsageMeter } from "@/components/usage-meter";
+import { ProfilePicker } from "@/components/profile-picker";
 import { instrumentSerif } from "@/lib/fonts";
 import { NAV_ITEMS, isActivePath } from "@/lib/nav-items";
 import { useJobs } from "@/components/jobs/job-store";
@@ -180,6 +181,7 @@ export function MobileNav() {
         </div>
 
         <div className="co-msafe mt-auto space-y-3 border-t border-border px-4 pt-4">
+          <ProfilePicker />
           <UsageMeter />
           <div className="flex items-center justify-between">
             <span className={`${instrumentSerif.className} text-sm text-faint`}>local-first · v0</span>

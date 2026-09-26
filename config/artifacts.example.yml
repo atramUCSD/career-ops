@@ -1,0 +1,15 @@
+# config/artifacts.yml — where each published pipeline page lives.
+#
+# Read by build-hub.mjs. Copy this file to config/artifacts.yml and fill in the
+# URLs you published; a profile with no entry renders as "not yet published"
+# rather than a dead link, so a partly-filled file is fine.
+#
+# The hub itself carries no job data, so it is safe to share. A profile link is
+# not: that page holds one person's postings, targeting and comp floor.
+
+# The repo owner's own artifact.
+owner: 
+
+# One entry per directory under profiles/.
+profiles: {}
+  # sample: https://example.invalid/your-published-url

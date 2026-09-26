@@ -262,12 +262,6 @@ export function buildScorer({ profile = {}, lanes = [], rows = [], history = [],
     const add = (id, mult, why) => { if (mult !== 1 || id === 'nojd') signals.push({ id, mult, why }); };
     const f = factsFor(facts, row.u);
 
-    const gate = gateOf(f, walkAway, row.l, row.t);
-    if (gate) {
-      signals.push({ id: 'gate', mult: 0, why: gate });
-      return { score: 0, band: 'blocked', gate, signals };
-    }
-
     // The TITLE decides the family, and the lane is only the fallback. A lane is
     // assigned by one broad title_filter keyword — "AI Engineer" put a Finance &
     // Strategy req in the forward-deployed lane and handed it a primary family
@@ -276,6 +270,12 @@ export function buildScorer({ profile = {}, lanes = [], rows = [], history = [],
     const titleFamily = coreFit(row.t);
     const family = titleFamily !== 'unmatched' ? titleFamily
       : row.lane !== 'core' ? 'lane' : 'unmatched';
+
+    const gate = gateOf(f, walkAway, row.l, row.t);
+    if (gate) {
+      signals.push({ id: 'gate', mult: 0, why: gate });
+      return { score: 0, band: 'blocked', gate, signals, family };
+    }
 
     let fit;
     if (f && f.hats !== null) {
@@ -345,7 +345,7 @@ export function buildScorer({ profile = {}, lanes = [], rows = [], history = [],
     }
 
     const score = Math.max(1, Math.round(100 * fit * Math.max(0.55, timing)));
-    return { score, band: bandOf(score), gate: null, signals };
+    return { score, band: bandOf(score), gate: null, signals, family };
   };
 }
 

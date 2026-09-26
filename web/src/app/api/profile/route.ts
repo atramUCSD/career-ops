@@ -1,8 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
-import yaml from "js-yaml";
-import { careerOpsRoot } from "@/lib/career-ops";
+import * as yaml from "js-yaml";
+import { careerOpsRoot, userRoot } from "@/lib/career-ops";
 import { atomicWriteWithBackup } from "@/lib/core/safe-write";
+import { isMapping } from "@/lib/portals-config.mjs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -65,8 +66,7 @@ export async function POST(req: Request) {
   const proposed = patchToProfile(patch);
   if (Object.keys(proposed).length === 0) return Response.json({ error: "nothing to write" }, { status: 400 });
 
-  const root = careerOpsRoot();
-  const file = path.join(root, "config", "profile.yml");
+  const file = path.join(userRoot(), "config", "profile.yml");
   let base: Record<string, unknown> = {};
   let seeded = false;
   // DATA-LOSS GUARD (maintainer, bug-class #649/#704/#920/#958): distinguish
@@ -74,7 +74,7 @@ export async function POST(req: Request) {
   // malformed" (NEVER overwrite — that would silently destroy the user's data).
   if (!fs.existsSync(file)) {
     try {
-      base = (yaml.load(fs.readFileSync(path.join(root, "config", "profile.example.yml"), "utf8")) as Record<string, unknown>) || {};
+      base = (yaml.load(fs.readFileSync(path.join(careerOpsRoot(), "config", "profile.example.yml"), "utf8")) as Record<string, unknown>) || {};
       seeded = Object.keys(base).length > 0;
     } catch {
       base = {};
@@ -86,7 +86,12 @@ export async function POST(req: Request) {
     } catch {
       return Response.json({ error: "config/profile.yml exists but is not valid YAML — refusing to overwrite it." }, { status: 409 });
     }
-    base = isObj(parsed) ? (parsed as Record<string, unknown>) : {};
+    // Valid YAML can still be a list, scalar, or null. Treating those as an
+    // empty profile would discard the existing document on this partial write.
+    if (!isMapping(parsed)) {
+      return Response.json({ error: "config/profile.yml must contain named settings, not a list or single value. Refusing to overwrite it." }, { status: 409 });
+    }
+    base = parsed as Record<string, unknown>;
   }
 
   const merged = deepMerge(base, proposed);

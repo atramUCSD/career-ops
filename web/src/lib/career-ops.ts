@@ -1,7 +1,21 @@
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
+import * as yaml from "js-yaml";
 import { atomicWrite } from "@/lib/core/safe-write";
+import { resolveDataRoot } from "@/lib/core/data-root.mjs";
 import { parseApplications } from "@/lib/tracker-table.mjs";
+// Pipeline rows are parsed in a plain .mjs for the same reason as
+// tracker-table.mjs: so `node --test` can exercise the real parser.
+import { parseInbox, splitLines } from "@/lib/pipeline-table.mjs";
+// One definition of the `{n}-RESERVED.md` convention, shared with
+// run-cli-support.mjs — see report-files.mjs for why it lives there.
+import { isReservedReportFile } from "@/lib/report-files.mjs";
+import { resolvePdfIndexPath } from "@/lib/core/pdf-index";
+// Pure parser, no I/O — shared with the apply flow's CV resolver so the two
+// don't drift into two different definitions of "which report does this
+// index row belong to" (#2599, #2008 review).
+import { pdfIndexEntryForReport } from "@/lib/apply/cv-selection.mjs";
 
 /**
  * Resolve the career-ops "home" — the directory holding the user's sibling
@@ -11,9 +25,119 @@ import { parseApplications } from "@/lib/tracker-table.mjs";
  * checkout — see web/.env.local.
  */
 export function careerOpsRoot(): string {
-  const env = process.env.CAREER_OPS_ROOT?.trim();
-  if (env) return env;
-  return path.resolve(process.cwd(), "..");
+  // `process.cwd()` is `<core>/web` for `next dev`/`next start`, so its parent is
+  // the core checkout — the same directory `path-resolver.mjs` calls `__dirname`.
+  // resolveDataRoot() needs it explicitly because relative env values and marker
+  // contents resolve against it; see data-root.mjs for why that base matters.
+  const coreRoot = path.resolve(process.cwd(), "..");
+  return resolveDataRoot(
+    coreRoot,
+    (p) => {
+      try {
+        return fs.readFileSync(p, "utf8");
+      } catch {
+        return null; // absent, unreadable, or a directory — all mean "no marker"
+      }
+    },
+    process.env,
+    path.resolve,
+    path.join,
+  );
+}
+
+// ── Profiles ────────────────────────────────────────────────────────────────
+// careerOpsRoot() is the CODE: scripts, modes/, templates/. userRoot() is whose
+// DATA the app is showing: the owner's (the checkout itself) or a profile under
+// profiles/<name>/, the same user layer `node profiles.mjs` scaffolds.
+//
+// The selection lives in one server-side file, not a cookie. cookies() is async
+// in this Next, and a cookie would push an await into every sync reader below.
+// ponytail: one active profile per server, so every tab follows a switch. Move
+// to a cookie plus threaded roots if two people ever share one running app.
+
+// Mirrors profiles.mjs validName: a name becomes a directory, so reject, never sanitize.
+const PROFILE_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/i;
+
+function profilesDir(): string {
+  const env = process.env.CAREER_OPS_PROFILES_DIR?.trim();
+  return env ? path.resolve(env) : path.join(careerOpsRoot(), "profiles");
+}
+
+function activeProfileFile(): string {
+  return path.join(careerOpsRoot(), ".career-ops-web", "active-profile");
+}
+
+/** The selected profile's name, or null for the owner. A stale or tampered selection falls back to the owner. */
+export function activeProfile(): string | null {
+  let name: string;
+  try {
+    name = fs.readFileSync(activeProfileFile(), "utf8").trim();
+  } catch {
+    return null;
+  }
+  if (!PROFILE_NAME.test(name) || name === "." || name === "..") return null;
+  return fs.existsSync(path.join(profilesDir(), name)) ? name : null;
+}
+
+export function setActiveProfile(name: string | null): void {
+  if (name !== null && (!PROFILE_NAME.test(name) || !fs.existsSync(path.join(profilesDir(), name)))) {
+    throw new Error(`no such profile "${name}"`);
+  }
+  atomicWrite(activeProfileFile(), name ?? "");
+}
+
+/** Where the active user layer lives: cv.md, config/, data/, reports/, output/. */
+export function userRoot(): string {
+  const name = activeProfile();
+  return name ? path.join(profilesDir(), name) : careerOpsRoot();
+}
+
+type ProfilesModule = {
+  profileEnv: (dir: string) => Record<string, string>;
+  listProfiles: () => string[];
+  describe: (name: string) => { name: string; cv: boolean; profile: boolean; portals: boolean; pending: number };
+  scaffold: (name: string, opts?: { root?: string }) => { dir: string; created: string[] };
+  validName: (name: string) => boolean;
+};
+
+/** The core's profiles.mjs, so the override list has one definition. */
+export async function profilesModule(): Promise<ProfilesModule> {
+  const file = path.join(careerOpsRoot(), "profiles.mjs");
+  return import(/* webpackIgnore: true */ pathToFileURL(file).href);
+}
+
+/**
+ * Environment for a spawned core script: the active profile's CAREER_OPS_*
+ * overrides on top of this process's env. The owner gets process.env
+ * unchanged, so an owner run behaves exactly as it did before profiles.
+ */
+export async function spawnEnv(extra: Record<string, string> = {}): Promise<NodeJS.ProcessEnv> {
+  const name = activeProfile();
+  const overrides = name ? (await profilesModule()).profileEnv(path.join(profilesDir(), name)) : {};
+  return { ...process.env, ...overrides, ...extra };
+}
+
+/**
+ * Prompt preamble for an agent CLI. Its cwd has to stay the code root (it
+ * reads AGENTS.md and modes/ from there), and the modes name user files
+ * relative to that root, so a profile run has to be told where its files are.
+ * Empty for the owner.
+ */
+export function profilePreamble(): string {
+  const name = activeProfile();
+  if (!name) return "";
+  const rel = path.relative(careerOpsRoot(), path.join(profilesDir(), name)).split(path.sep).join("/");
+  return [
+    `ACTIVE PROFILE: ${name}. This run is for ${name}, not the repository owner.`,
+    `Every user-layer path in these instructions and in modes/ resolves under ${rel}/:`,
+    `read ${rel}/cv.md for cv.md, ${rel}/config/profile.yml for config/profile.yml,`,
+    `${rel}/modes/_profile.md for modes/_profile.md, and likewise for article-digest.md,`,
+    `portals.yml, data/, reports/, output/, jds/ and interview-prep/.`,
+    `Never read or write the owner's copies at the repository root. System files`,
+    `(modes/*.md other than _profile.md, templates/, *.mjs) stay at the root.`,
+    "",
+    "",
+  ].join("\n");
 }
 
 /**
@@ -23,7 +147,9 @@ export function careerOpsRoot(): string {
  * as module imports and fails the production build otherwise.
  */
 export function rootScript(nameNoExt: string): string {
-  return path.join(careerOpsRoot(), `${nameNoExt}.mjs`);
+  // The core checkout is selected at runtime and must not be bundled into the
+  // web server output when Turbopack sees this dynamic script path.
+  return path.join(/* turbopackIgnore: true */ careerOpsRoot(), `${nameNoExt}.mjs`);
 }
 
 // Feature-detect the core's `tracker.mjs delete --num` row-delete (#1200) by probing
@@ -39,7 +165,7 @@ export function trackerCanDelete(): boolean {
 
 function read(rel: string): string | null {
   try {
-    return fs.readFileSync(path.join(careerOpsRoot(), rel), "utf8");
+    return fs.readFileSync(path.join(userRoot(), rel), "utf8");
   } catch {
     return null;
   }
@@ -47,51 +173,12 @@ function read(rel: string): string | null {
 
 export type InboxJob = { url: string; company: string; role: string; location?: string; compensation?: string; done: boolean; postedAt?: string };
 
-/** A pipeline-row segment like `posted: 2026-07-14`, `trust: 62 stale` or
- *  `note: …` — the core appends these LABELED segments after whatever
- *  positional shape a row has (3/4/5 columns), so a naive positional reader
- *  would misread them as location/compensation on short rows. Any
- *  `word:`-prefixed segment is treated as labeled (forward-compatible with
- *  labels the core hasn't invented yet). */
-const LABELED_SEGMENT = /^([a-z][a-z_-]*):\s*(.*)$/i;
-
-/** Parse data/pipeline.md — `- [ ] URL | Company | Role [| Location [| Compensation]] [| label: …]*`.
- *  Positional split for the first columns (the optional 4th `location` #1015
- *  and 5th `compensation` #1017 must NOT bleed into `role`); labeled segments
- *  (posted:/trust:/note:/…) are filtered out of positional assignment wherever
- *  they appear and surfaced when useful (posted: → postedAt). Unknown labels
- *  and further trailing columns are ignored gracefully. */
+/** Parse data/pipeline.md. The row grammar and its labeled-segment handling
+ *  live in pipeline-table.mjs — see there for the column rules (#1015, #1017). */
 export function readInbox(): InboxJob[] {
   const md = read("data/pipeline.md");
   if (!md) return [];
-  const jobs: InboxJob[] = [];
-  for (const line of md.split("\n")) {
-    const m = line.match(/^\s*-\s*\[([ xX])\]\s*(.+)$/);
-    if (!m) continue;
-    const all = m[2].split("|").map((s) => s.trim());
-    const labels = new Map<string, string>();
-    const parts: string[] = [];
-    for (const [i, seg] of all.entries()) {
-      // the URL cell can contain a colon-y value but is always position 0
-      const lm = i >= 3 ? seg.match(LABELED_SEGMENT) : null;
-      if (lm) labels.set(lm[1].toLowerCase(), lm[2].trim());
-      else parts.push(seg);
-    }
-    if (parts.length < 3 || !parts[0]) continue; // need at least url | company | role
-    const posted = labels.get("posted");
-    jobs.push({
-      done: m[1].toLowerCase() === "x",
-      url: parts[0],
-      company: parts[1],
-      role: parts[2],
-      location: parts[3] || undefined, // optional 4th column (#1015)
-      compensation: parts[4] || undefined, // optional 5th column (#1017); 6th+ ignored
-      // the row's own posting date (scan.mjs `posted:` label) — a more direct
-      // freshness signal than the scan-history join, which stays as fallback
-      postedAt: posted && /^\d{4}-\d{2}-\d{2}$/.test(posted) ? posted : undefined,
-    });
-  }
-  return jobs;
+  return parseInbox(md);
 }
 
 /**
@@ -106,7 +193,7 @@ export function readScanDates(): Map<string, string> {
   const tsv = read("data/scan-history.tsv");
   const dates = new Map<string, string>();
   if (!tsv) return dates;
-  const lines = tsv.split("\n");
+  const lines = splitLines(tsv);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (!line || (i === 0 && line.startsWith("url\t"))) continue; // skip header
@@ -147,6 +234,76 @@ export function readApplications(): Application[] {
   return parseApplications(md, careerOpsRoot());
 }
 
+/** Resolve the report-number cell in data/pdf-index.tsv for a given report id.
+ *  Digits-only, full-string match — parseInt alone would let "12abc" resolve to
+ *  report 12, matching the wrong index row. Returns null for anything malformed,
+ *  so callers never have to re-validate. */
+function pdfIndexTarget(n: string): number | null {
+  const trimmed = n.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  return Number.parseInt(trimmed, 10);
+}
+
+export async function pdfReadyForReport(n: string): Promise<boolean> {
+  return (await pdfPathForReport(n)) !== null;
+}
+
+export type PdfPathForReportResult =
+  | { status: "found"; path: string }
+  | { status: "not-found" }
+  | { status: "invalid" }
+  | { status: "rejected" };
+
+/** The exact PDF path indexed for this report number, or null if none exists
+ *  (malformed id, no index row, the indexed file is missing on disk, or the
+ *  index resolved outside the workspace). Lets the viewer route serve the
+ *  SPECIFIC report's PDF instead of guessing the newest file for the company —
+ *  two applications at the same company have two different tailored CVs.
+ *
+ *  The manifest path comes from the core's resolvePdfIndexPath (ACL, honors
+ *  CAREER_OPS_PDF_INDEX) rather than a hardcoded "data/pdf-index.tsv" literal
+ *  — the exact class of bug that #2471 fixed in the core, once, for every
+ *  reader. The parsing itself is pdfIndexEntryForReport, a pure function
+ *  shared with the apply flow's own CV resolver (cv-selection.mjs) so there
+ *  is one definition of "which row matches this report", not two. */
+export async function pdfPathStatusForReport(n: string): Promise<PdfPathForReportResult> {
+  const target = pdfIndexTarget(n);
+  if (target === null) return { status: "invalid" };
+  const indexPath = await resolvePdfIndexPath();
+  if (!indexPath) return { status: "not-found" };
+  let tsv: string;
+  try {
+    tsv = fs.readFileSync(indexPath, "utf8");
+  } catch {
+    return { status: "not-found" };
+  }
+  const root = userRoot();
+  const entry = pdfIndexEntryForReport(tsv, target);
+  if (!entry.found) return { status: "not-found" };
+  if (!entry.path) return { status: "rejected" };
+  // The manifest is a user-layer file (generate-pdf.mjs writes it, but nothing
+  // stops a hand edit) turned into a filesystem read that this route then
+  // serves — the path must be contained BY CONSTRUCTION, not by trusting the
+  // writer. Rows are written relative to the WORKSPACE root (userRoot()),
+  // not to the manifest's own data/ directory — same base the pre-ACL version
+  // of this function used — and must stay under the project's output/ tree.
+  const abs = path.resolve(root, entry.path);
+  const outputDir = path.resolve(root, "output");
+  if (!abs.startsWith(outputDir + path.sep)) return { status: "rejected" };
+  // Scoped to outputDir, not the broader root: the lexical startsWith check
+  // above only rejects an unresolved path outside output/, but a symlink
+  // PLACED under output/ can still resolve to somewhere else inside root
+  // (e.g. reports/) and pass a root-scoped realpath check — serving a file
+  // this route was never meant to expose.
+  if (!isRegularContainedFile(abs, outputDir)) return { status: "rejected" };
+  return { status: "found", path: abs };
+}
+
+export async function pdfPathForReport(n: string): Promise<string | null> {
+  const result = await pdfPathStatusForReport(n);
+  return result.status === "found" ? result.path : null;
+}
+
 /**
  * Server-side lifecycle of the user's setup — mirrors the prerequisite list that
  * doctor.mjs uses (cv.md, config/profile.yml, modes/_profile.md, portals.yml), by
@@ -166,7 +323,7 @@ export type LifecyclePhase = "first-run" | "in-between" | "established";
  *   - established → all 4 prereqs present.
  * onboardingNeeded mirrors doctor.mjs: true if ANY prereq is missing → show banner.
  */
-export function doctorState(): {
+export function doctorState(snapshot?: Pick<PipelineSummary, "applications" | "inbox">): {
   phase: LifecyclePhase;
   onboardingNeeded: boolean;
   missing: string[];
@@ -175,7 +332,7 @@ export function doctorState(): {
 } {
   const has = (rel: string) => {
     try {
-      return fs.existsSync(path.join(careerOpsRoot(), rel));
+      return fs.existsSync(path.join(userRoot(), rel));
     } catch {
       return false;
     }
@@ -188,7 +345,10 @@ export function doctorState(): {
   ];
   const missing = prereqs.filter(([rel]) => !has(rel)).map(([, label]) => label);
   const hasCv = has("cv.md");
-  const hasData = readApplications().length > 0 || readInbox().some((j) => !j.done);
+  // Home already reads these files. Reuse that snapshot so its setup check
+  // neither parses the tracker twice nor disagrees with the rendered queue.
+  const hasData = (snapshot?.applications ?? readApplications()).length > 0 ||
+    (snapshot?.inbox ?? readInbox()).some((j) => !j.done);
   const onboardingNeeded = missing.length > 0;
   const phase: LifecyclePhase = !hasCv && !hasData ? "first-run" : onboardingNeeded ? "in-between" : "established";
   return { phase, onboardingNeeded, missing, hasCv, hasData };
@@ -202,7 +362,7 @@ export type PipelineSummary = {
 };
 
 export function pipelineSummary(): PipelineSummary {
-  const root = careerOpsRoot();
+  const root = userRoot();
   const scanDates = readScanDates();
   return {
     root,
@@ -222,17 +382,30 @@ export type ReportData = { content: string; file: string };
  *  resolving only by leading filename number misses those. Links are
  *  normalized relative to the tracker file's directory (see #760). Falls back
  *  to the filename scan (reports/{n}-{slug}-{date}.md, possibly zero-padded)
- *  for rows without a parseable link. */
+ *  for rows without a parseable link.
+ *
+ *  Both the linked lookup and the fallback scan skip `{n}-RESERVED.md`
+ *  placeholder files.
+ *  `reserve-report-num.mjs` writes an empty `NNN-RESERVED.md` sentinel to
+ *  claim a report number before a worker has actually written the report;
+ *  it's normally deleted once the real report lands (or GC'd after 4h if
+ *  abandoned). But "RESERVED" sorts alphabetically before nearly every real
+ *  slug (company names start with lowercase/uppercase letters after the
+ *  number-dash, "R" often lands mid-alphabet or earlier), so if a sentinel
+ *  outlives its report — e.g. a worker was driven directly instead of
+ *  through the orchestrator that owns cleanup — `.find()` could return the
+ *  empty sentinel instead of the real report, making the report body and the
+ *  Apply/PDF-ready checks disappear. */
 export function findReportFile(n: string): string | null {
   const target = parseInt(n, 10);
   if (Number.isNaN(target)) return null;
-  const root = careerOpsRoot();
+  const root = userRoot();
   const app = readApplications().find((a) => parseInt(a.n, 10) === target);
   const linked = app?.report.match(/\]\(([^)]+)\)/)?.[1];
   if (linked) {
     const p = path.resolve(root, "data", linked);
     // Containment: a hand-edited link must not resolve outside the project.
-    if (p.endsWith(".md") && containedRealpath(p, root)) return p;
+    if (p.endsWith(".md") && !isReservedReportFile(p) && containedRealpath(p, root)) return p;
   }
   let files: string[];
   try {
@@ -240,7 +413,9 @@ export function findReportFile(n: string): string | null {
   } catch {
     return null;
   }
-  const match = files.find((f) => f.endsWith(".md") && parseInt(f, 10) === target);
+  const match = files.find(
+    (f) => f.endsWith(".md") && !isReservedReportFile(f) && parseInt(f, 10) === target,
+  );
   if (!match) return null;
   const p = path.join(root, "reports", match);
   return containedRealpath(p, root) ? p : null;
@@ -256,11 +431,23 @@ function containedRealpath(p: string, root: string): boolean {
   }
 }
 
+export function isRegularContainedFile(p: string, root: string): boolean {
+  try {
+    return fs.statSync(p).isFile() && containedRealpath(p, root);
+  } catch {
+    return false;
+  }
+}
+
 export function readReport(n: string): ReportData | null {
   const file = findReportFile(n);
   if (!file) return null;
   try {
-    return { content: fs.readFileSync(file, "utf8"), file: path.basename(file) };
+    // Reports live in the user's runtime checkout, outside the web build graph.
+    return {
+      content: fs.readFileSync(/* turbopackIgnore: true */ file, "utf8"),
+      file: path.basename(file),
+    };
   } catch {
     return null;
   }
@@ -274,7 +461,7 @@ export function findApplication(n: string): Application | null {
  *  web assistant learns go HERE (single source of truth) inside a managed marker
  *  block — so the CLI sees them too. No web-only memory store (that would drift). */
 export function profilePath(): string {
-  return path.join(careerOpsRoot(), "modes", "_profile.md");
+  return path.join(userRoot(), "modes", "_profile.md");
 }
 
 const NOTES_START = "<!-- co-web-notes:start -->";
@@ -293,7 +480,7 @@ export function readMemory(): string {
     /* no _profile.md yet */
   }
   try {
-    return fs.readFileSync(path.join(careerOpsRoot(), ".career-ops-web", "memory.md"), "utf8").trim();
+    return fs.readFileSync(path.join(userRoot(), ".career-ops-web", "memory.md"), "utf8").trim();
   } catch {
     return "";
   }
@@ -328,4 +515,104 @@ export function rememberFact(fact: string): "ok" | "deduped" | "error" {
   } catch {
     return "error";
   }
+}
+
+
+/**
+ * AGENTS.md's two language axes, resolved from config/profile.yml.
+ *
+ * `language.output` governs human-facing prose; `language.modes_dir` selects the
+ * market vocabulary and local evaluation rules. They compose freely — English
+ * output with DACH vocabulary is a valid configuration — so they are returned
+ * as separate fields rather than collapsed into one "locale".
+ */
+export type LanguageConfig = {
+  /** language.output — prose language for user-facing text. Default "en". */
+  output: string;
+  /** language.modes_dir, normalized without a trailing slash. Default "modes". */
+  modesDir: string;
+  /** The market's evaluation-mode file, repo-root-relative. Default "modes/oferta.md". */
+  evalModeFile: string;
+};
+
+/**
+ * A `modes_dir` value we are willing to turn into a filesystem path.
+ *
+ * profile.yml is user-editable and this value is used to read a directory and
+ * to build a path handed to an agent, so it is validated rather than trusted:
+ * a crafted `modes/../../etc` must not escape the checkout. Rejecting falls
+ * back to the default, which is always correct, never dangerous.
+ */
+const MODES_DIR_RE = /^modes(?:\/[A-Za-z0-9_-]+)?$/;
+
+/**
+ * Every localized evaluation mode's title line states the block range it
+ * produces — "Valutazione completa A-F", "完整的 A-G 维度评估", "전체 평가 A-G".
+ * Older translations say A-F and newer ones A-G (Block G, posting legitimacy),
+ * so both count; the dash may be ASCII or typographic.
+ *
+ * This is what identifies the evaluation mode inside a market directory, in
+ * preference to a hardcoded {dir → filename} map. A map would have to list all
+ * 18 market directories that exist today and would silently go stale the next
+ * time a translation lands — the exact class of bug this function is fixing.
+ * Verified against every market directory in the repo: each contains exactly
+ * one file whose title line matches, and no apply-mode collides.
+ */
+const EVAL_MODE_TITLE_RE = /A[-\u2010-\u2015][FG]/;
+
+const DEFAULT_EVAL_MODE = "modes/oferta.md";
+
+/**
+ * Find the evaluation mode inside a market directory. Returns the default when
+ * the directory is unreadable or nothing in it looks like an evaluation mode —
+ * a wrong-but-working English evaluation beats a run that cannot start.
+ */
+function resolveEvalModeFile(root: string, modesDir: string): string {
+  if (modesDir === "modes") return DEFAULT_EVAL_MODE;
+  let names: string[];
+  try {
+    names = fs.readdirSync(path.join(root, modesDir));
+  } catch {
+    return DEFAULT_EVAL_MODE;
+  }
+  for (const name of names.sort()) {
+    // `_shared.md`, `_profile.md` and friends are includes, never entry points.
+    if (!name.endsWith(".md") || name.startsWith("_") || name === "README.md") continue;
+    try {
+      const first = fs.readFileSync(path.join(root, modesDir, name), "utf8").split("\n", 1)[0] ?? "";
+      if (EVAL_MODE_TITLE_RE.test(first)) return `${modesDir}/${name}`;
+    } catch {
+      /* unreadable file — keep looking */
+    }
+  }
+  return DEFAULT_EVAL_MODE;
+}
+
+/**
+ * Read the language configuration. Never throws: a missing or malformed
+ * profile.yml yields the English/global default, because a broken config
+ * should degrade the market vocabulary, not block every evaluation.
+ */
+export function readLanguageConfig(): LanguageConfig {
+  // profile.yml is user layer; the modes it points at are code.
+  const root = careerOpsRoot();
+  let modesDir = "modes";
+  let output = "en";
+  try {
+    const parsed = yaml.load(fs.readFileSync(path.join(userRoot(), "config", "profile.yml"), "utf8"));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const language = (parsed as Record<string, unknown>).language;
+      if (language && typeof language === "object" && !Array.isArray(language)) {
+        const l = language as Record<string, unknown>;
+        if (typeof l.output === "string" && l.output.trim()) output = l.output.trim();
+        if (typeof l.modes_dir === "string" && l.modes_dir.trim()) {
+          const candidate = l.modes_dir.trim().replace(/\/+$/, "");
+          if (MODES_DIR_RE.test(candidate)) modesDir = candidate;
+        }
+      }
+    }
+  } catch {
+    /* no profile yet, or malformed — defaults are correct */
+  }
+  return { output, modesDir, evalModeFile: resolveEvalModeFile(root, modesDir) };
 }

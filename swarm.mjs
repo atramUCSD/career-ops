@@ -34,12 +34,14 @@ import { existsSync, readFileSync, writeFileSync, mkdtempSync } from 'fs';
 import { spawnSync } from 'child_process';
 import { join, dirname } from 'path';
 import { tmpdir } from 'os';
-import { fileURLToPath, pathToFileURL } from 'url';
+import { fileURLToPath } from 'url';
 import { flagValue, hasFlag } from './lib/cli-flags.mjs';
 import { loadLanes, laneForTitle, checkLaneRegistration } from './lanes.mjs';
+import { isMainModule } from './lib/is-main-module.mjs';
 
+import { getCareerOpsRoot } from './path-resolver.mjs';
 const ROOT = dirname(fileURLToPath(import.meta.url));
-const PIPELINE_PATH = process.env.CAREER_OPS_PIPELINE || join(ROOT, 'data', 'pipeline.md');
+const PIPELINE_PATH = process.env.CAREER_OPS_PIPELINE || join(getCareerOpsRoot(), 'data', 'pipeline.md');
 
 const PENDING_ITEM_RE = /^-\s\[ \]\s+(https?:\/\/\S+)(.*)$/;
 const PROCESSED_RE = /^##\s+(Procesadas|Processed)\s*$/i;
@@ -254,6 +256,6 @@ async function main() {
   console.log('\nPhase 1 stops here: nothing is evaluated, nothing is submitted.');
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
+if (isMainModule(import.meta.url)) {
   main().catch((err) => { console.error('Fatal:', err.message); process.exit(1); });
 }

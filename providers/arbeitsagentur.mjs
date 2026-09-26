@@ -1,6 +1,8 @@
 // @ts-check
 /** @typedef {import('./_types.js').Provider} Provider */
 
+import { safeEncodeURIComponent } from './_safe-url.mjs';
+
 // Arbeitsagentur (Bundesagentur für Arbeit) provider — hits the public Jobsuche
 // REST API (the same endpoint arbeitsagentur.de uses), so it lives in-process
 // alongside the other JSON-API providers (greenhouse/ashby shape). One or more
@@ -30,8 +32,10 @@
 //       remoteMaxPages: 10      # 'filter' mode: max pages to paginate (size each); default 1
 //     enabled: true
 
-// v6. The v4 search and detail endpoints both 404 as of 2026-08-04 (#2494);
-// v5 does too. v6 keeps every query parameter this provider sends
+// v6. The v4 search and detail endpoints both 404'd as of 2026-08-04 (#2494);
+// v5 does too. The v4 DETAIL endpoint has since come back (probed 2026-08-28)
+// and backs the per-job liveness rung in liveness-api.mjs; search stays here on
+// v6. v6 keeps every query parameter this provider sends
 // (was/wo/umkreis/veroeffentlichtseit/angebotsart/homeoffice/page/size) but
 // renames the response fields — see normalizeJob().
 const API_URL = 'https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v6/jobs';
@@ -109,9 +113,14 @@ export function normalizeJob(job) {
   const refnr = job && job.referenznummer;
   const title = String((job && job.stellenangebotsTitel) || '').trim();
   if (!refnr || !title) return null;
+  // A lone surrogate in refnr would throw URIError out of encodeURIComponent and
+  // abort the per-job loop in fetch(); refnr is also the dedup key (byRef), so a
+  // degraded-but-kept value would collide malformed postings. Drop this one.
+  const encodedRefnr = safeEncodeURIComponent(refnr);
+  if (encodedRefnr === null) return null;
   return {
     title,
-    url: DETAIL_BASE + encodeURIComponent(String(refnr)),
+    url: DETAIL_BASE + encodedRefnr,
     company: String((job && job.firma) || '').trim(),
     location: buildLocation(job && job.stellenlokationen),
     refnr: String(refnr),

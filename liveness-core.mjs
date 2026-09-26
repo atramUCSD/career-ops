@@ -30,7 +30,20 @@ const HARD_EXPIRED_PATTERNS = [
   /job posting has expired/i,
   /no longer accepting applications/i,
   /this (position|role|job) (is )?no longer/i,
-  /this job (listing )?is closed/i,
+  // Widened from /this job (listing )?is closed/i: agentic-engineering-jobs.com
+  // writes "This role is closed" (111 of 111 uncertain postings measured in
+  // one run, #4175), and other boards use "position". The three nouns are
+  // interchangeable in JD copy.
+  //
+  // The trailing \b(?!-) is a compound-adjective guard. Without it,
+  // "This role is closed-loop control of the platform" (real prose in a
+  // control-systems JD, per santifer's review on #4194) matches the "is
+  // closed" fragment and returns expired. \b requires end-of-word after
+  // "closed"; (?!-) additionally rejects the hyphen case that \b alone
+  // allows (d->- is word->non-word, so \b matches; the lookahead is what
+  // catches closed-loop / closed-form / closed-source). "closedown" is
+  // rejected by \b alone (d->o is word->word).
+  /this (?:job|role|position)(?: listing)? is closed\b(?!-)/i,
   /job (listing )?not found/i,
   /the page you are looking for doesn.t exist/i,
   /applications?\s+(?:(?:have|are|is)\s+)?closed/i,
@@ -51,6 +64,31 @@ const HARD_EXPIRED_PATTERNS = [
 const LISTING_PAGE_PATTERNS = [
   /\d+\s+jobs?\s+found/i,
   /search for jobs page is loaded/i,
+];
+
+// Weak expiry signals: real when nothing else on the page contradicts them,
+// but too broad to override a visible apply control. The tier distinction
+// exists because HARD_EXPIRED_PATTERNS is checked BEFORE hasApplyControl —
+// anything placed there wins over a live Apply button on the page.
+//
+// /\bjob expired\b/i lived in HARD_EXPIRED_PATTERNS in the first cut of #4175
+// and false-fired on four live-posting shapes santifer measured in the #4194
+// review: a "Similar jobs" carousel with a "Job Expired" entry, a "Hide job
+// expired" filter chip, a footer FAQ asking "what happens when a job
+// expired?", and — before the closed-loop guard on the closed pattern above —
+// "This role is closed-loop control of the platform" prose. liveness-browser
+// hands classifyLiveness the whole page innerText plus same-origin iframe
+// text (liveness-browser.mjs:434), so those elements are in scope.
+//
+// Moved down here so the same phrase in a dead-page scenario (nodesk.co's
+// bare "JOB EXPIRED" banner, no apply control, per #4175) still fires. The
+// pre-existing comments on the 5xx and 429 guards spell out the underlying
+// rule: a false `expired` is written to scan-history as skipped_expired and
+// dedup-filters a real job out of every later scan (indefinitely, unless
+// scan_history.recheck_after_days is set), so this direction of error is
+// always the more expensive one.
+const SOFT_EXPIRED_PATTERNS = [
+  /\bjob expired\b/i,
 ];
 
 // Anti-bot interstitials (Cloudflare "Just a moment...", hCaptcha walls, etc.)
@@ -96,6 +134,11 @@ const APPLY_PATTERNS = [
   // Without this every live SmartRecruiters posting reads `no_apply_control` and
   // stays uncertain forever, which is why 32 of them were unprunable.
   /\bi'?m interested\b/i,
+  // Chinese MokaHR and Feishu Jobs detail pages use these exact control texts.
+  // Keep them narrow: bare “申请” appears in descriptive prose, while longer
+  // labels containing “投递” can be status/history controls rather than Apply.
+  /^申请职位$/,
+  /^投递$/,
 ];
 
 export const MIN_CONTENT_CHARS = 300;
@@ -134,7 +177,14 @@ export function classifyLiveness({ status = 0, requestedUrl = '', finalUrl = '',
   if (botChallenge) {
     return { result: 'uncertain', code: 'bot_challenge', reason: `anti-bot challenge: ${botChallenge.source}` };
   }
-  if (status === 403 || status === 503) {
+  // 429 belongs with 403/503: rate limiting is the board throttling US, never
+  // evidence the posting is gone. Its body is a short "Too Many Requests", well
+  // under MIN_CONTENT_CHARS, so without this it fell through to
+  // insufficient_content and read as `expired` — and an expired result is
+  // written to scan-history as skipped_expired, whose URL every later scan
+  // dedup-skips (indefinitely, unless scan_history.recheck_after_days is set).
+  // Scanning harder is exactly what earns a 429, so this compounds.
+  if (status === 403 || status === 429 || status === 503) {
     return { result: 'uncertain', code: 'access_blocked', reason: `HTTP ${status} (access blocked, likely anti-bot)` };
   }
   // Any other 5xx is a transient origin error (502/504 gateway hiccups, 500s
@@ -176,6 +226,13 @@ export function classifyLiveness({ status = 0, requestedUrl = '', finalUrl = '',
     return { result: 'active', code: 'apply_control_visible', reason: 'visible apply control detected' };
   }
 
+  // Weak expiry signals — see SOFT_EXPIRED_PATTERNS above for why these
+  // live below the apply-control check rather than in HARD_EXPIRED_PATTERNS.
+  const softExpired = firstMatch(SOFT_EXPIRED_PATTERNS, bodyText);
+  if (softExpired) {
+    return { result: 'expired', code: 'expired_body_soft', reason: `pattern matched: ${softExpired.source}` };
+  }
+
   const listingPage = firstMatch(LISTING_PAGE_PATTERNS, bodyText);
   if (listingPage) {
     return { result: 'expired', code: 'listing_page', reason: `pattern matched: ${listingPage.source}` };
@@ -198,4 +255,66 @@ export function classifyLiveness({ status = 0, requestedUrl = '', finalUrl = '',
   }
 
   return { result: 'uncertain', code: 'no_apply_control', reason: 'content present but no visible apply control found' };
+}
+
+// ── Full-list absence ────────────────────────────────────────────────────────
+// Some ATSs (Ashby, Pinpoint, Breezy, Rippling, Jobvite, Teamtailor, Personio)
+// return the tenant's ENTIRE board in one successful response. Against that
+// list, absence is proof of removal exactly as a per-job 404 is — but ONLY
+// against a fetch that actually succeeded. A failed or unreadable fetch is not
+// a full list, and absence from it proves nothing; reading it as expired is the
+// same false-expired failure every guard above defends against.
+
+// Compare a posting URL against a listed job URL: scheme, query, fragment and a
+// trailing slash never distinguish two postings on the same board, so drop them
+// and lowercase the rest (no board publishes two postings differing by case).
+function normalizeForListMatch(raw = '') {
+  let u;
+  try {
+    u = new URL(raw);
+  } catch {
+    return '';
+  }
+  return `${u.hostname}${u.pathname}`.toLowerCase().replace(/\/+$/, '');
+}
+
+export function classifyFullListAbsence({ fetchSucceeded = false, jobs, targetUrl = '', provider = 'board' } = {}) {
+  // The load-bearing branch, first: a fetch that did not succeed must NEVER
+  // read as removal.
+  if (!fetchSucceeded) {
+    return { result: 'uncertain', code: 'full_list_fetch_failed', reason: `${provider} board fetch failed — absence unproven, not expired` };
+  }
+  if (!Array.isArray(jobs)) {
+    return { result: 'uncertain', code: 'full_list_unreadable', reason: `${provider} board returned an unexpected shape — absence unproven` };
+  }
+  // Every provider parser launders an unreadable payload into [] (Pinpoint
+  // {"data": null}, an RSS feed with zero <item>s, non-array JSON), so an
+  // EMPTY successful list is indistinguishable from a broken one here —
+  // absence from it is not proof and must never classify expired.
+  if (jobs.length === 0) {
+    return { result: 'uncertain', code: 'full_list_empty', reason: `${provider} board fetch returned zero jobs — empty and unreadable are indistinguishable, absence unproven` };
+  }
+  const target = normalizeForListMatch(targetUrl);
+  // Branded job links (Teamtailor, Jobvite) and /application suffixes (Ashby)
+  // change the URL without changing the posting, so a shared job id token also
+  // counts as presence. Bounded, so id "12345" never matches inside "123456".
+  // jobIdToken yields only hex/digits/hyphens — no regex metacharacters.
+  const id = jobIdToken(targetUrl);
+  const idRe = id ? new RegExp(`(^|[^0-9a-z])${id}([^0-9a-z]|$)`, 'i') : null;
+  if (!target && !idRe) {
+    return { result: 'uncertain', code: 'full_list_no_target', reason: 'no usable posting URL or id to look for — absence unproven' };
+  }
+  for (const job of jobs) {
+    const jobUrl = typeof job?.url === 'string' ? job.url : '';
+    if (!jobUrl) continue;
+    const listed = normalizeForListMatch(jobUrl);
+    // A tracked URL may extend the listed one with a suffix path on the same
+    // posting (a Jobvite apply URL .../job/{id}/apply vs the feed's
+    // .../job/{id}), and Jobvite ids are alphanumeric so no id token can
+    // rescue the match — a target extending a listed URL also counts as present.
+    if ((target && listed && (listed === target || target.startsWith(listed + '/'))) || (idRe && idRe.test(jobUrl))) {
+      return { result: 'active', code: 'full_list_present', reason: `posting is listed on the ${provider} board (live)` };
+    }
+  }
+  return { result: 'expired', code: 'full_list_absent', reason: `full-list-absence rule: missing from a successful full ${provider} board fetch (${jobs.length} jobs listed)` };
 }

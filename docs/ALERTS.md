@@ -80,6 +80,40 @@ model in the loop would cost tokens and require Claude to be running.
 `CronCreate` stays the right tool if you later schedule the *evaluation* stage,
 which does need a model.
 
+## Two-tier cadence
+
+The daily alert is not the whole hydration story. Two scheduled tasks run, and
+they cover different ground:
+
+| Task | When | Script | Covers |
+|---|---|---|---|
+| `career-ops-alert` | daily 07:00 | `scripts/alert.cmd` | `swarm.mjs --scan` over the `portals.yml` company and board list, API-only liveness, prune, then the email |
+| `career-ops-sweep` | weekly, Sunday 03:00 | `scripts/sweep.cmd` | `scan-ats-full.mjs` reverse-ATS sweep, `scan-hn.mjs`, **full** liveness including the Playwright fallback, prune |
+
+```bat
+schtasks /create /tn "career-ops-sweep" /tr "C:path	ocareer-opsscriptssweep.cmd" /sc weekly /d SUN /st 03:00 /f
+```
+
+The deep pass is separate for two reasons. It is slow — `scan-ats-full.mjs`
+sweeps entire public ATS directories instead of a company list, and a full
+liveness check falls back to Playwright, which is sequential by design. And it
+is off the critical path — the daily run has an email to deliver at 07:00, and
+nothing in the deep pass changes what that email says today.
+
+Only the sweep reaches companies that are not in `portals.yml` at all. The
+daily scan can only find a posting at a company you already track; the reverse
+sweep is keyword-first across the whole Greenhouse/Lever/Ashby/Workday/iCIMS
+directory, so it is how a company enters the pipeline in the first place.
+
+One behavioural note that `sweep.cmd` encodes deliberately:
+`check-liveness.mjs` exits 1 whenever anything is expired or uncertain. That
+is its normal report, not a failure — a sweep that finds a dead posting has done
+its job. `swarm.mjs` already treats it that way, and `sweep.cmd` must too.
+A naive copy of `alert.cmd`'s `if errorlevel 1` guard after that stage would
+make every sweep log FAILED and skip the prune.
+
+Both tasks append to `data/alert-log.tsv`.
+
 ## Failure posture
 
 State is written **only** after Gmail returns 2xx. A failed send leaves every

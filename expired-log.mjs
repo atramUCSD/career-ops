@@ -36,12 +36,11 @@
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'fs';
-import { dirname, join } from 'path';
-import { fileURLToPath } from 'url';
+import { join } from 'path';
 import { withPipelineLock } from './pipeline-lock.mjs';
 
-const ROOT = dirname(fileURLToPath(import.meta.url));
-export const EXPIRED_LOG_PATH = join(ROOT, 'data', 'expired-jobs.md');
+import { getCareerOpsRoot } from './path-resolver.mjs';
+export const EXPIRED_LOG_PATH = join(getCareerOpsRoot(), 'data', 'expired-jobs.md');
 
 const COLUMNS = ['Removed (est.)', 'Company', 'Title', 'Posted', 'Source', 'Evidence', 'URL'];
 

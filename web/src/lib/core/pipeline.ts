@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { careerOpsRoot, rootScript } from "@/lib/career-ops";
+import { careerOpsRoot, rootScript, spawnEnv } from "@/lib/career-ops";
 import type { DiscoveredOffer } from "./scan";
 
 /**
@@ -18,7 +19,7 @@ import type { DiscoveredOffer } from "./scan";
  */
 export type AddResult = { added: number; error?: string };
 
-export function addOffersToPipeline(offers: DiscoveredOffer[]): Promise<AddResult> {
+export async function addOffersToPipeline(offers: DiscoveredOffer[]): Promise<AddResult> {
   const clean = offers
     .filter((o) => o && typeof o.url === "string" && /^https?:\/\//i.test(o.url))
     .map((o) => ({
@@ -40,17 +41,22 @@ export function addOffersToPipeline(offers: DiscoveredOffer[]): Promise<AddResul
   }
 
   const scanUrl = pathToFileURL(rootScript("scan")).href;
+  const localTodayUrl = pathToFileURL(path.join(careerOpsRoot(), "lib", "local-today.mjs")).href;
   const code = `
 import { appendToPipeline, appendToScanHistory } from ${JSON.stringify(scanUrl)};
+import { localToday } from ${JSON.stringify(localTodayUrl)};
 let input = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (d) => { input += d; });
-process.stdin.on("end", () => {
+process.stdin.on("end", async () => {
   try {
     const offers = JSON.parse(input);
-    const date = new Date().toISOString().slice(0, 10);
-    appendToPipeline(offers);
-    appendToScanHistory(offers, date, "added");
+    // LOCAL calendar day, not the UTC one — west of Greenwich, an evening
+    // add would otherwise stamp scan-history.tsv's first_seen a day ahead,
+    // opening scan.mjs's recheck/cooldown gate a day late for this row (#3070).
+    const date = localToday();
+    await appendToPipeline(offers);
+    await appendToScanHistory(offers, date, "added");
     process.stdout.write(JSON.stringify({ added: offers.length }));
   } catch (e) {
     process.stdout.write(JSON.stringify({ added: 0, error: String((e && e.message) || e) }));
@@ -58,10 +64,13 @@ process.stdin.on("end", () => {
 });
 `;
 
+  // scan.mjs resolves pipeline.md and scan-history.tsv from CAREER_OPS_* at load,
+  // so the profile overrides route the writes into the active user layer.
+  const env = await spawnEnv();
   return new Promise((resolve) => {
     const child = spawn(process.execPath, ["--input-type=module", "-e", code], {
       cwd: careerOpsRoot(),
-      env: process.env,
+      env,
     });
     let out = "";
     let err = "";

@@ -27,7 +27,7 @@
 import { existsSync, readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 import { compileKeyword, buildTitleFilter, matchedTitleKeywords } from './scan.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)));

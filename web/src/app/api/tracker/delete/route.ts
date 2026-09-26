@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { careerOpsRoot, rootScript, trackerCanDelete } from "@/lib/career-ops";
+import { careerOpsRoot, rootScript, spawnEnv, trackerCanDelete } from "@/lib/career-ops";
 import { isTrackerWriting } from "@/lib/core/run-registry";
 
 export const runtime = "nodejs";
@@ -59,11 +59,12 @@ export async function POST(req: Request) {
   if (dryRun) args.push("--dry-run");
 
   try {
+    const env = await spawnEnv();
     const result = await new Promise<{ code: number | null; err: string }>((resolve) => {
       let err = "";
       let child;
       try {
-        child = spawn(process.execPath, args, { cwd: careerOpsRoot(), env: process.env });
+        child = spawn(process.execPath, args, { cwd: careerOpsRoot(), env });
       } catch (e) {
         resolve({ code: 1, err: e instanceof Error ? e.message : "failed to start tracker.mjs" });
         return;

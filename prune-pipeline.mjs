@@ -37,7 +37,7 @@ import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { parseExpiredLog, EXPIRED_LOG_PATH } from './expired-log.mjs';
 import { normalizeUrlForDedup } from './scan.mjs';
 import { withPipelineLock } from './pipeline-lock.mjs';
-import { pathToFileURL } from 'url';
+import { isMainModule } from './lib/is-main-module.mjs';
 
 const PIPELINE_PATH = process.env.CAREER_OPS_PIPELINE || 'data/pipeline.md';
 
@@ -172,7 +172,7 @@ async function main() {
 }
 
 // Import-safe: only run the CLI when invoked directly, so tests can import planPrune.
-if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
+if (isMainModule(import.meta.url)) {
   main().catch((err) => {
     console.error('Fatal:', err.message);
     process.exit(1);

@@ -8,7 +8,7 @@
 // scan and be re-added days after it was confirmed dead.
 import { pass, fail } from './helpers.mjs';
 import { planPrune } from '../prune-pipeline.mjs';
-import { loadSeenUrls, normalizeUrlForDedup } from '../scan.mjs';
+import { loadSeenUrls, collectSeenUrls, normalizeUrlForDedup } from '../scan.mjs';
 
 console.log('\nprune-pipeline — keeping the pending list applicable');
 
@@ -105,9 +105,19 @@ planPrune('# P\n\nno sections here\n', dead, { today }).moved.length === 0
 // scan.mjs must treat the expired log as a permanent skip list. Otherwise
 // pruning a dead posting out of pipeline.md removes the only thing stopping the
 // next scan from re-adding it.
-const seenSrc = String(loadSeenUrls);
-seenSrc.includes('EXPIRED_LOG_PATH') && seenSrc.includes('parseExpiredLog')
-  ? pass('loadSeenUrls seeds dedup from the expired log')
+// Asserted through the collector rather than the file reader: collectSeenUrls
+// takes every source as text (#2382), so the expired log is checked the same
+// way the scanner consumes it, and loadSeenUrls is only asked whether it still
+// supplies that source at all.
+const seededSeen = collectSeenUrls({
+  expiredLogText: `| 2026-08-01 | Axon | SRE | 2026-07-01 | greenhouse | http 410 | ${DEAD} |\n`,
+}).seen;
+seededSeen.has(normalizeUrlForDedup(DEAD))
+  ? pass('collectSeenUrls seeds dedup from the expired log')
+  : fail('the expired log does not seed dedup — pruned dead URLs will come back');
+
+String(loadSeenUrls).includes('expiredLogText')
+  ? pass('loadSeenUrls reads the expired log into that source')
   : fail('loadSeenUrls does not read the expired log — pruned dead URLs will come back');
 
 normalizeUrlForDedup(`${DEAD}?gh_src=x`) === normalizeUrlForDedup(DEAD)

@@ -9,8 +9,11 @@ REM including the temp URL file check-liveness.mjs needs — this script does no
 REM reimplement them. swarm.mjs exits non-zero on lane registration drift, which
 REM is the right place for the chain to stop.
 REM
-REM Register with Task Scheduler (daily 07:00):
+REM Register with Task Scheduler (daily 07:00, repeating at 19:00):
 REM   schtasks /create /tn "career-ops-alert" /tr "%~f0" /sc daily /st 07:00 /f
+REM   schtasks /change /tn "career-ops-alert" /ri 720 /du 24:00
+REM A daily trigger repeating every 720 minutes for 24 hours fires morning and
+REM evening, which is one task rather than two competing for the same lock.
 REM Run it once by hand first, then read data\alert-log.tsv.
 
 setlocal enabledelayedexpansion
@@ -25,6 +28,36 @@ if errorlevel 1 goto :failed_triage
 
 call node build-artifact.mjs
 if errorlevel 1 goto :failed_artifact
+
+REM Each profile is a projection of the scan that just ran, so there is nothing
+REM to re-scrape — only a second render of the same corpus through someone
+REM else's targeting. A broken profile config must never take the mail down
+REM with it: the mail is the critical path and these pages are not, so a
+REM failure here logs a row and the chain continues.
+REM
+REM A profile with its own config\alerts.yml is fully separate instead: its own
+REM scan, pipeline, page and mail. Same fail-stop rule as the owner's chain — a
+REM failed scan skips that profile's mail so its postings are not marked seen.
+if exist profiles (
+  for /d %%p in (profiles\*) do (
+    if exist "%%p\config\alerts.yml" (
+      call node profiles.mjs run "%%~nxp" scan.mjs --since 45
+      if errorlevel 1 (
+        echo !TS!	profile %%~nxp scan	FAILED - mail skipped>> "%LOG%"
+      ) else (
+        call node build-artifact.mjs --root "%%p"
+        call node notify-email.mjs --root "%%p"
+        if errorlevel 1 (echo !TS!	profile %%~nxp alert	FAILED - continuing>> "%LOG%") else (echo !TS!	profile %%~nxp	ok>> "%LOG%")
+      )
+    ) else (
+      call node build-artifact.mjs --as-profile "%%~nxp" --out "output\pipeline-%%~nxp.html"
+      if errorlevel 1 echo !TS!	profile %%~nxp	FAILED - continuing>> "%LOG%"
+    )
+  )
+)
+
+call node build-hub.mjs
+if errorlevel 1 echo !TS!	hub	FAILED - continuing>> "%LOG%"
 
 call node notify-email.mjs
 if errorlevel 1 goto :failed_alert

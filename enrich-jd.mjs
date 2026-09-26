@@ -27,16 +27,17 @@
  *   node enrich-jd.mjs --self-test     extraction checks, no network
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { parsePendingRows } from './swarm.mjs';
 import { resolveAtsApi, greenhouseEmbed } from './liveness-api.mjs';
 import { DEFAULT_USER_AGENT } from './user-agent.mjs';
+import { isMainModule } from './lib/is-main-module.mjs';
 
-const ROOT = dirname(fileURLToPath(import.meta.url));
-const CACHE = join(ROOT, 'data/jd-cache');
-const FACTS = join(ROOT, 'data/jd-facts.tsv');
+import { getCareerOpsRoot } from './path-resolver.mjs';
+const DATA_ROOT = getCareerOpsRoot();
+const CACHE = join(DATA_ROOT, 'data/jd-cache');
+const FACTS = join(DATA_ROOT, 'data/jd-facts.tsv');
 const TIMEOUT_MS = 15_000;
 const CONCURRENCY = 6;
 
@@ -70,7 +71,7 @@ export function stripHtml(html) {
  * one stray mention of Figma in a benefits paragraph cannot manufacture a
  * designer role.
  */
-const HATS = {
+export const HATS = {
   designer: [
     /user research/i, /wireframe/i, /prototyp/i, /\bfigma\b/i, /usability/i,
     /design system/i, /\bwcag\b|section 508|accessib/i, /interaction design/i,
@@ -414,7 +415,7 @@ async function main() {
 
   mkdirSync(CACHE, { recursive: true });
   const facts = loadFacts();
-  const rows = parsePendingRows(readFileSync(join(ROOT, 'data/pipeline.md'), 'utf-8'))
+  const rows = parsePendingRows(readFileSync(join(DATA_ROOT, 'data/pipeline.md'), 'utf-8'))
     .filter(r => /^https?:/.test(r.url || ''));
   const isStale = url => staleBefore && (facts.get(url)?.fetched || '') < staleBefore;
   // A row recorded ok=0 is never retried on its own — a posting that could not
@@ -530,4 +531,4 @@ function selfTest() {
   if (!process.exitCode) console.log('enrich-jd self-test OK');
 }
 
-if (process.argv[1] && process.argv[1].endsWith('enrich-jd.mjs')) await main();
+if (isMainModule(import.meta.url)) await main();

@@ -27,14 +27,30 @@
  *   node notify-email.mjs --dry-run     # compose only; writes output/alert-preview.eml
  *   node notify-email.mjs               # compose and send
  *   node notify-email.mjs --to a@b.com  # override the configured recipient
+ *   node notify-email.mjs --root profiles/<name>  # alert for another user layer
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import yaml from 'js-yaml';
+import { fileURLToPath } from 'node:url';
+import * as yaml from 'js-yaml';
 import { buildModel } from './build-artifact.mjs';
 import { BANDS } from './callback-score.mjs';
 import { sendRaw } from './gmail-send.mjs';
+import { isMainModule } from './lib/is-main-module.mjs';
+
+// The scheduled path (scripts/alert.cmd under Task Scheduler) runs with a
+// minimal environment and sources nothing, so without this the three GMAIL_*
+// variables never reach gmail-send.mjs and every unattended send fails on
+// "missing credentials". Same idiom, and same optional-dependency posture, as
+// scan.mjs.
+try {
+  const { config } = await import('dotenv');
+  // quiet: the startup banner would otherwise land on stdout, which --dry-run
+  // and the seed path keep clean.
+  config({ quiet: true });
+} catch {
+  // dotenv is optional — fall back to whatever is already in process.env.
+}
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const STATE_PATH = 'data/alert-state.json';
@@ -249,17 +265,21 @@ export function composeRun({ root = ROOT, now = new Date(), cfg = null, model = 
 async function main(argv) {
   const dry = argv.includes('--dry-run');
   const toIdx = argv.indexOf('--to');
-  const cfg = loadConfig();
+  // Same flag as build-artifact.mjs: config, state, pipeline and attachment all
+  // move to that user layer, so a profile gets its own recipient and its own diff.
+  const rootIdx = argv.indexOf('--root');
+  const root = rootIdx >= 0 ? resolve(argv[rootIdx + 1]) : ROOT;
+  const cfg = loadConfig(root);
   if (toIdx >= 0) cfg.to = argv[toIdx + 1];
 
-  const run = composeRun({ cfg });
+  const run = composeRun({ root, cfg });
   const { fresh, upgraded, retired } = run.counts;
 
   // First run against an established pipeline is not an alert, it is a
   // backlog: 221 postings the reader already knows about. Seeding marks the
   // current state as known so the first scheduled mail is a real diff.
   if (argv.includes('--seed')) {
-    saveState(run.nextState);
+    saveState(run.nextState, root);
     console.log(`  seeded — ${run.nextState.seen.length} postings marked known, nothing sent`);
     return;
   }
@@ -270,7 +290,7 @@ async function main(argv) {
     return;
   }
   if (dry) {
-    const out = join(ROOT, 'output', 'alert-preview.eml');
+    const out = join(root, 'output', 'alert-preview.eml');
     mkdirSync(dirname(out), { recursive: true });
     writeFileSync(out, run.mime);
     console.log(`  dry run — ${resolve(out)} (${Math.round(run.mime.length / 1024)}KB), nothing sent, state untouched`);
@@ -283,10 +303,10 @@ async function main(argv) {
   }
   const id = await sendRaw(toBase64Url(run.mime));
   // Only now. A send that threw leaves every posting unseen for the next run.
-  saveState(run.nextState);
+  saveState(run.nextState, root);
   console.log(`  sent to ${run.to}${id ? ` (${id})` : ''}`);
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
+if (isMainModule(import.meta.url)) {
   main(process.argv.slice(2)).catch(e => { console.error(`  ${e.message}`); process.exitCode = 1; });
 }
