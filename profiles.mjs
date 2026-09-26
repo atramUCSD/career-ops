@@ -81,6 +81,10 @@ export function profileDir(name) {
 export function profileEnv(dir) {
   const at = (...p) => join(dir, ...p);
   return {
+    // The data root (path-resolver.mjs). Covers every user-layer path a script
+    // resolves without its own override; the per-file overrides below remain
+    // for scripts that predate the resolver.
+    CAREER_OPS_DATA_DIR: dir,
     CAREER_OPS_CV: at('cv.md'),
     CAREER_OPS_ARTICLE_DIGEST: at('article-digest.md'),
     CAREER_OPS_PROFILE: at('config', 'profile.yml'),

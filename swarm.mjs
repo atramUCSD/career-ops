@@ -39,8 +39,9 @@ import { flagValue, hasFlag } from './lib/cli-flags.mjs';
 import { loadLanes, laneForTitle, checkLaneRegistration } from './lanes.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
 
+import { getCareerOpsRoot } from './path-resolver.mjs';
 const ROOT = dirname(fileURLToPath(import.meta.url));
-const PIPELINE_PATH = process.env.CAREER_OPS_PIPELINE || join(ROOT, 'data', 'pipeline.md');
+const PIPELINE_PATH = process.env.CAREER_OPS_PIPELINE || join(getCareerOpsRoot(), 'data', 'pipeline.md');
 
 const PENDING_ITEM_RE = /^-\s\[ \]\s+(https?:\/\/\S+)(.*)$/;
 const PROCESSED_RE = /^##\s+(Procesadas|Processed)\s*$/i;

@@ -41,6 +41,7 @@
 
 import { decodeEntities } from './_html-entities.mjs';
 import { resolveProfileKeywords } from './_profile-keywords.mjs';
+import { sleep } from './_http.mjs';
 
 const SEARCH_HOST = 'www.linkedin.com';
 const SEARCH_PATH = '/jobs-guest/jobs/api/seeMoreJobPostings/search';
@@ -180,7 +181,7 @@ export default {
     const maxJobs = resolveCap(entry?.max_jobs, DEFAULT_MAX_JOBS);
     const maxPages = resolveCap(entry?.max_pages, MAX_PAGES, MAX_PAGES);
     const pageCap = ctx.maxPages && ctx.maxPages > 0 ? Math.min(ctx.maxPages, maxPages) : maxPages;
-    const wait = (ms) => (ctx.sleep ? ctx.sleep(ms) : new Promise((r) => setTimeout(r, ms)));
+    const wait = (ms) => sleep(ms, ctx);
 
     const jobs = [];
     const seen = new Set();

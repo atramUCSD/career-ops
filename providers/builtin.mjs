@@ -1,299 +1,558 @@
 // @ts-check
 /** @typedef {import('./_types.js').Provider} Provider */
 
+// Built In provider — board-wide aggregator across the many employers that
+// post to one US tech board (zero-token, no API key).
+//
+// Employers post to Built In directly and it does not index other job boards,
+// so this is a board-wide aggregator like arbeitnow/flowxtra/thehub, not a
+// per-company provider and not a cross-source index: scan.mjs's own filters
+// narrow the result afterwards. It has NO detect() and is reached only via an
+// explicit `provider: builtin` entry in portals.yml.
+//
+// ── Hosts ────────────────────────────────────────────────────────────────
+// Built In runs one platform on several market hosts. Every one of them serves
+// byte-identical markup (verified 2026-09-01: 25 ItemList entries + 25 job
+// cards on /jobs/dev-engineering for all nine). `host:` selects which market a
+// portals entry scans; the default stays builtin.com so an existing entry keeps
+// its exact behaviour.
+//
+// A market host is NOT just a cosmetic filter — it is the only location scoping
+// this board offers. Measured on the same four queries, one page each: the
+// national host returned 89 rows spread across many metros, while a single
+// market host returned 64 rows that were nearly all either in that metro or
+// US-remote. Only 8 job ids appeared in both, and a market host carries that
+// market's remote inventory too, so it is not "onsite only".
+//
+// ── What we parse ────────────────────────────────────────────────────────
+// Two payloads on the SAME fetched page, joined on the numeric job id:
+//
+//   1. SPINE — the server-side `ItemList` JSON blob, one entry per job:
+//        {"@type":"ListItem","position":N,"name":<title>,"url":<url>,"description":<~400ch>}
+//      This is schema.org markup emitted for search engines, so it is the
+//      stable half. It is also the ONLY half that is required: if card parsing
+//      yields nothing, the provider still emits title, url and description
+//      rather than dropping jobs.
+//
+//   2. ENRICHMENT — the rendered job card, keyed by `data-builtin-track-job-id`
+//      (the same id that ends the ItemList url, so the join is 1:1 and free).
+//      Fields are anchored on the card's FontAwesome icon classes, which are
+//      far stabler than field order:
+//        fa-clock          -> posted badge ("Yesterday", "Reposted 15 Days Ago")
+//        fa-house-building -> workplace mode (Remote / Hybrid / In-Office / Remote or Hybrid)
+//        fa-location-dot   -> location, or "N Locations" + a data-bs-title tooltip
+//        fa-sack-dollar    -> salary band ("170K-230K Annually")
+//      plus the /company/ anchor immediately preceding the card title.
+//
+// Enrichment is what makes scan.mjs's zero-token gates work for this provider.
+// Without it `job.location` and `job.company` are always empty, so the
+// blacklist gate, location_filter, posting-age filter and salary_filter are all
+// inert here — off-policy rows reach data/pipeline.md and are only culled by a
+// human or by an evaluation that costs a full report.
+//
+// ── Deliberate conservatism ──────────────────────────────────────────────
+// Every enriched field is OPTIONAL and every unresolvable one is left empty
+// rather than guessed. This matters most for location: per the Job contract an
+// empty location PASSES location_filter, so a guess that parses wrong silently
+// rejects real jobs, while an empty one simply leaves the field unset.
+// A multi-location card whose tooltip we cannot read therefore yields '' — it
+// keeps flowing through, instead of being dropped on a location string
+// ("3 Locations") that names no city.
+//
+// The same reasoning drives the drift guard in fetch(): a card layout change
+// would otherwise fail SILENTLY, emptying every location and re-opening the
+// off-policy leak with no error anywhere. So a page that yields plenty of cards
+// but almost no locations warns loudly.
+//
+// ── Config (portals.yml) ─────────────────────────────────────────────────
+//   builtin:
+//     host: www.builtinseattle.com   # optional, default builtin.com; allowlisted
+//     scope: remote                  # optional path segment -> /jobs/remote/...
+//     queries: ["platform engineer"]
+//     categories: [dev-engineering]
+//     max_pages: 3
+// Legacy-flat `queries` / `categories` / `max_pages` keys still work.
+//
+// There is NO built-in default query set: builtin has no company scope, so a
+// default would be one user's personal search criteria baked into shared code.
+// An entry MUST supply `queries:` and/or `categories:` — otherwise there is
+// nothing to scan and fetch() returns []. A `careers_url` pointing at a Built In
+// /jobs listing page counts as that search (see listingFromUrl).
+
+import { BROWSER_LIKE_USER_AGENT, fetchTextWithRetry } from './_http.mjs';
 import { decodeEntities } from './_html-entities.mjs';
 
-// Built In (builtin.com) — the tech-hub job network (Built In NYC / Chicago /
-// LA / Austin / Boston / Colorado / Seattle / SF, plus the national site). Not
-// an ATS: it aggregates postings from employers that pay to list, so it surfaces
-// roles that never appear on the company's own Greenhouse/Lever board, and it
-// carries the mid-market and regional employers the big ATS sweeps miss.
-//
-// TRANSPORT: the listing pages are SERVER-rendered — no browser needed.
-//
-//   GET https://builtin.com/jobs/{category}[?page=N]     # 1-based, 25/page
-//
-// ── Two parse layers, deliberately ────────────────────────────────────────────
-//
-// (a) PRIMARY — schema.org JSON-LD. Every listing page embeds an ItemList of the
-//     postings on it, each element carrying name/url/description. This is the
-//     resilient anchor: it is a published contract Built In maintains for search
-//     engines, so it survives the CSS/utility-class churn that breaks ordinary
-//     scrapers. parseJsonLd() reads it and is the source of truth for the fields
-//     it covers.
-//
-//     One trap: the script tag is emitted as `type="application/ld&#x2B;json"` —
-//     the "+" is HTML-escaped. A search for the literal `application/ld+json`
-//     finds NOTHING on this site and reads as "no structured data here", which is
-//     exactly the wrong conclusion. The regex below accepts both spellings.
-//
-// (b) ENRICHMENT — the job cards. JSON-LD carries no company or location, both of
-//     which the scanner filters on, so those come from the card markup, keyed by
-//     the numeric job id that appears in every posting URL. The cards are anchored
-//     on `data-id="..."` attributes (`job-card`, `company-title`, `job-card-title`)
-//     rather than presentational classes, since those attributes exist for Built
-//     In's own JS and change far less often than the Bootstrap-ish utility classes
-//     around them.
-//
-// Enrichment is strictly additive: a card that fails to parse costs that posting
-// its company/location, not its existence. A markup change therefore degrades the
-// metadata while the JSON-LD keeps the postings flowing — the failure mode is a
-// thinner row, never a silently empty scan.
-//
-// PAGINATION: `?page=N` past the end does NOT return an empty page or a 404 —
-// Built In keeps serving results. So the walk stops when a page yields no job id
-// it has not already seen (the radancy idiom), bounded by max_pages/max_jobs.
-//
-// postedAt is omitted: the cards express age as prose ("Reposted 36 Minutes Ago",
-// "Yesterday"), which is a relative string with no timezone or reference instant.
-// Deriving an epoch from it would manufacture precision the source does not have,
-// and postedAt feeds the --posted-after/--posted-before date filters.
+const DEFAULT_HOST = 'builtin.com';
+const DEFAULT_MAX_PAGES = 3;  // builtin orders newest-first; a few pages = recent roles
+const HARD_MAX_PAGES = 25;    // backstop against a misconfigured entry
+const RETRY_POLICY = { retries: 2, baseDelayMs: 500, maxDelayMs: 8_000 };
 
-const MAX_PAGES = 40; // 25/page ⇒ up to 1000 postings per entry
-const DEFAULT_MAX_JOBS = 1000;
-const PAGE_DELAY_MS = 250; // polite pacing — Built In is a single small operator
+// SSRF allowlist. Keys are the accepted spellings, values the CANONICAL host to
+// request. The bare (www-less) market hosts 301 to www and we fetch with
+// redirect:'error', so a bare spelling must be rewritten here rather than
+// failing the fetch. builtinchicago is .org, not .com — not a typo.
+const HOSTS = new Map([
+  ['builtin.com', 'builtin.com'],
+  ['www.builtin.com', 'builtin.com'],
+  ['builtinseattle.com', 'www.builtinseattle.com'],
+  ['www.builtinseattle.com', 'www.builtinseattle.com'],
+  ['builtinnyc.com', 'www.builtinnyc.com'],
+  ['www.builtinnyc.com', 'www.builtinnyc.com'],
+  ['builtinsf.com', 'www.builtinsf.com'],
+  ['www.builtinsf.com', 'www.builtinsf.com'],
+  ['builtinla.com', 'www.builtinla.com'],
+  ['www.builtinla.com', 'www.builtinla.com'],
+  ['builtinboston.com', 'www.builtinboston.com'],
+  ['www.builtinboston.com', 'www.builtinboston.com'],
+  ['builtinaustin.com', 'www.builtinaustin.com'],
+  ['www.builtinaustin.com', 'www.builtinaustin.com'],
+  ['builtinchicago.org', 'www.builtinchicago.org'],
+  ['www.builtinchicago.org', 'www.builtinchicago.org'],
+  ['builtincolorado.com', 'www.builtincolorado.com'],
+  ['www.builtincolorado.com', 'www.builtincolorado.com'],
+]);
 
-const ALLOWED_HOST = 'builtin.com';
+// Drift guard thresholds. Both are deliberately loose: the guard exists to
+// catch a LAYOUT CHANGE (near-total loss), not to grade a page whose jobs
+// genuinely lack a field.
+const GUARD_MIN_ROWS = 5;      // below this a page is a test fixture or a stub, not a signal
+const GUARD_MIN_LOCATION = 0.5; // fraction of cards that must yield a location
+
+// One ItemList entry. builtin emits keys in a stable order (@type, position,
+// name, url, description); description is occasionally absent. Capture the three
+// JSON-string fields and JSON.parse them so escaping is handled correctly.
+const ITEM = /\{"@type":"ListItem","position":\d+,"name":("(?:[^"\\]|\\.)*"),"url":("(?:[^"\\]|\\.)*")(?:,"description":("(?:[^"\\]|\\.)*"))?\}/g;
+
+// Card anchors. CARD_ANCHOR marks the start of each rendered job card; the id
+// attribute on the same anchor is the join key back to the ItemList url.
+const CARD_ANCHOR = /data-id="job-card-title"/g;
+const CARD_ID = /data-builtin-track-job-id="(\d+)"/;
+const COMPANY_ANCHOR = /<a[^>]+href="\/company\/[^"]*"[^>]*>([\s\S]{0,240}?)<\/a>/g;
+const LOCATION_TOOLTIP = /aria-label="Job locations"[^>]*data-bs-title="([^"]*)"/;
+const CARD_CAP = 12_000; // chars; a card is ~3-6k, this bounds a missing next-anchor
+
+const WORKPLACE_MODES = ['Remote or Hybrid', 'Remote', 'Hybrid', 'In-Office'];
+const MULTI_LOCATION = /^\d+\s+Locations?$/i;
+const SALARY_BAND = /^(\d+(?:\.\d+)?)K(?:-(\d+(?:\.\d+)?)K)?\s+Annually$/i;
+
+/**
+ * Resolve a configured host spelling to the canonical host to request.
+ *
+ * @param {unknown} raw
+ * @returns {string|null} canonical host, or null when not allowlisted
+ */
+export function resolveHost(raw) {
+  if (raw === undefined || raw === null || raw === '') return DEFAULT_HOST;
+  if (typeof raw !== 'string') return null;
+  let h = raw.trim().toLowerCase();
+  if (h === '') return DEFAULT_HOST;
+  // Tolerate a pasted URL ("https://www.builtinseattle.com/jobs") as the host.
+  if (h.includes('/')) {
+    try { h = new URL(h.includes('://') ? h : `https://${h}`).hostname.toLowerCase(); } catch { return null; }
+  }
+  return HOSTS.get(h) ?? null;
+}
+
+/**
+ * SSRF guard — every request URL passes through here before it is fetched. The
+ * host comes from config, so this is the only thing standing between a
+ * portals entry and an arbitrary fetch target. It checks the RESOLVED host
+ * against the allowlist again rather than trusting the caller.
+ *
+ * @param {string} url
+ * @returns {string}
+ */
+function assertHost(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`builtin: invalid URL: ${url}`);
+  }
+  if (parsed.protocol !== 'https:') throw new Error(`builtin: URL must use HTTPS: ${url}`);
+  const host = parsed.hostname.toLowerCase();
+  if (HOSTS.get(host) !== host) {
+    throw new Error(`builtin: untrusted hostname "${parsed.hostname}" — must be one of ${[...new Set(HOSTS.values())].join(', ')}`);
+  }
+  return url;
+}
 
 /** @param {string} s */
-function clean(s) {
+function stripTags(s) {
   return decodeEntities(String(s).replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
 }
 
 /**
- * The numeric id trailing every Built In posting URL (/job/{slug}/{id}).
- * It is the only stable key shared by the JSON-LD entry and the rendered card.
- * @param {string} url
- * @returns {string|null}
- */
-export function jobIdFromUrl(url) {
-  const m = String(url).match(/\/job\/[^/?#]+\/(\d+)(?:[/?#]|$)/);
-  return m ? m[1] : null;
-}
-
-/**
- * Reject anything that is not a builtin.com URL before it is fetched.
- * Mirrors assertGreenhouseUrl in greenhouse.mjs.
- * @param {string} raw
- * @returns {URL}
- */
-export function assertBuiltInUrl(raw) {
-  let u;
-  try {
-    u = new URL(raw);
-  } catch {
-    throw new Error(`builtin: not a URL: ${raw}`);
-  }
-  if (u.protocol !== 'https:') throw new Error(`builtin: refusing non-https URL: ${raw}`);
-  const host = u.hostname.toLowerCase();
-  if (host !== ALLOWED_HOST && !host.endsWith(`.${ALLOWED_HOST}`)) {
-    throw new Error(`builtin: refusing non-builtin.com host: ${u.hostname}`);
-  }
-  return u;
-}
-
-/**
- * Read the postings out of the page's schema.org ItemList.
+ * Text of the first element following an icon marker inside a card.
+ * Anchoring on the icon class (rather than on field order) is what keeps this
+ * readable when Built In reshuffles the card layout.
  *
- * Returns [] rather than throwing on anything unexpected — a JSON-LD change must
- * not take the scan down, and `fetch` below treats an empty page as the end of
- * the walk.
+ * @param {string} seg  card HTML
+ * @param {string} icon FontAwesome class, e.g. 'fa-location-dot'
+ * @returns {string} '' when the icon or its text is absent
+ */
+function fieldAfterIcon(seg, icon) {
+  const at = seg.indexOf(icon);
+  if (at === -1) return '';
+  // The icon sits in its own wrapper; the value is the next non-empty text node
+  // within a short window. 600 chars covers the wrapper divs without spilling
+  // into the following field.
+  const window = seg.slice(at, at + 600);
+  for (const m of window.matchAll(/>([^<>]+)</g)) {
+    const t = stripTags(m[1]);
+    if (t) return t;
+  }
+  return '';
+}
+
+/**
+ * Parse a posted-freshness badge into epoch ms.
+ *
+ * Built In writes relative text ("2 Hours Ago", "Reposted 15 Days Ago",
+ * "Yesterday", "30+ Days Ago"). Anything unrecognised returns undefined, which
+ * scan.mjs treats as "no date" and passes.
+ *
+ * @param {string} text
+ * @param {number} [now] epoch ms; injectable for tests
+ * @returns {number|undefined}
+ */
+export function parsePostedAt(text, now = Date.now()) {
+  if (typeof text !== 'string') return undefined;
+  const t = text.replace(/^reposted\s+/i, '').trim();
+  if (/^today$/i.test(t)) return now;
+  if (/^yesterday$/i.test(t)) return now - 86_400_000;
+  const m = /^(\d+|an?)\+?\s+(minute|hour|day|week|month|year)s?\s+ago$/i.exec(t);
+  if (!m) return undefined;
+  const n = /^an?$/i.test(m[1]) ? 1 : Number(m[1]);
+  if (!Number.isFinite(n)) return undefined;
+  const unit = m[2].toLowerCase();
+  const ms = { minute: 60_000, hour: 3_600_000, day: 86_400_000, week: 604_800_000, month: 2_592_000_000, year: 31_536_000_000 }[unit];
+  return ms ? now - n * ms : undefined;
+}
+
+/**
+ * Parse a card salary band into the {min,max,currency} shape scan.mjs's
+ * buildSalaryFilter expects.
+ *
+ * Two deliberate restrictions:
+ *  - Only `Annually` bands are read. Built In also renders bands as
+ *    "115K-130K Hourly", which is their own data error (nobody bills $115k/hr);
+ *    reading it would hand salary_filter a number three orders of magnitude off.
+ *  - `currency` is left UNSET. The card never states one, and buildSalaryFilter
+ *    only rejects when BOTH sides declare a currency — so unset is the value
+ *    that cannot cause a wrong rejection.
+ *
+ * @param {string} text
+ * @returns {{min: number, max: number}|undefined}
+ */
+export function parseSalary(text) {
+  if (typeof text !== 'string') return undefined;
+  const m = SALARY_BAND.exec(text.trim());
+  if (!m) return undefined;
+  const min = Math.round(Number(m[1]) * 1000);
+  const max = m[2] === undefined ? min : Math.round(Number(m[2]) * 1000);
+  if (!Number.isFinite(min) || !Number.isFinite(max) || min <= 0) return undefined;
+  return { min, max };
+}
+
+/**
+ * Compose the location string handed to scan.mjs's location_filter.
+ *
+ * Returns '' whenever the card names no place. That is the SAFE direction: an
+ * empty location passes the filter (Job contract), so an unresolved
+ * multi-location card keeps flowing through, whereas a placeholder like
+ * "3 Locations" would be rejected by an allow-list that names cities and
+ * remote markers.
+ *
+ * @param {string} mode      '' | 'Remote' | 'Hybrid' | 'In-Office' | 'Remote or Hybrid'
+ * @param {string[]} places  resolved place strings, possibly empty
+ * @returns {string}
+ */
+export function composeLocation(mode, places) {
+  const list = (places || []).filter(Boolean);
+  if (list.length === 0) {
+    // Mode alone is only meaningful when it carries a remote marker the filter
+    // can match; a bare "Hybrid"/"In-Office" names no place, so stay empty.
+    return /remote/i.test(mode) ? mode : '';
+  }
+  return [mode, ...list].filter(Boolean).join(' · ');
+}
+
+/**
+ * Parse the rendered job cards on a listing page into an id→enrichment map.
+ * Pure; exported for unit tests. Never throws on odd markup — a card that
+ * yields nothing simply contributes nothing.
  *
  * @param {string} html
- * @returns {{id: string, title: string, url: string, description: string}[]}
+ * @returns {Map<string, {company: string, location: string, salary?: {min: number, max: number}, postedAt?: number}>}
  */
-export function parseJsonLd(html) {
-  if (typeof html !== 'string') return [];
-  const out = [];
-  const seen = new Set();
-  // `ld&#x2B;json` is the spelling Built In actually emits; `ld+json` is accepted
-  // so the parser keeps working if they ever stop escaping it.
-  const blocks = html.matchAll(/<script[^>]*type="application\/ld(?:\+|&#x2B;|&#43;)json"[^>]*>([\s\S]*?)<\/script>/gi);
-  for (const block of blocks) {
-    let json;
-    try {
-      json = JSON.parse(block[1]);
-    } catch {
-      continue; // one malformed block must not discard the others
-    }
-    const graph = Array.isArray(json?.['@graph']) ? json['@graph'] : [json];
-    for (const node of graph) {
-      if (node?.['@type'] !== 'ItemList' || !Array.isArray(node.itemListElement)) continue;
-      for (const item of node.itemListElement) {
-        const url = typeof item?.url === 'string' ? item.url : '';
-        const title = clean(item?.name ?? '');
-        if (!url || !title) continue;
-        const id = jobIdFromUrl(url);
-        if (!id || seen.has(id)) continue;
-        seen.add(id);
-        out.push({ id, title, url, description: clean(item?.description ?? '') });
+export function parseCards(html, now = Date.now()) {
+  /** @type {Map<string, any>} */
+  const out = new Map();
+  if (typeof html !== 'string') return out;
+
+  const starts = [];
+  CARD_ANCHOR.lastIndex = 0;
+  for (const m of html.matchAll(CARD_ANCHOR)) starts.push(/** @type {number} */ (m.index));
+
+  for (let i = 0; i < starts.length; i++) {
+    const start = starts[i];
+    const end = Math.min(starts[i + 1] ?? html.length, start + CARD_CAP);
+    const seg = html.slice(start, end);
+
+    const idm = CARD_ID.exec(seg);
+    if (!idm) continue;
+    const id = idm[1];
+
+    // Company sits in the anchor immediately BEFORE the card title. The window
+    // is bounded by the previous card's title so we can never pick up a company
+    // from two cards away; the LAST match in it is this card's.
+    const preFrom = i === 0 ? Math.max(0, start - 2500) : starts[i - 1];
+    const pre = html.slice(preFrom, start);
+    let company = '';
+    COMPANY_ANCHOR.lastIndex = 0;
+    for (const cm of pre.matchAll(COMPANY_ANCHOR)) company = stripTags(cm[1]);
+
+    const modeRaw = fieldAfterIcon(seg, 'fa-house-building');
+    const mode = WORKPLACE_MODES.find((w) => w.toLowerCase() === modeRaw.toLowerCase()) ?? '';
+
+    // Location: a single place renders as text; several render as "N Locations"
+    // with the full list in a tooltip attribute.
+    const locRaw = fieldAfterIcon(seg, 'fa-location-dot');
+    /** @type {string[]} */
+    let places = [];
+    if (locRaw && !MULTI_LOCATION.test(locRaw)) {
+      places = [locRaw];
+    } else {
+      const tip = LOCATION_TOOLTIP.exec(seg);
+      if (tip) {
+        places = decodeEntities(tip[1])
+          .split(/<\/div>|<br\s*\/?>/i)
+          .map(stripTags)
+          .filter(Boolean);
       }
+      // No tooltip → places stays empty on purpose (see composeLocation).
     }
+
+    out.set(id, {
+      company,
+      location: composeLocation(mode, places),
+      salary: parseSalary(fieldAfterIcon(seg, 'fa-sack-dollar')),
+      postedAt: parsePostedAt(fieldAfterIcon(seg, 'fa-clock'), now),
+    });
   }
   return out;
 }
 
+/** Numeric job id at the end of a Built In job url, or '' when absent. */
+function jobIdFromUrl(url) {
+  const m = /\/(\d+)(?:[/?#]|$)/.exec(String(url));
+  return m ? m[1] : '';
+}
+
 /**
- * Pull company and location off the rendered cards, keyed by job id.
+ * Pure normalizer for one listing page's HTML. Exported for unit tests. A
+ * malformed ItemList entry is skipped, never allowed to abort the whole page.
+ * Rows with no title or no url are dropped (url is the dedup key downstream).
  *
- * Enrichment only: every field is optional and a miss yields ''.
- *
- * The company name is anchored on `data-id="company-title"` — an attribute Built
- * In's own JS uses, so it outlives the utility classes around it.
- *
- * The metadata rows have no such attribute: each is an icon followed by its
- * value, and the ICON CLASS is the only label present. `fa-location-dot` marks
- * the geography, `fa-house-building` the work arrangement ("Hybrid", "Remote",
- * "In-Office or Remote"). Sibling rows use `fa-sack-dollar` (salary) and
- * `fa-trophy` (seniority), so the class is what keeps them apart.
- *
- * Single-site roles print the place in the span. Multi-site roles print
- * "4 Locations" and hide the real list in a Bootstrap tooltip payload
- * (`data-bs-title="&lt;div&gt;Plano, TX, USA&lt;/div&gt;…"`, doubly escaped).
- * The tooltip wins when present — "4 Locations" tells the scanner's location
- * filter nothing. Arrangement is prefixed when both exist ("Hybrid · Plano, TX,
- * USA"): the filter needs the geography, the reader wants the arrangement.
- *
- * Only the FIRST match of each icon per card is taken, since Built In interleaves
- * sponsored company cards carrying their own location-ish rows.
+ * The ItemList is the spine; card data enriches it where the ids join. A page
+ * with no parseable cards yields exactly what it yielded before enrichment
+ * existed: title, url, description, and empty company/location.
  *
  * @param {string} html
- * @returns {Map<string, {company: string, location: string}>}
+ * @returns {Array<{title: string, url: string, company: string, location: string, description: string, salary?: object, postedAt?: number}>}
  */
-export function parseCards(html) {
-  const byId = new Map();
-  if (typeof html !== 'string') return byId;
-  // Cards open with id="job-card-{id}"; slice(1) drops the page head.
-  const blocks = html.split(/<div[^>]*\bid="job-card-(?=\d)/i).slice(1);
-  for (const block of blocks) {
-    const idM = block.match(/^(\d+)"/);
-    if (!idM) continue;
-    const id = idM[1];
-    if (byId.has(id)) continue;
-
-    const companyM = block.match(/data-id="company-title"[\s\S]{0,400}?<span[^>]*>([\s\S]*?)<\/span>/i);
-    // `<i class="… fa-location-dot …">` … then the value in the next span. The
-    // {0,400} leash keeps a missing row from matching the row after it.
-    const iconValue = (icon) => block.match(new RegExp(`class="[^"]*\\b${icon}\\b[^"]*"[\\s\\S]{0,400}?<span[^>]*>([\\s\\S]*?)<\\/span>`, 'i'));
-    const arrangementM = iconValue('fa-house-building');
-    const locM = iconValue('fa-location-dot');
-    const tooltipM = locM && block.slice(locM.index, locM.index + locM[0].length).match(/data-bs-title="([^"]*)"/i);
-
-    // The tooltip holds one <div> per site; decode first, then split on the tags.
-    let geography = '';
-    if (tooltipM) {
-      geography = decodeEntities(tooltipM[1])
-        .split(/<\/div>/i)
-        .map((part) => clean(part))
-        .filter(Boolean)
-        .join(' · ');
-    } else if (locM) {
-      geography = clean(locM[1]);
+export function parseListPage(html, now = Date.now()) {
+  const jobs = [];
+  if (typeof html !== 'string') return jobs;
+  const cards = parseCards(html, now);
+  for (const m of html.matchAll(ITEM)) {
+    let title, url, description = '';
+    try {
+      title = JSON.parse(m[1]);
+      url = JSON.parse(m[2]);
+      if (m[3]) description = JSON.parse(m[3]);
+    } catch {
+      continue; // a malformed item must never abort the whole page
     }
-
-    const arrangement = arrangementM ? clean(arrangementM[1]) : '';
-    const location = [arrangement, geography].filter(Boolean).join(' · ');
-    byId.set(id, { company: companyM ? clean(companyM[1]) : '', location });
+    if (!title || !url) continue;
+    const job = { title, url, company: '', location: '', description };
+    const enrich = cards.get(jobIdFromUrl(url));
+    if (enrich) {
+      job.company = enrich.company || '';
+      job.location = enrich.location || '';
+      if (enrich.salary) job.salary = enrich.salary;
+      if (enrich.postedAt !== undefined) job.postedAt = enrich.postedAt;
+    }
+    jobs.push(job);
   }
-  return byId;
+  return jobs;
 }
 
 /**
- * Resolve the listing URL from a portals.yml entry, dropping any inherited
- * `page` param so pagination below starts where it means to.
- * @param {{api?: string, careers_url?: string, name?: string}} entry
+ * Read the scan config. The nested `builtin: {...}` block is canonical (matches
+ * phenom's `entry.phenom`); flat `queries` / `categories` / `max_pages` keys are
+ * honoured so a pre-existing portals.yml keeps working. Nested wins over flat.
+ *
+ * NO default queries: an empty result means "nothing to scan", which fetch()
+ * handles by returning []. This is the neutralization of the old hardcoded
+ * personal default — a shared provider must never ship one user's search terms.
+ *
+ * `host` resolves to null when the spelling is not allowlisted. fetch() then
+ * refuses the entry rather than silently falling back to builtin.com: a typo'd
+ * market host must not quietly scan the national board and re-introduce the
+ * off-policy rows the market host exists to avoid.
+ *
+ * `scope` is an optional path segment inserted before the category
+ * (`/jobs/remote`, `/jobs/remote/dev-engineering`). Restricted to a plain slug
+ * so it can never inject a path traversal or a query string.
+ *
+ * @param {any} entry
+ * @returns {{queries: string[], categories: string[], maxPages: number, host: string|null, scope: string}}
  */
-export function resolveListUrl(entry) {
-  const raw = entry?.api || entry?.careers_url || '';
-  const u = assertBuiltInUrl(raw);
+export function readConfig(entry) {
+  const nested = entry && typeof entry.builtin === 'object' && entry.builtin ? entry.builtin : {};
+  const arr = (key) => {
+    const nv = nested[key];
+    if (Array.isArray(nv) && nv.length) return nv.map(String);
+    const fv = entry?.[key];
+    if (Array.isArray(fv) && fv.length) return fv.map(String);
+    return [];
+  };
+  const rawMax = nested.max_pages ?? entry?.max_pages;
+  const maxPages = Math.min(
+    HARD_MAX_PAGES,
+    Math.max(1, Number.isFinite(rawMax) ? Math.floor(rawMax) : DEFAULT_MAX_PAGES),
+  );
+  const host = resolveHost(nested.host ?? entry?.host);
+  const rawScope = String(nested.scope ?? entry?.scope ?? '').trim();
+  const scope = /^[a-z0-9-]+$/i.test(rawScope) ? rawScope.toLowerCase() : '';
+  if (rawScope && !scope) {
+    console.error(`⚠️  builtin: ignoring invalid scope ${JSON.stringify(rawScope)} — must be a plain slug like "remote"`);
+  }
+  return { queries: arr('queries'), categories: arr('categories'), maxPages, host, scope };
+}
+
+/**
+ * A `careers_url` (or `api`) naming a Built In listing page
+ * (`careers_url: https://builtin.com/jobs/dev-engineering`). Used only
+ * when the entry has neither queries: nor categories:, so a configured search
+ * always wins. The host goes through the same allowlist as `host:`.
+ *
+ * @param {any} entry
+ * @returns {{host: string, path: string}|null}
+ */
+export function listingFromUrl(entry) {
+  const raw = entry?.careers_url || entry?.api;
+  if (typeof raw !== 'string' || !raw) return null;
+  let u;
+  try { u = new URL(raw); } catch { return null; }
+  const host = resolveHost(u.hostname);
+  if (!host || !/^\/jobs(\/|$)/.test(u.pathname)) return null;
   u.searchParams.delete('page');
-  return u;
+  return { host, path: u.pathname + u.search };
 }
 
-/** @param {number} page */
-function pageUrl(base, page) {
-  const u = new URL(base.href);
-  if (page > 1) u.searchParams.set('page', String(page));
-  return u.href;
-}
-
-function resolveCap(value, fallback, hardMax = Infinity) {
-  return Number.isInteger(value) && value > 0 ? Math.min(value, hardMax) : fallback;
+/**
+ * Narrow the per-base page cap by ctx.maxPages when the caller is only probing
+ * (verify-portals.mjs's health check passes 1).
+ *
+ * @param {number} entryMax
+ * @param {any} ctx
+ * @returns {number}
+ */
+function effectiveMaxPages(entryMax, ctx) {
+  const hint = Number(ctx?.maxPages);
+  return Number.isFinite(hint) && hint > 0 ? Math.min(entryMax, Math.floor(hint)) : entryMax;
 }
 
 /** @type {Provider} */
 export default {
   id: 'builtin',
 
-  detect(entry) {
-    const raw = entry?.careers_url || entry?.api || '';
-    if (typeof raw !== 'string' || !raw) return null;
-    let u;
-    try {
-      u = new URL(raw);
-    } catch {
-      return null;
-    }
-    const host = u.hostname.toLowerCase().replace(/^www\./, '');
-    if (host !== ALLOWED_HOST) return null;
-    // Only listing pages — a /company/ or /job/ URL is a single page, not a feed.
-    if (!/^\/jobs(\/|$)/.test(u.pathname)) return null;
-    return { url: raw };
-  },
-
   async fetch(entry, ctx) {
-    const base = resolveListUrl(entry);
-    const maxPages = resolveCap(entry?.max_pages, MAX_PAGES, MAX_PAGES);
-    const maxJobs = resolveCap(entry?.max_jobs, DEFAULT_MAX_JOBS);
-    const wait = (ms) => (ctx.sleep ? ctx.sleep(ms) : new Promise((r) => setTimeout(r, ms)));
-    const pageCap = ctx.maxPages && ctx.maxPages > 0 ? Math.min(ctx.maxPages, maxPages) : maxPages;
+    const { queries, categories, maxPages: entryMax, host: configHost, scope } = readConfig(entry);
+    const listing = queries.length || categories.length ? null : listingFromUrl(entry);
+    const host = listing ? listing.host : configHost;
+    const maxPages = effectiveMaxPages(entryMax, ctx);
+    const label = entry?.name ?? 'entry';
 
-    const jobs = [];
-    const seen = new Set();
-    let succeededOnce = false;
-
-    for (let page = 1; page <= pageCap && jobs.length < maxJobs; page++) {
-      if (page > 1) await wait(PAGE_DELAY_MS);
-
-      let html;
-      try {
-        html = await ctx.fetchText(pageUrl(base, page), {
-          headers: { accept: 'text/html' },
-          redirect: 'error', // a server-side redirect off builtin.com is an SSRF vector
-        });
-      } catch (err) {
-        // Page 1 failing before anything succeeded means the source is
-        // unreachable, not empty — throw so scan/portal-health record a failure
-        // rather than "live but empty". A later page failing keeps the partial.
-        if (!succeededOnce) throw err;
-        break;
-      }
-      succeededOnce = true;
-
-      const rows = parseJsonLd(html);
-      if (rows.length === 0) break; // no ItemList ⇒ past the end (or markup gone)
-
-      const cards = parseCards(html);
-      let fresh = 0;
-      for (const row of rows) {
-        if (seen.has(row.id)) continue;
-        seen.add(row.id);
-        fresh++;
-        const card = cards.get(row.id);
-        jobs.push({
-          title: row.title,
-          url: row.url,
-          company: card?.company || '',
-          location: card?.location || '',
-          // The ItemList carries a real summary, so this is free — no per-job request.
-          ...(row.description ? { description: row.description } : {}),
-        });
-      }
-      // Past the last page Built In keeps serving results instead of an empty
-      // page, so a page with nothing new is the only reliable end-of-walk signal.
-      if (fresh === 0) break;
+    if (host === null) {
+      const raw = entry?.builtin?.host ?? entry?.host;
+      console.error(`⚠️  builtin: ${label} has host ${JSON.stringify(raw)}, which is not a known Built In market — skipping (allowed: ${[...new Set(HOSTS.values())].join(', ')})`);
+      return [];
     }
 
-    return jobs.slice(0, maxJobs);
+    // Build the base paths to paginate: keyword searches + category paths, both
+    // under the optional scope segment.
+    const prefix = scope ? `/jobs/${scope}` : '/jobs';
+    const bases = [
+      ...queries.map((q) => `${prefix}?search=${encodeURIComponent(q)}`),
+      ...categories.map((c) => `${prefix}/${encodeURIComponent(c)}`),
+      ...(listing ? [listing.path] : []),
+    ];
+
+    if (bases.length === 0) {
+      // Neutralized default (see readConfig): no personal queries baked in, so
+      // an entry with neither queries: nor categories: has nothing to scan.
+      console.error(`⚠️  builtin: ${label} has no queries: or categories: — nothing to scan`);
+      return [];
+    }
+
+    const seen = new Set();
+    const out = [];
+    // Drift-guard counters, aggregated across every page of this entry so one
+    // odd page can't trip the warning on its own.
+    let guardRows = 0, guardCards = 0, guardLocated = 0;
+
+    for (const base of bases) {
+      const sep = base.includes('?') ? '&' : '?';
+      for (let page = 1; page <= maxPages; page++) {
+        const url = `https://${host}${base}${sep}page=${page}`;
+        assertHost(url); // SSRF guard before every fetch
+        let html;
+        try {
+          html = /** @type {string} */ (await fetchTextWithRetry(
+            /** @type {any} */ (ctx),
+            url,
+            { redirect: 'error', headers: { 'User-Agent': BROWSER_LIKE_USER_AGENT } },
+            RETRY_POLICY,
+          ));
+        } catch {
+          break; // network/HTTP error (e.g. past the last page) — stop this base
+        }
+        const jobs = parseListPage(html);
+        guardRows += jobs.length;
+        for (const j of jobs) {
+          if (j.company || j.location) guardCards++;
+          if (j.location) guardLocated++;
+        }
+        let added = 0;
+        for (const j of jobs) {
+          if (seen.has(j.url)) continue; // a job can surface across queries/pages
+          seen.add(j.url);
+          added++;
+          out.push(j);
+        }
+        // No items at all → format changed or past the last page. Items but none
+        // NEW → fully-overlapping tail. Either way, stop paginating this base.
+        if (jobs.length === 0 || added === 0) break;
+      }
+    }
+
+    // ── Drift guard ──────────────────────────────────────────────────────
+    // Card enrichment failing is SILENT by construction: every field just comes
+    // back empty, an empty location passes location_filter, and the entry keeps
+    // returning jobs. That is precisely the failure that re-opens the
+    // off-policy leak, so it gets a loud warning rather than a quiet degrade.
+    if (guardRows >= GUARD_MIN_ROWS) {
+      if (guardCards === 0) {
+        console.error(`⚠️  builtin: ${label} parsed ${guardRows} rows but ZERO job cards — card markup changed. location_filter, salary_filter, the blacklist gate and posting-age are INERT for this entry until the parser is fixed.`);
+      } else if (guardCards >= GUARD_MIN_ROWS && guardLocated / guardCards < GUARD_MIN_LOCATION) {
+        console.error(`⚠️  builtin: ${label} resolved a location for only ${guardLocated}/${guardCards} cards — location markup may have changed; off-policy rows will pass location_filter.`);
+      }
+    }
+
+    return out;
   },
 };

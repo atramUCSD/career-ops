@@ -35,6 +35,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_USER_AGENT, BROWSER_LIKE_USER_AGENT } from './user-agent.mjs';
 import { classifyFullListAbsence } from './liveness-core.mjs';
+import { parseWwrFeed } from './providers/weworkremotely.mjs';
+import { getCareerOpsRoot } from './path-resolver.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 
@@ -57,6 +59,33 @@ function isSafeValue(v) {
   // resolveAtsApi below, the explicit `!includes('..')` check per segment is
   // load-bearing, not redundant with the regex test.
   return v.split('/').every((seg) => seg.length > 0 && SAFE_SEGMENT.test(seg) && !seg.includes('..'));
+}
+
+// Second request, only on the 404 path of a GUESSED Greenhouse board (rare):
+// does this board exist? 200 → the token was right, so the 404 means the
+// posting is gone. Anything else → the token was a bad guess and the 404 proves
+// nothing.
+async function confirmGuessedBoard({ board }) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const board_res = await fetch(`https://boards-api.greenhouse.io/v1/boards/${board}`, {
+      method: 'GET',
+      headers: { 'user-agent': DEFAULT_USER_AGENT, accept: 'application/json' },
+      redirect: 'error',
+      signal: controller.signal,
+    });
+    if (board_res.status !== 200) return null; // not a board → inconclusive
+    return {
+      result: 'expired',
+      code: 'greenhouse_embed_api_gone',
+      reason: 'Greenhouse API — posting removed from the board',
+    };
+  } catch {
+    return null; // network / timeout → inconclusive
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // Each ATS: detect its posting URL, then map to a public JSON API URL.
@@ -86,6 +115,59 @@ function isSafeValue(v) {
 //                  of purging a live posting.
 const ATS_PROVIDERS = [
   {
+    id: 'greenhouse-embedded',
+    // A careers page on the employer's OWN domain that embeds a Greenhouse board
+    // exposes only ?gh_jid — e.g. databricks.com/company/careers/open-positions/job
+    // ?gh_jid=8546367002. The board token is not in the URL. 145 of the 228
+    // postings this module once could not check were of this shape.
+    //
+    // Greenhouse's embed endpoint answers with a redirect naming the board
+    // (?for=), which is authoritative, so it is asked first. A second per-job API
+    // request is still required, because even a closed job can have an embed
+    // redirect. A redirect that is present but fails validation is refused
+    // outright: that is a wrong answer, not a missing one.
+    //
+    // Only when there is no redirect at all does the domain label stand in for
+    // the token (databricks.com -> "databricks", careers.airbnb.com -> "airbnb").
+    // That is a guess, and the per-job endpoint answers {"error":"Job not found"}
+    // both for a removed posting and for a board that does not exist, so
+    // interpretGone confirms the guessed board before trusting a 404.
+    match(u) {
+      // greenhouse.io hosts carry the real board token in their path (next entry).
+      if (/(^|\.)greenhouse\.io$/.test(u.hostname)) return null;
+      const id = u.searchParams.get('gh_jid');
+      if (!id || !/^\d+$/.test(id)) return null;
+      // Strip the careers-subdomain conventions, then take the registrable label.
+      const labels = u.hostname.toLowerCase().replace(/^(www|careers|jobs|apply|boards)\./, '').split('.');
+      return labels.length >= 2 ? { id, board: labels[0] } : { id };
+    },
+    api: ({ id }) => `https://boards.greenhouse.io/embed/job_app?token=${id}`,
+    async followEmbed(res, parts) {
+      const { id } = parts;
+      if (res.status !== 301 && res.status !== 302) {
+        if (!parts.board) return null;
+        parts.boardGuessed = true;
+        return `https://boards-api.greenhouse.io/v1/boards/${parts.board}/jobs/${id}`;
+      }
+      let target;
+      try { target = new URL(res.headers.get('location'), 'https://boards.greenhouse.io'); }
+      catch { return null; }
+      if (target.protocol !== 'https:' || !/(^|\.)greenhouse\.io$/.test(target.hostname)) return null;
+      const board = target.searchParams.get('for');
+      // The board is one URL path segment. isSafeValue also accepts Workday's
+      // multi-segment paths, so reject a decoded slash here explicitly.
+      if (!isSafeValue(board) || board.includes('/') || target.searchParams.get('token') !== id) return null;
+      parts.board = board;
+      return `https://boards-api.greenhouse.io/v1/boards/${board}/jobs/${id}`;
+    },
+    async interpretGone(res, parts) {
+      if (!parts.boardGuessed) {
+        return { result: 'expired', code: 'greenhouse-embedded_api_gone', reason: `ATS API ${res.status} — posting removed` };
+      }
+      return confirmGuessedBoard(parts);
+    },
+  },
+  {
     id: 'greenhouse',
     // boards.greenhouse.io/{board}/jobs/{id} · job-boards[.eu].greenhouse.io/{board}/jobs/{id}
     match(u) {
@@ -94,62 +176,6 @@ const ATS_PROVIDERS = [
       return m ? { board: m[1], id: m[2] } : null;
     },
     api: ({ board, id }) => `https://boards-api.greenhouse.io/v1/boards/${board}/jobs/${id}`,
-  },
-  {
-    id: 'greenhouse_embed',
-    // Greenhouse's embedded board on the employer's OWN domain — the posting URL is
-    // e.g. databricks.com/company/careers/open-positions/job?gh_jid=8546367002. The
-    // job id is right there in the query string, and the same per-job API that serves
-    // job-boards.greenhouse.io serves these; 145 of the 228 postings this module could
-    // not check were of exactly this shape, left to the browser classifier for no
-    // reason other than the hostname.
-    //
-    // The board token is NOT in the URL, so it is inferred from the domain label
-    // (databricks.com → "databricks", jobs.dropbox.com → "dropbox"). That inference
-    // is a guess and is sometimes wrong, which makes a 404 ambiguous: the posting was
-    // removed, or the token was never a board at all. The per-job endpoint cannot tell
-    // them apart — it answers `{"error":"Job not found"}` either way, including for a
-    // board that does not exist. Only the BOARD endpoint distinguishes them, so
-    // interpretGone confirms the board before trusting the 404. A guess that turns out
-    // not to be a board degrades to the browser check instead of reporting expired.
-    match(u) {
-      // greenhouse.io hosts are handled by the entry above, which carries the real
-      // board token in its path — never guess one when the URL states it.
-      if (/(^|\.)greenhouse\.io$/.test(u.hostname)) return null;
-      const id = u.searchParams.get('gh_jid');
-      if (!id || !/^\d+$/.test(id)) return null;
-      // Strip the careers-subdomain conventions, then take the registrable label:
-      // "careers.airbnb.com" → "airbnb", "www.coinbase.com" → "coinbase".
-      const labels = u.hostname.toLowerCase().replace(/^(www|careers|jobs|apply|boards)\./, '').split('.');
-      const board = labels.length >= 2 ? labels[0] : null;
-      return board ? { board, id } : null;
-    },
-    api: ({ board, id }) => `https://boards-api.greenhouse.io/v1/boards/${board}/jobs/${id}`,
-    async interpretGone(_res, { board }) {
-      // Second request, and only on the 404 path (rare): does this board exist?
-      // 200 → the token was right, so the 404 above means the posting is gone.
-      // Anything else → the token was a bad guess and the 404 proves nothing.
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-      try {
-        const board_res = await fetch(`https://boards-api.greenhouse.io/v1/boards/${board}`, {
-          method: 'GET',
-          headers: { 'user-agent': DEFAULT_USER_AGENT, accept: 'application/json' },
-          redirect: 'error',
-          signal: controller.signal,
-        });
-        if (board_res.status !== 200) return null; // not a board → inconclusive
-        return {
-          result: 'expired',
-          code: 'greenhouse_embed_api_gone',
-          reason: 'Greenhouse API — posting removed from the board',
-        };
-      } catch {
-        return null; // network / timeout → inconclusive
-      } finally {
-        clearTimeout(timer);
-      }
-    },
   },
   {
     id: 'icims',
@@ -170,40 +196,6 @@ const ATS_PROVIDERS = [
     // re-checks that label before it reaches the template.
     api: ({ tenant, id }) => `https://${tenant}.icims.com/jobs/${id}/job?in_iframe=1`,
     accept: 'text/html',
-  },
-  {
-    id: 'smartrecruiters',
-    // jobs.smartrecruiters.com/{company}/{id}-{slug}
-    match(u) {
-      if (u.hostname !== 'jobs.smartrecruiters.com') return null;
-      const m = u.pathname.match(/^\/([^/]+)\/(\d+)(?:-[^/]*)?\/?$/);
-      return m ? { company: m[1], id: m[2] } : null;
-    },
-    api: ({ company, id }) => `https://api.smartrecruiters.com/v1/companies/${company}/postings/${id}`,
-    // A 200 here is NOT proof of life. SmartRecruiters keeps closed postings
-    // addressable and reports their state in the body: `active: false` on a
-    // posting that has been taken down, with the 200 unchanged. Two ServiceNow
-    // postings the browser rung had correctly called dead came back
-    // `smartrecruiters_api_ok` on the status code alone — a false ACTIVE, which
-    // leaves a dead job in the queue looking verified.
-    //
-    // Only an explicit `active: false` is treated as removed. A missing field or
-    // an unreadable body returns null rather than guessing in either direction.
-    async interpret(res) {
-      let json;
-      try {
-        json = await res.json();
-      } catch {
-        return null;
-      }
-      if (json?.active === false) {
-        return { result: 'expired', code: 'smartrecruiters_api_inactive', reason: 'SmartRecruiters posting is marked inactive (closed)' };
-      }
-      if (json?.active === true) {
-        return { result: 'active', code: 'smartrecruiters_api_ok', reason: 'SmartRecruiters posting is marked active (live)' };
-      }
-      return null; // no `active` field → unexpected shape, let the browser decide
-    },
   },
   {
     id: 'lever',
@@ -333,6 +325,52 @@ const ATS_PROVIDERS = [
       return m ? { host, id: m[1] } : null;
     },
     api: ({ host, id }) => `https://${host}/api/apply/v2/jobs/${id}`,
+  },
+  {
+    id: 'smartrecruiters',
+    match(u) {
+      if (u.hostname !== 'jobs.smartrecruiters.com') return null;
+      const m = u.pathname.match(/^\/([^/]+)\/([A-Za-z0-9]+)(?:-[^/]*)?\/?$/);
+      return m ? { company: m[1], id: m[2] } : null;
+    },
+    api: ({ company, id }) => `https://api.smartrecruiters.com/v1/companies/${company}/postings/${id}`,
+    api404Authoritative: false, // the API also uses 400 for unknown IDs
+    // A 200 here is NOT proof of life. SmartRecruiters keeps closed postings
+    // addressable and reports their state in the body: `active: false` on a
+    // posting that has been taken down, with the 200 unchanged. Two ServiceNow
+    // postings the browser rung had correctly called dead came back
+    // `smartrecruiters_api_ok` on the status code alone — a false ACTIVE, which
+    // leaves a dead job in the queue looking verified.
+    //
+    // Only an explicit boolean `active` on the posting we asked for decides. A
+    // missing field, a different id, or an unreadable body returns null.
+    async interpret(res, { id }) {
+      let posting;
+      try { posting = await res.json(); } catch { return null; }
+      if (String(posting?.id) !== id || typeof posting.active !== 'boolean') return null;
+      return posting.active
+        ? { result: 'active', code: 'smartrecruiters_api_active', reason: 'SmartRecruiters marks the posting active' }
+        : { result: 'expired', code: 'smartrecruiters_api_inactive', reason: 'SmartRecruiters marks the posting inactive' };
+    },
+  },
+  {
+    id: 'weworkremotely',
+    match(u) {
+      if (u.hostname !== 'weworkremotely.com' || !/^\/remote-jobs\/[^/]+\/?$/.test(u.pathname)) return null;
+      return { slug: u.pathname.split('/')[2] };
+    },
+    api: () => 'https://weworkremotely.com/remote-jobs.rss',
+    accept: 'application/rss+xml',
+    api404Authoritative: false,
+    async interpret(res, { slug }) {
+      let feed;
+      try { feed = await res.text(); } catch { return null; }
+      if (!/<rss\b/i.test(feed)) return null;
+      const listed = parseWwrFeed(feed).some((job) => new URL(job.url).pathname.replace(/\/$/, '') === `/remote-jobs/${slug}`);
+      return listed
+        ? { result: 'active', code: 'weworkremotely_feed_listed', reason: 'Posting is listed in the current RSS feed' }
+        : null; // feed is bounded; absence cannot prove expiry
+    },
   },
   {
     id: 'linkedin',
@@ -868,7 +906,8 @@ export function classifyAshbyBoard(json, jobId) {
 let GH_BOARDS = null;
 function ghBoards() {
   if (GH_BOARDS) return GH_BOARDS;
-  const text = existsSync(join(ROOT, 'portals.yml')) ? readFileSync(join(ROOT, 'portals.yml'), 'utf-8') : '';
+  const portals = process.env.CAREER_OPS_PORTALS || join(getCareerOpsRoot(), 'portals.yml');
+  const text = existsSync(portals) ? readFileSync(portals, 'utf-8') : '';
   GH_BOARDS = [...new Set([...text.matchAll(/boards-api\.greenhouse\.io\/v1\/boards\/([a-z0-9-]+)\//gi)]
     .map(m => m[1].toLowerCase()))];
   return GH_BOARDS;
@@ -910,6 +949,7 @@ export function resolveAtsApi(rawUrl) {
       apiUrl: provider.api(parts),
       parts,
       timeoutMs: provider.timeoutMs,
+      followEmbed: provider.followEmbed,
       interpret: provider.interpret,
       interpretGone: provider.interpretGone,
       interpretOther: provider.interpretOther,
@@ -926,6 +966,16 @@ export function resolveAtsApi(rawUrl) {
 export function isAtsPosting(url) {
   return resolveAtsApi(url) !== null;
 }
+
+// ATS ids whose public API returns the actual JD body (not just a liveness
+// signal). Greenhouse (`content`), Lever (`descriptionPlain`), Ashby
+// (`descriptionPlain` on the org board), Workday (`jobPostingInfo.jobDescription`
+// on the per-job CXS endpoint) all ship full text for free in the same payload
+// resolveAtsApi() already points at. Microsoft and LinkedIn are on ATS_PROVIDERS
+// for liveness only — their public endpoints answer search/status, never body
+// text — so they are deliberately excluded here; see fetch-jd.mjs / the
+// fetch*Jd() family in browser-extract.mjs for the per-provider fetchers.
+export const JD_TEXT_API_ATS = new Set(['greenhouse', 'lever', 'ashby', 'workday']);
 
 /**
  * Zero-token liveness check via the posting's ATS API.
@@ -949,7 +999,7 @@ export async function checkLivenessViaApi(url) {
   // Third rung: full-list providers — the tenant's whole board in one fetch,
   // where absence from a SUCCESSFUL fetch is as authoritative as a per-job 404.
   if (!resolved) return checkLivenessViaFullList(url);
-  const { ats, apiUrl, parts, interpret, interpretGone, interpretOther, accept, headers, timeoutMs, throttleMs, api404Authoritative } = resolved;
+  const { ats, apiUrl, parts, interpret, interpretGone, interpretOther, accept, headers, followEmbed, timeoutMs, throttleMs, api404Authoritative } = resolved;
 
   // Resolve function-valued headers first (rungs gated on a runtime credential
   // or rotating token): null means the prerequisite is unavailable and the
@@ -978,9 +1028,21 @@ export async function checkLivenessViaApi(url) {
       res = await fetch(apiUrl, {
         method: 'GET',
         headers: { 'user-agent': DEFAULT_USER_AGENT, accept: accept || 'application/json', ...requestHeaders },
-        redirect: 'error', // refuse server-side redirects (SSRF + ambiguity guard)
+        // Refuse server-side redirects (SSRF + ambiguity guard), except where the
+        // provider reads the redirect itself to find the embedded job's API URL.
+        redirect: followEmbed ? 'manual' : 'error',
         signal: controller.signal,
       });
+      if (followEmbed) {
+        const jobApiUrl = await followEmbed(res, parts);
+        if (!jobApiUrl) return null;
+        res = await fetch(jobApiUrl, {
+          method: 'GET',
+          headers: { 'user-agent': DEFAULT_USER_AGENT, accept: 'application/json' },
+          redirect: 'error',
+          signal: controller.signal,
+        });
+      }
     } catch {
       return null; // network / timeout / redirect → inconclusive, let Playwright decide
     }

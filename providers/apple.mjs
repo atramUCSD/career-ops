@@ -1,5 +1,6 @@
 // @ts-check
 /** @typedef {import('./_types.js').Provider} Provider */
+import { safeEncodeURIComponent } from './_safe-url.mjs';
 
 // Apple provider — jobs.apple.com's own search API. Plain fetch works; the
 // earlier "needs Playwright" verdict came from calling the dead
@@ -75,11 +76,13 @@ export default {
         if (!r?.id || seen.has(r.id)) continue;
         seen.add(r.id);
         fresh++;
+        // Pipeline roles carry id "PIPE-<n>", which 301s to /details/<n>; strip the prefix.
+        const detailId = safeEncodeURIComponent(String(r.id).replace(/^(PIPE|REQ)-/, ''));
+        if (detailId === null) continue;
         const posted = Date.parse(r.postDateInGMT);
         jobs.push({
           title: String(r.postingTitle || '').trim(),
-          // Pipeline roles carry id "PIPE-<n>", which 301s to /details/<n>; strip the prefix.
-          url: `${ORIGIN}/en-us/details/${encodeURIComponent(String(r.id).replace(/^(PIPE|REQ)-/, ''))}/${r.transformedPostingTitle || 'job'}`,
+          url: `${ORIGIN}/en-us/details/${detailId}/${r.transformedPostingTitle || 'job'}`,
           company: entry.name,
           location: (r.locations || []).map((l) => l?.name).filter(Boolean).join('; '),
           postedAt: Number.isNaN(posted) ? undefined : posted,

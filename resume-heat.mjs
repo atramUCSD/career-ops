@@ -33,8 +33,7 @@
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { HATS, hatsIn } from './enrich-jd.mjs';
 import { extractSkills } from './skill-extract.mjs';
 import { splitSkillsSection } from './jd-skill-gap.mjs';
@@ -42,7 +41,8 @@ import { flagValue, hasFlag, safeIntFlag } from './lib/cli-flags.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
 import { profileDir } from './profiles.mjs';
 
-const ROOT = dirname(fileURLToPath(import.meta.url));
+import { getCareerOpsRoot } from './path-resolver.mjs';
+const DATA_ROOT = getCareerOpsRoot();
 export const BAND_WEIGHT = { premier: 3, strong: 2, ordinary: 1 };
 const HAT_LABEL = { designer: 'designer', developer: 'developer', ai_advocate: 'AI advocate' };
 const CV_STATES = ['missing', 'shown', 'named'];
@@ -130,7 +130,7 @@ export function postingTerms(text, cvText) {
     .sort((a, b) => CV_STATES.indexOf(a.cv) - CV_STATES.indexOf(b.cv));
 }
 
-const cachePath = url => join(ROOT, 'data/jd-cache', `${createHash('sha1').update(url).digest('hex')}.txt`);
+const cachePath = url => join(DATA_ROOT, 'data/jd-cache', `${createHash('sha1').update(url).digest('hex')}.txt`);
 
 async function loadPostings(root) {
   const { buildModel } = await import('./build-artifact.mjs');
@@ -193,7 +193,7 @@ ${rows.map(t => `<tr><td>${esc(t.term)}</td><td class="kind">${hatTag(t.hat)}</t
 async function main(args) {
   const top = safeIntFlag(flagValue(args, '--top'), 25);
   const profile = flagValue(args, '--profile');
-  const root = profile ? profileDir(profile) : ROOT;
+  const root = profile ? profileDir(profile) : DATA_ROOT;
   if (!existsSync(root)) {
     console.error(`No profile "${profile}". Create it with \`node profiles.mjs new ${profile}\`.`);
     process.exitCode = 1;

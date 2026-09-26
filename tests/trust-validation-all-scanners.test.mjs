@@ -29,7 +29,7 @@ await appendToPipeline(JSON.parse(process.argv[2]));
 
 // Cleared before each spawn so an ambient second-lane environment cannot
 // redirect a fixture's writes into real user files (#2568).
-const PATH_VARS = ['CAREER_OPS_PORTALS', 'CAREER_OPS_PROFILE', 'CAREER_OPS_PIPELINE', 'CAREER_OPS_SCAN_HISTORY'];
+const PATH_VARS = ['CAREER_OPS_PORTALS', 'CAREER_OPS_PROFILE', 'CAREER_OPS_PIPELINE', 'CAREER_OPS_SCAN_HISTORY', 'CAREER_OPS_DATA_DIR', 'CAREER_OPS_TRACKER'];
 
 /** Tmp fixture repo + driver; portalsYml === null → no portals.yml at all. */
 function makeFixture(portalsYml) {
@@ -44,6 +44,8 @@ function makeFixture(portalsYml) {
 function runDriver(dir, driver, offers) {
   const env = { ...process.env };
   for (const v of PATH_VARS) delete env[v];
+  // scan.mjs anchors user-layer paths at the data root, not cwd.
+  env.CAREER_OPS_ROOT = dir;
   execFileSync(NODE, [driver, JSON.stringify(offers)], {
     cwd: dir, env, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'],
   });

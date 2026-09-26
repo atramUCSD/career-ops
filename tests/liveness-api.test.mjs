@@ -32,8 +32,8 @@ eq(r('https://careers-peraton.icims.com/jobs/169611/x/job')?.accept, 'text/html'
 
 eq(
   r('https://databricks.com/company/careers/open-positions/job?gh_jid=8546367002')?.apiUrl,
-  'https://boards-api.greenhouse.io/v1/boards/databricks/jobs/8546367002',
-  'Greenhouse embed on a vanity domain resolves to the per-job API',
+  'https://boards.greenhouse.io/embed/job_app?token=8546367002',
+  'Greenhouse embed on a vanity domain asks the embed endpoint for its board first',
 );
 
 eq(
@@ -87,6 +87,7 @@ const res = (status, body = {}) => () => ({
 try {
   // Posting 404s, board exists → the token was right, so the posting is gone.
   stubFetch([
+    ['embed/job_app', res(200)],
     ['/jobs/', res(404, { status: 404, error: 'Job not found' })],
     ['/v1/boards/databricks', res(200, { name: 'Databricks' })],
   ]);
@@ -95,6 +96,7 @@ try {
 
   // Posting 404s, board 404s → the hostname was not the token. Inconclusive.
   stubFetch([
+    ['embed/job_app', res(200)],
     ['/jobs/', res(404, { status: 404, error: 'Job not found' })],
     ['/v1/boards/', res(404, { status: 404, error: 'Job board not found' })],
   ]);
@@ -103,6 +105,7 @@ try {
 
   // The board check itself failing must not decide anything either.
   stubFetch([
+    ['embed/job_app', res(200)],
     ['/jobs/', res(404, { status: 404, error: 'Job not found' })],
     ['/v1/boards/', res(500)],
   ]);
@@ -176,16 +179,16 @@ try {
   // `active: false` while the status stays 200. Reading the code alone reports a
   // dead job as live — a false ACTIVE, which leaves it in the queue looking
   // verified. Two real ServiceNow postings failed exactly this way.
-  stubFetch([['api.smartrecruiters.com', res(200, { name: 'Sr. Staff Product Designer', active: false })]]);
+  stubFetch([['api.smartrecruiters.com', res(200, { id: '744000139130415', name: 'Sr. Staff Product Designer', active: false })]]);
   const closed = await checkLivenessViaApi('https://jobs.smartrecruiters.com/ServiceNow/744000139130415-x');
   eq(closed?.result, 'expired', 'SmartRecruiters 200 + active:false -> expired (the status code alone would say live)');
   eq(closed?.code, 'smartrecruiters_api_inactive', 'the inactive verdict is coded distinctly from a 404');
 
-  stubFetch([['api.smartrecruiters.com', res(200, { name: 'Open Role', active: true })]]);
+  stubFetch([['api.smartrecruiters.com', res(200, { id: '744000141574539', name: 'Open Role', active: true })]]);
   eq((await checkLivenessViaApi('https://jobs.smartrecruiters.com/ServiceNow/744000141574539-x'))?.result, 'active', 'SmartRecruiters active:true -> active');
 
   // A shape without the field is not evidence in either direction.
-  stubFetch([['api.smartrecruiters.com', res(200, { name: 'No status field' })]]);
+  stubFetch([['api.smartrecruiters.com', res(200, { id: '744000141574539', name: 'No status field' })]]);
   eq(await checkLivenessViaApi('https://jobs.smartrecruiters.com/ServiceNow/744000141574539-x'), null, 'SmartRecruiters 200 with no `active` field -> null, not a guess');
 
   // Workday tenants disagree about how a dead posting answers. Leidos 404s;

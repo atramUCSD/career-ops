@@ -2,18 +2,19 @@
 // build-cv-latex.mjs).
 //
 // Core competencies, work experience, projects, education, certifications,
-// awards, and skills are the genuinely optional CV sections: a competency tag
-// row is often redundant with the summary and experience bullets that prove
-// the same claims, a student or career-switcher has no professional history
-// to list yet, a candidate's projects are often already covered under Work
-// Experience, not every candidate has a degree, not every application carries
-// a certification worth listing, most candidates have no award to name, and
+// awards, interests, and skills are the genuinely optional CV sections: a
+// competency tag row is often redundant with the summary and experience
+// bullets that prove the same claims, a student or career-switcher has no
+// professional history to list yet, a candidate's projects are often already
+// covered under Work Experience, not every candidate has a degree, not every
+// application carries a certification worth listing, most candidates have no
+// award to name, most candidates don't add a personal-interests line, and
 // plenty of candidates list no skills section at all. The templates wrap all
-// seven unconditionally, so a payload with no entries renders a bare section
+// eight unconditionally, so a payload with no entries renders a bare section
 // header with nothing under it. The builders' buildCompetencies()/
 // buildExperience()/buildProjects()/buildEducation()/buildCertifications()/
-// buildAwards()/buildSkills() correctly return '' — nothing removes the
-// surrounding wrapper, which is what this module does.
+// buildAwards()/buildInterests()/buildSkills() correctly return '' — nothing
+// removes the surrounding wrapper, which is what this module does.
 //
 // Work experience (#2504) is optional for the people this tool is aimed at —
 // new graduates, career changers, and anyone leading with projects or
@@ -23,11 +24,12 @@
 // template, exactly as before. What changed is that an empty `experience` no
 // longer leaves the wrapper behind.
 //
-// Certifications has no marker in the LaTeX template (cv-template.tex has no
-// Certifications section at all), so PATTERNS.tex has no `certifications` key
-// — stripEmptySections skips a section silently when the active format has no
-// pattern for it, rather than trying to match against `undefined`. Awards, by
-// contrast, is defined for both formats.
+// Certifications and Interests have no marker in the LaTeX template
+// (cv-template.tex has neither section at all), so PATTERNS.tex has no
+// `certifications`/`interests` key — stripEmptySections skips a section
+// silently when the active format has no pattern for it, rather than trying
+// to match against `undefined`. Awards, by contrast, is defined for both
+// formats.
 //
 // ── The Skills sentinel: part of the template contract ───────────────────────
 //
@@ -115,6 +117,7 @@ const PATTERNS = {
     certifications: new RegExp(String.raw`<!--\s+CERTIFICATIONS\s+-->[\s\S]*?` + HTML_BOUNDARY),
     awards: new RegExp(String.raw`<!--\s+AWARDS\s+-->[\s\S]*?` + HTML_BOUNDARY),
     skills: new RegExp(String.raw`<!--\s+SKILLS\s+-->[\s\S]*?` + HTML_END_SENTINEL),
+    interests: new RegExp(String.raw`<!--\s+INTERESTS\s+-->[\s\S]*?` + HTML_BOUNDARY),
   },
   tex: {
     // The LaTeX banner is `%%%%  Experience  %%%%` — mixed case, and not the
@@ -127,7 +130,7 @@ const PATTERNS = {
   },
 };
 
-export const OPTIONAL_SECTIONS = ['competencies', 'experience', 'projects', 'education', 'certifications', 'awards', 'skills'];
+export const OPTIONAL_SECTIONS = ['competencies', 'experience', 'projects', 'education', 'certifications', 'awards', 'interests', 'skills'];
 
 export function isEmptySection(payload, section) {
   const entries = payload?.[section];
@@ -152,4 +155,62 @@ export function stripEmptySections(template, payload, format) {
     }
   }
   return out;
+}
+
+// ── Content-driven emptiness, for callers holding rendered HTML ──────────────
+//
+// isEmptySection answers from the payload the template was filled from. The
+// web pdf path has no payload to ask: since #2185 the agent emits finished
+// HTML and the backend writes it straight to disk, so neither builder — and
+// therefore neither stripEmptySections call site — is on that path, and every
+// optional section the agent left empty reaches the renderer as a bare header.
+//
+// The two exports below answer the same question from the rendered document
+// instead. They read the section body back out with the PATTERNS.html entry
+// that stripEmptySections removes with, so a marker or boundary change moves
+// both halves together and there is still one definition of where a section
+// starts and ends.
+
+// A section's own title is present whether or not the section has content, so
+// it must not count as content. This matches the shipped templates'
+// `<div class="section-title">`, or a plain heading tag for a custom template
+// that uses one. Either quote style, matching generate-pdf.mjs's own
+// SECTION_TITLE_RE: a hand-written or third-party template may use single
+// quotes, and reading its title as content would keep every empty section.
+// Applied once — a later heading inside a populated body
+// keeps its text and correctly reads as content.
+const SECTION_HEADING_RE = new RegExp(
+  String.raw`<(div|h[1-6])\b[^>]*class=["'][^"']*\bsection-title\b[^"']*["'][^>]*>[\s\S]*?<\/\1>` +
+  String.raw`|<(h[1-6])\b[^>]*>[\s\S]*?<\/\2>`,
+  'i',
+);
+
+// Does this section render as a bare header — a title and nothing under it?
+//
+// False when the format has no pattern for the section, and false when the
+// document has no such section at all: both mean there is nothing to strip,
+// and reporting "empty" for a section that is simply absent would invite a
+// caller to act on markup that was never there.
+export function isEmptyRenderedSection(html, section) {
+  const pattern = PATTERNS.html[section];
+  if (!pattern) return false;
+  const block = html.match(pattern);
+  if (!block) return false;
+  const text = block[0]
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(SECTION_HEADING_RE, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;|\u00a0/g, ' ');
+  return text.trim() === '';
+}
+
+// Remove every optional section that rendered as a bare header. The emptiness
+// map is derived from the document as it arrives, before anything is removed,
+// so one strip cannot change the verdict on the next.
+export function stripEmptyRenderedSections(html) {
+  const derived = {};
+  for (const section of OPTIONAL_SECTIONS) {
+    derived[section] = isEmptyRenderedSection(html, section) ? [] : [section];
+  }
+  return stripEmptySections(html, derived, 'html');
 }

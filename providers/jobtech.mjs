@@ -3,6 +3,7 @@
 
 import { resolveProfileKeywords } from './_profile-keywords.mjs';
 import { intInRange } from './_config-utils.mjs';
+import { safeEncodeURIComponent } from './_safe-url.mjs';
 
 // JobTech (Arbetsformedlingen, Sweden's public employment service) provider —
 // hits the open JobSearch REST API at jobsearch.api.jobtechdev.se. Open data,
@@ -100,12 +101,14 @@ export function normalizeJob(hit) {
   const id = hit && hit.id;
   const title = String((hit && hit.headline) || '').trim();
   if (!id || !title || hit.removed === true) return null;
+  const encodedId = safeEncodeURIComponent(id);
+  if (encodedId === null) return null;
   const employer = (hit && hit.employer) || {};
   const result = {
     title,
     // Built from the id rather than trusting webpage_url, so the outgoing URL
     // is always the canonical Platsbanken shape the liveness rung matches on.
-    url: DETAIL_BASE + encodeURIComponent(String(id)),
+    url: DETAIL_BASE + encodedId,
     // name (legal employer) first: `workplace` is free text that employers
     // often fill with a location ("Malmö, Sweden" observed live 2026-08-28).
     company: String(employer.name || employer.workplace || '').trim(),

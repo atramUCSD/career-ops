@@ -42,11 +42,11 @@
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { pass, fail, ROOT } from './helpers.mjs';
-import { stripEmptySections } from '../cv-sections-core.mjs';
+import { stripEmptySections, isEmptyRenderedSection, stripEmptyRenderedSections } from '../cv-sections-core.mjs';
 
 console.log('\ncv-sections-core.mjs — optional sections leave no bare header');
 
-const EMPTY = { competencies: [], experience: [], projects: [], education: [], certifications: [], awards: [], skills: [] };
+const EMPTY = { competencies: [], experience: [], projects: [], education: [], certifications: [], awards: [], interests: [], skills: [] };
 const FULL = {
   competencies: ['Tag'],
   experience: [{ company: 'E' }],
@@ -54,6 +54,7 @@ const FULL = {
   education: [{ degree: 'D' }],
   certifications: [{ title: 'C' }],
   awards: [{ title: 'A' }],
+  interests: ['Chess'],
   skills: [{ category: 'S', items: 'x' }],
 };
 
@@ -69,15 +70,16 @@ function check(label, actual, expected) {
 // are empty — the `<!-- END -->` / `%%%% END %%%%` marker itself, never the
 // (now-strippable) SKILLS marker or its content.
 const TEMPLATES = [
-  { file: 'templates/cv-template.html', format: 'html', after: '<!-- END -->', hasCertifications: true, hasCompetencies: true },
-  { file: 'templates/resume-template.html', format: 'html', after: '<!-- END -->', hasCertifications: false, hasCompetencies: true },
-  { file: 'templates/cv-template.zh-minimal.html', format: 'html', after: '<!-- END -->', hasCertifications: true, hasCompetencies: true },
-  { file: 'templates/cv-template.compact.html', format: 'html', after: '<!-- END -->', hasCertifications: true, hasCompetencies: true },
-  { file: 'templates/cv-template.executive.html', format: 'html', after: '<!-- END -->', hasCertifications: true, hasCompetencies: true },
-  { file: 'templates/cv-template.jake.html', format: 'html', after: '<!-- END -->', hasCertifications: true, hasCompetencies: true },
-  { file: 'templates/cv-template.leadership.html', format: 'html', after: '<!-- END -->', hasCertifications: true, hasCompetencies: true },
-  { file: 'templates/cv-template.modern.html', format: 'html', after: '<!-- END -->', hasCertifications: true, hasCompetencies: true },
-  { file: 'templates/cv-template.tex', format: 'tex', after: '%%%%  END  %%%%', hasCertifications: false, hasCompetencies: false },
+  { file: 'templates/cv-template.html', format: 'html', after: '<!-- END -->', hasCertifications: true, hasCompetencies: true, hasInterests: true },
+  { file: 'templates/resume-template.html', format: 'html', after: '<!-- END -->', hasCertifications: false, hasCompetencies: true, hasInterests: false },
+  { file: 'templates/cv-template.zh-minimal.html', format: 'html', after: '<!-- END -->', hasCertifications: true, hasCompetencies: true, hasInterests: false },
+  { file: 'templates/cv-template.compact.html', format: 'html', after: '<!-- END -->', hasCertifications: true, hasCompetencies: true, hasInterests: false },
+  { file: 'templates/cv-template.executive.html', format: 'html', after: '<!-- END -->', hasCertifications: true, hasCompetencies: true, hasInterests: false },
+  { file: 'templates/cv-template.jake.html', format: 'html', after: '<!-- END -->', hasCertifications: true, hasCompetencies: true, hasInterests: false },
+  { file: 'templates/cv-template.leadership.html', format: 'html', after: '<!-- END -->', hasCertifications: true, hasCompetencies: true, hasInterests: false },
+  { file: 'templates/cv-template.modern.html', format: 'html', after: '<!-- END -->', hasCertifications: true, hasCompetencies: true, hasInterests: false },
+  { file: 'templates/cv-template.tex', format: 'tex', after: '%%%%  END  %%%%', hasCertifications: false, hasCompetencies: false, hasInterests: false },
+  { file: 'templates/cv-template.cjk.tex', format: 'tex', after: '%%%%  END  %%%%', hasCertifications: false, hasCompetencies: false, hasInterests: false },
 ];
 
 // --- Coverage guard: no shipped CV template may sit outside the matrix ------
@@ -110,7 +112,7 @@ else fail(`shipped CV templates missing from TEMPLATES — they run zero asserti
 if (phantom.length === 0) pass('every template in the matrix exists on disk');
 else fail(`TEMPLATES names templates that are not on disk: ${phantom.join(', ')}`);
 
-for (const { file, format, after, hasCertifications, hasCompetencies } of TEMPLATES) {
+for (const { file, format, after, hasCertifications, hasCompetencies, hasInterests } of TEMPLATES) {
   const template = readFileSync(join(ROOT, file), 'utf-8');
   const name = file.split('/').pop();
   const closingSkeleton = format === 'html' ? '</body>\n</html>' : '\\end{document}';
@@ -121,6 +123,7 @@ for (const { file, format, after, hasCertifications, hasCompetencies } of TEMPLA
   const certificationsMarker = '<!-- CERTIFICATIONS -->'; // html-only; no LaTeX Certifications section exists
   const competenciesMarker = '<!-- CORE COMPETENCIES -->'; // html-only; no LaTeX Competencies section exists
   const awardsMarker = format === 'html' ? '<!-- AWARDS -->' : 'AWARDS  %';
+  const interestsMarker = '<!-- INTERESTS -->'; // html-only; no LaTeX Interests section exists
   const skillsMarker = format === 'html' ? '<!-- SKILLS -->' : 'Technical Skills  %';
   // The LaTeX banner reads "Experience" while its \section reads "Work
   // Experience"; the HTML marker is "WORK EXPERIENCE". They are not the same
@@ -137,6 +140,9 @@ for (const { file, format, after, hasCertifications, hasCompetencies } of TEMPLA
     check(`${name}: empty payload removes the competencies block`, stripped.includes(competenciesMarker), false);
   }
   check(`${name}: empty payload removes the awards block`, stripped.includes(awardsMarker), false);
+  if (hasInterests) {
+    check(`${name}: empty payload removes the interests block`, stripped.includes(interestsMarker), false);
+  }
   check(`${name}: empty payload removes the skills block`, stripped.includes(skillsMarker), false);
   check(`${name}: empty payload removes the work-experience block`, stripped.includes(experienceMarker), false);
   check(`${name}: the trailing sentinel survives`, stripped.includes(after), true);
@@ -180,6 +186,30 @@ for (const { file, format, after, hasCertifications, hasCompetencies } of TEMPLA
   check(`${name}: empty awards alone keeps skills`, onlyAwards.includes(skillsMarker), true);
   if (hasCertifications) {
     check(`${name}: empty awards alone keeps certifications`, onlyAwards.includes(certificationsMarker), true);
+  }
+  if (hasInterests) {
+    check(`${name}: empty awards alone keeps interests`, onlyAwards.includes(interestsMarker), true);
+  }
+
+  // Interests empty on its own: it sits directly between Awards and Skills
+  // (the last section), so a boundary slip here is the one most likely to eat
+  // into Skills or the trailing sentinel — assert both survive.
+  if (hasInterests) {
+    const onlyInterests = stripEmptySections(template, { ...FULL, interests: [] }, format);
+    check(`${name}: empty interests alone keeps awards`, onlyInterests.includes(awardsMarker), true);
+    check(`${name}: empty interests alone drops interests`, onlyInterests.includes(interestsMarker), false);
+    check(`${name}: empty interests alone keeps skills`, onlyInterests.includes(skillsMarker), true);
+    check(`${name}: empty interests alone keeps the closing document skeleton`,
+      onlyInterests.trimEnd().endsWith(closingSkeleton), true);
+
+    // Omitted `interests` key must behave identically to an explicit [].
+    const withoutInterests = { ...FULL };
+    delete withoutInterests.interests;
+    const omittedInterests = stripEmptySections(template, withoutInterests, format);
+    check(`${name}: omitted interests key removes the interests block`, omittedInterests.includes(interestsMarker), false);
+    check(`${name}: omitted interests key keeps skills`, omittedInterests.includes(skillsMarker), true);
+    check(`${name}: omitted interests key keeps the closing document skeleton`,
+      omittedInterests.trimEnd().endsWith(closingSkeleton), true);
   }
 
   // Competencies empty on its own: it is first among the optional sections,
@@ -260,6 +290,19 @@ for (const { file, format, after, hasCertifications, hasCompetencies } of TEMPLA
   }
   if (hasCertifications) {
     check(`${name}: empty skills alone keeps certifications`, onlySkills.includes(certificationsMarker), true);
+  }
+  if (hasInterests) {
+    check(`${name}: empty skills alone keeps interests`, onlySkills.includes(interestsMarker), true);
+
+    // Both empty: interests is now the section immediately before the
+    // now-empty (and last) Skills section — the adjacent-empty-sections case
+    // that matters most, since Skills' own boundary is the sentinel-only one.
+    const bothEmpty = stripEmptySections(template, { ...FULL, interests: [], skills: [] }, format);
+    check(`${name}: empty interests+skills drops interests`, bothEmpty.includes(interestsMarker), false);
+    check(`${name}: empty interests+skills drops skills`, bothEmpty.includes(skillsMarker), false);
+    check(`${name}: empty interests+skills keeps awards`, bothEmpty.includes(awardsMarker), true);
+    check(`${name}: empty interests+skills keeps the closing document skeleton`,
+      bothEmpty.trimEnd().endsWith(closingSkeleton), true);
   }
 
   // An omitted `skills` key must behave identically to an explicit empty
@@ -444,3 +487,76 @@ check('an absent projects key is treated as empty',
 let threw = false;
 try { stripEmptySections('x', EMPTY, 'pdf'); } catch { threw = true; }
 check('an unknown template format throws', threw, true);
+
+// --- Rendered HTML: the same strip, driven by content instead of a payload --
+// The web pdf path has no payload. Since #2185 the agent emits finished HTML
+// and the backend writes it straight to disk, so neither builder runs and an
+// optional section the agent left empty reaches the renderer as a bare header
+// (#3986). isEmptyRenderedSection reads the verdict back out of the document
+// with the same PATTERNS.html entry that removes the section, so these cases
+// also pin that the two halves agree on where a section starts and ends.
+
+// A CV as the agent emits one: the shipped template with every placeholder
+// resolved, projects/awards/interests left with nothing under their headers.
+// Built from the template on disk rather than a hand-written excerpt, so a
+// markup change to a real section is exercised here too.
+const AGENT_FILLED = {
+  COMPETENCIES: '<span class="tag">Rust</span>',
+  EXPERIENCE: '<div class="job"><div class="job-title">Engineer</div></div>',
+  PROJECTS: '',
+  EDUCATION: '<div class="edu">BSc, 2015</div>',
+  CERTIFICATIONS: '<div class="cert">AWS SA</div>',
+  AWARDS: '',
+  INTERESTS: '',
+  SKILLS: '<div class="skill">Languages: Rust, Go</div>',
+};
+const agentHtml = readFileSync(join(ROOT, 'templates/cv-template.html'), 'utf-8')
+  .replace(/\{\{([A-Z_]+)\}\}/g, (whole, key) => {
+    if (Object.hasOwn(AGENT_FILLED, key)) return AGENT_FILLED[key];
+    // Every other placeholder is a scalar (name, title, a section heading);
+    // the heading ones must stay non-empty or an empty section would look
+    // empty for the wrong reason and the assertions below would pass vacuously.
+    return key.startsWith('SECTION_') ? key.slice('SECTION_'.length) : 'x';
+  });
+
+for (const section of ['projects', 'awards', 'interests']) {
+  check(`isEmptyRenderedSection: an agent-emitted ${section} section with nothing under its header reads empty`,
+    isEmptyRenderedSection(agentHtml, section), true);
+}
+for (const section of ['competencies', 'experience', 'education', 'certifications', 'skills']) {
+  check(`isEmptyRenderedSection: a populated ${section} section does not read empty`,
+    isEmptyRenderedSection(agentHtml, section), false);
+}
+
+// The section title is present either way, so counting it as content would
+// make every section look populated — the guard that fails first if the
+// heading stops being recognised.
+check('isEmptyRenderedSection: the section title alone is not content',
+  isEmptyRenderedSection('<!-- PROJECTS -->\n<div class="section"><div class="section-title">Projects</div></div>\n<!-- EDUCATION -->', 'projects'), true);
+check('isEmptyRenderedSection: a single-quoted section title alone is not content',
+  isEmptyRenderedSection("<!-- PROJECTS -->\n<div class='section'><div class='section-title'>Projects</div></div>\n<!-- EDUCATION -->", 'projects'), true);
+check('isEmptyRenderedSection: a plain heading tag alone is not content',
+  isEmptyRenderedSection('<!-- PROJECTS -->\n<section><h2>Projects</h2></section>\n<!-- EDUCATION -->', 'projects'), true);
+check('isEmptyRenderedSection: text under the heading is content',
+  isEmptyRenderedSection('<!-- PROJECTS -->\n<section><h2>Projects</h2><p>Rescued a CLI</p></section>\n<!-- EDUCATION -->', 'projects'), false);
+// A section the document does not contain is not "empty" — there is nothing
+// to strip, and saying otherwise invites a caller to act on markup that was
+// never there.
+check('isEmptyRenderedSection: an absent section does not read empty',
+  isEmptyRenderedSection('<!-- EDUCATION -->\n<div>Education</div>\n<!-- END -->', 'projects'), false);
+
+const strippedRendered = stripEmptyRenderedSections(agentHtml);
+for (const marker of ['<!-- PROJECTS -->', '<!-- AWARDS -->', '<!-- INTERESTS -->']) {
+  check(`stripEmptyRenderedSections: ${marker} is removed from an agent-emitted CV`,
+    strippedRendered.includes(marker), false);
+}
+for (const marker of ['<!-- CORE COMPETENCIES -->', '<!-- WORK EXPERIENCE -->', '<!-- EDUCATION -->', '<!-- CERTIFICATIONS -->', '<!-- SKILLS -->']) {
+  check(`stripEmptyRenderedSections: ${marker} survives with its content`,
+    strippedRendered.includes(marker), true);
+}
+check('stripEmptyRenderedSections: the populated sections keep their bodies',
+  ['Rust</span>', 'Engineer', 'BSc, 2015', 'AWS SA', 'Languages: Rust, Go'].every((t) => strippedRendered.includes(t)), true);
+check('stripEmptyRenderedSections: the closing document skeleton survives',
+  strippedRendered.includes('</body>\n</html>'), true);
+check('stripEmptyRenderedSections: a CV with nothing empty comes out byte-identical',
+  stripEmptyRenderedSections(strippedRendered), strippedRendered);

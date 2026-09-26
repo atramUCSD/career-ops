@@ -1,5 +1,6 @@
 // @ts-check
 /** @typedef {import('./_types.js').Provider} Provider */
+import { sleep } from './_http.mjs';
 
 // Eightfold (PCSX) provider — powers Qualcomm, Microsoft, and a large share of
 // enterprise career sites that show no ATS branding.
@@ -41,11 +42,6 @@ const MAX_RETRIES = 4;
 // title_filter does the real narrowing afterwards.
 const DEFAULT_QUERIES = ['engineer', 'designer', 'developer', 'user experience', 'full stack', 'manager', 'analyst'];
 
-/** @param {number} ms @param {any} ctx */
-function sleep(ms, ctx) {
-  if (typeof ctx?.sleep === 'function') return ctx.sleep(ms);
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
 
 /** @param {any} entry */
 function resolveMaxPages(entry) {

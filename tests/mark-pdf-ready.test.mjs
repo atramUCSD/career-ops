@@ -9,7 +9,7 @@
 // Auto-discovered by test-all.mjs (tests/**/*.test.mjs, #1440) — imported
 // in-process alongside every other discovered suite, so this file must NEVER
 // exit the process itself; only pass()/fail() from ./helpers.mjs.
-import { pass, fail, NODE, ROOT } from './helpers.mjs';
+import { pass, fail, NODE, ROOT, directoryDenyBinds } from './helpers.mjs';
 import { join } from 'path';
 import { execFileSync } from 'child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync, unlinkSync } from 'fs';

@@ -85,6 +85,8 @@
 // over-fetches (recall-first), same as arbeitsagentur.
 
 import { intInRange } from './_config-utils.mjs';
+import { safeEncodeURIComponent } from './_safe-url.mjs';
+import { sleep } from './_http.mjs';
 
 const FEED_ORIGIN = 'https://pam-stilling-feed.nav.no';
 const FEED_URL = `${FEED_ORIGIN}/api/v1/feed`;
@@ -129,10 +131,12 @@ export function normalizeItem(item) {
   const uuid = String(fe.uuid || (item && item.id) || '').trim();
   const title = String(fe.title || (item && item.title) || '').trim();
   if (!uuid) return null;
+  const encodedUuid = safeEncodeURIComponent(uuid);
+  if (encodedUuid === null) return null;
   /** @type {any} */
   const job = {
     title,
-    url: AD_BASE + encodeURIComponent(uuid),
+    url: AD_BASE + encodedUuid,
     company: String(fe.businessName || '').trim(),
     location: String(fe.municipal || '').trim(),
     uuid,
@@ -184,7 +188,7 @@ export default {
       throw err;
     }
 
-    const wait = (ms) => (ctx.sleep ? ctx.sleep(ms) : new Promise((r) => setTimeout(r, ms)));
+    const wait = (ms) => sleep(ms, ctx);
     const byUuid = new Map();
     for (let page = 1; ; page++) {
       if (!json || !Array.isArray(json.items)) {

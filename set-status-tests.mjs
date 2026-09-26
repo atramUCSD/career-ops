@@ -21,7 +21,7 @@
  */
 
 import { execFileSync } from 'child_process';
-import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, rmSync, chmodSync, utimesSync, unlinkSync } from 'fs';
+import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, rmSync, chmodSync, utimesSync } from 'fs';
 import { join, dirname } from 'path';
 import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
@@ -31,6 +31,9 @@ import { acquireTrackerLock } from './tracker-utils.mjs';
 // and fail for the hours of the day where they differ — a test that passes
 // only in part of the UTC day.
 import { localToday } from './lib/local-today.mjs';
+// Shared with tests/mark-pdf-ready.test.mjs so the two write-failure setups
+// cannot drift apart again (#3423).
+import { directoryDenyBinds } from './tests/helpers.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const NODE = process.execPath;
@@ -59,9 +62,25 @@ function runSetStatus(args, sandbox, extraEnv = {}) {
   }
 }
 
+const sandboxes = [];
+
+// Most cases remove their sandbox inline, but not all of them, and a case that
+// throws skips its removal. Removing every sandbox on exit covers both; the
+// inline removals stay harmless under `force: true`.
+process.on('exit', () => {
+  for (const dir of sandboxes) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // A sandbox that cannot be removed must not change the suite's verdict.
+    }
+  }
+});
+
 // Create a sandbox dir holding a tracker file.
 function makeSandbox(trackerContent) {
   const dir = mkdtempSync(join(tmpdir(), 'co-setstatus-'));
+  sandboxes.push(dir);
   const tracker = join(dir, 'applications.md');
   writeFileSync(tracker, trackerContent);
   // The lock env value must live under tmpdir and use the career-ops prefix
@@ -767,41 +786,32 @@ const TRACKER_REPORT_MISMATCH = `# Applications Tracker
 
 // ── 16. Write failure surfaces as a structured error, not a stack ─
 {
-  const dir = mkdtempSync(join(tmpdir(), 'co-setstatus-wf-'));
-  const roDir = join(dir, 'ro');
-  mkdirSync(roDir);
-  const tracker = join(roDir, 'applications.md');
-  writeFileSync(tracker, TRACKER_9);
-  const lock = join(dir, 'career-ops-merge-tracker-wf.lock');
-  // Make the tracker's directory readable but unwritable, so the atomic
-  // temp-file write fails after a successful read. On Windows, directory
-  // read-only bits don't block file creation — deny write-data/append-data
-  // for Everyone (*S-1-1-0) via icacls instead.
-  const denyWrite = () => process.platform === 'win32'
-    ? execFileSync('icacls', [roDir, '/deny', '*S-1-1-0:(WD,AD)'])
-    : chmodSync(roDir, 0o555);
-  const restore = () => process.platform === 'win32'
-    ? execFileSync('icacls', [roDir, '/remove:d', '*S-1-1-0'])
-    : chmodSync(roDir, 0o755);
-  denyWrite();
-  // Whether the deny actually binds is a property of the ACCOUNT, not the
-  // platform: root ignores mode bits, and a Windows account holding SeRestore
-  // (elevated shells, some CI images) bypasses the deny ACE — icacls still
-  // reports success. Probe the directory instead of guessing from the platform,
-  // so an environment that cannot stage the precondition skips honestly rather
-  // than reporting set-status broken.
-  let denyBinds = false;
-  const probe = join(roDir, '.write-probe');
-  try {
-    writeFileSync(probe, 'x');
-    unlinkSync(probe);
-  } catch {
-    denyBinds = true;
-  }
-  try {
-    if (!denyBinds) {
-      pass('write-failure: skipped (this account bypasses the unwritable-directory precondition)');
-    } else {
+  if (process.platform !== 'win32' && process.getuid?.() === 0) {
+    pass('write-failure: skipped (running as root — directory permissions are not enforced)');
+  } else if (process.platform === 'win32' && !directoryDenyBinds()) {
+    // Same escape hatch as root above, for the platform whose privilege model
+    // most often bypasses a permission bit. Loud on purpose: it names what was
+    // measured, so nobody reads it as the write-failure path being exercised.
+    pass('write-failure: skipped (an icacls write-deny does not bind this token - elevated shell)');
+  } else {
+    const dir = mkdtempSync(join(tmpdir(), 'co-setstatus-wf-'));
+    const roDir = join(dir, 'ro');
+    mkdirSync(roDir);
+    const tracker = join(roDir, 'applications.md');
+    writeFileSync(tracker, TRACKER_9);
+    const lock = join(dir, 'career-ops-merge-tracker-wf.lock');
+    // Make the tracker's directory readable but unwritable, so the atomic
+    // temp-file write fails after a successful read. On Windows, directory
+    // read-only bits don't block file creation — deny write-data/append-data
+    // for Everyone (*S-1-1-0) via icacls instead.
+    const denyWrite = () => process.platform === 'win32'
+      ? execFileSync('icacls', [roDir, '/deny', '*S-1-1-0:(WD,AD)'])
+      : chmodSync(roDir, 0o555);
+    const restore = () => process.platform === 'win32'
+      ? execFileSync('icacls', [roDir, '/remove:d', '*S-1-1-0'])
+      : chmodSync(roDir, 0o755);
+    denyWrite();
+    try {
       const r = runSetStatus(['2', 'Applied', '--json'], { tracker, lock });
       let parsed = null;
       try { parsed = JSON.parse(r.stdout); } catch {}
@@ -810,10 +820,10 @@ const TRACKER_REPORT_MISMATCH = `# Applications Tracker
       } else {
         fail(`write-failure: code=${r.code} json=${parsed?.code}\n${r.stdout}${r.stderr}`);
       }
+    } finally {
+      restore();
+      rmSync(dir, { recursive: true, force: true });
     }
-  } finally {
-    restore();
-    rmSync(dir, { recursive: true, force: true });
   }
 }
 

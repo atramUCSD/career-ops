@@ -67,6 +67,7 @@
 // and only a total outage throws — scan.mjs catches per-entry and records it.
 
 import { intInRange } from './_config-utils.mjs';
+import { safeEncodeURIComponent } from './_safe-url.mjs';
 
 const TOKEN_URL = 'https://entreprise.francetravail.fr/connexion/oauth2/access_token?realm=%2Fpartenaire';
 const SEARCH_URL = 'https://api.francetravail.io/partenaire/offresdemploi/v2/offres/search';
@@ -121,6 +122,8 @@ export function normalizeOffre(offre) {
   const id = offre && offre.id;
   const title = String((offre && offre.intitule) || '').trim();
   if (!id || !title) return null;
+  const encodedId = safeEncodeURIComponent(id);
+  if (encodedId === null) return null;
   // origineOffre.urlOrigine is the canonical public page (partner offers point
   // at the partner's site); fall back to the France Travail candidate page.
   const urlOrigine = offre.origineOffre && typeof offre.origineOffre.urlOrigine === 'string'
@@ -128,7 +131,7 @@ export function normalizeOffre(offre) {
   /** @type {any} */
   const job = {
     title,
-    url: /^https:\/\//.test(urlOrigine) ? urlOrigine : DETAIL_PAGE + encodeURIComponent(String(id)),
+    url: /^https:\/\//.test(urlOrigine) ? urlOrigine : DETAIL_PAGE + encodedId,
     company: String((offre.entreprise && offre.entreprise.nom) || '').trim(),
     location: String((offre.lieuTravail && offre.lieuTravail.libelle) || '').trim(),
     id: String(id),

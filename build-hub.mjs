@@ -33,7 +33,11 @@ import { listProfiles, describe } from './profiles.mjs';
 import { buildModel } from './build-artifact.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
 
+import { getCareerOpsRoot } from './path-resolver.mjs';
 const ROOT = dirname(fileURLToPath(import.meta.url));
+// User-layer files live at the data root, which a split checkout or a profile
+// (CAREER_OPS_DATA_DIR) moves away from this code directory.
+const DATA_ROOT = getCareerOpsRoot();
 
 /** Pending checkboxes in a pipeline file. Same shape `describe` counts. */
 function pendingIn(path) {
@@ -73,7 +77,7 @@ function projectedCount(root, profileRoot, name) {
   }
 }
 
-export function buildHubModel({ root = ROOT, now = new Date() } = {}) {
+export function buildHubModel({ root = DATA_ROOT, now = new Date() } = {}) {
   const cfgPath = join(root, 'config/artifacts.yml');
   const cfg = existsSync(cfgPath) ? yaml.load(readFileSync(cfgPath, 'utf-8')) || {} : {};
   const urls = cfg.profiles || {};
@@ -195,7 +199,7 @@ ${M.configured ? '' : 'No <code>config/artifacts.yml</code> yet, so no links are
 
 function main(argv) {
   const outIdx = argv.indexOf('--out');
-  const out = resolve(outIdx >= 0 ? argv[outIdx + 1] : join(ROOT, 'output/hub.html'));
+  const out = resolve(outIdx >= 0 ? argv[outIdx + 1] : join(DATA_ROOT, 'output/hub.html'));
   const model = buildHubModel({});
   writeFileSync(out, renderHub(model));
   console.log(`${out} — ${model.entries.length} profiles, ${model.published} published`);

@@ -154,13 +154,16 @@
  */
 
 import { readFileSync, existsSync } from 'fs';
-import { fileURLToPath } from 'url';
+import { join } from 'path';
 import { flagValue } from './lib/cli-flags.mjs';
+import { isMainModule } from './lib/is-main-module.mjs';
+import { getCareerOpsRoot } from './path-resolver.mjs';
 
 // ── Config ──────────────────────────────────────────────────────────
 
-const DEFAULT_STORY_BANK_PATH = 'interview-prep/story-bank.md';
-const DEFAULT_CV_PATH = 'cv.md';
+const DATA_ROOT = getCareerOpsRoot();
+const DEFAULT_STORY_BANK_PATH = join(DATA_ROOT, 'interview-prep', 'story-bank.md');
+const DEFAULT_CV_PATH = join(DATA_ROOT, 'cv.md');
 
 // ── Numeric claim patterns ──────────────────────────────────────────
 // Each pattern extracts {kind, text, index, values}. `values` are the
@@ -789,7 +792,7 @@ Brings 15 years of unrelated professional background in adult education prior to
 
 // ── Main ─────────────────────────────────────────────────────────────
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   if (selfTestMode) {
     runSelfTest();
   } else {

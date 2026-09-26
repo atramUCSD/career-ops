@@ -21,6 +21,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { claudeCliArgs } from "./claude-invocation.mjs";
+import { capabilitiesFor } from "./worker-capabilities.mjs";
 import { resolvePdfPaths } from "./pdf-paths.mjs";
 import { renderAndMarkPdf } from "./pdf-render.mjs";
 import { parseClaudeEvent, isFatalClaudeStderr, accumulateTokens } from "./run-cli-support.mjs";
@@ -329,7 +330,7 @@ export function runNodeScript({ spawnFn, execPath, args, cwd, env, timeoutMs = C
  */
 export function runTailorWorker({ spawnWorker, binPath, prompt, cwd, env, killMs, signal, emit }) {
   return new Promise((resolve) => {
-    const child = spawnWorker(binPath, claudeCliArgs({ kind: "tailor", prompt }), { cwd, env });
+    const child = spawnWorker(binPath, claudeCliArgs({ kind: "tailor", prompt }), { cwd, env }, { cliId: "claude", capabilities: capabilitiesFor("tailor") });
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     let buf = "";
