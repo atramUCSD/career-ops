@@ -84,6 +84,7 @@ export function profileEnv(dir) {
     CAREER_OPS_CV: at('cv.md'),
     CAREER_OPS_ARTICLE_DIGEST: at('article-digest.md'),
     CAREER_OPS_PROFILE: at('config', 'profile.yml'),
+    CAREER_OPS_PROFILE_MODE: at('modes', '_profile.md'),
     CAREER_OPS_LANES: at('config', 'lanes.yml'),
     CAREER_OPS_PORTALS: at('portals.yml'),
     CAREER_OPS_PIPELINE: at('data', 'pipeline.md'),
@@ -102,7 +103,7 @@ export function profileEnv(dir) {
   };
 }
 
-const DIRS = ['config', 'data', 'data/tracker-additions', 'documents', 'output', 'reports', 'jds'];
+const DIRS = ['config', 'modes', 'data', 'data/tracker-additions', 'documents', 'output', 'reports', 'jds'];
 
 const TRACKER_HEADER = [
   '# Applications Tracker',
@@ -170,6 +171,7 @@ export function scaffold(name, { root = ROOT } = {}) {
   copy(join(root, 'config', 'lanes.example.yml'), 'config/lanes.yml');
   copy(join(root, 'config', 'lanes.yml'), 'config/lanes.yml');
   copy(join(root, 'templates', 'portals.example.yml'), 'portals.yml');
+  copy(join(root, 'modes', '_profile.template.md'), 'modes/_profile.md');
 
   return { dir, created };
 }

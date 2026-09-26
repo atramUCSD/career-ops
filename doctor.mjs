@@ -464,6 +464,7 @@ function checkScanExtractor(root) {
 const USER_LAYER_PREREQS = [
   {
     path: 'cv.md',
+    env: 'CAREER_OPS_CV',
     fix: [
       'Create cv.md in the project root with your CV in markdown',
       'See examples/ for reference CVs',
@@ -471,6 +472,7 @@ const USER_LAYER_PREREQS = [
   },
   {
     path: 'config/profile.yml',
+    env: 'CAREER_OPS_PROFILE',
     fix: [
       'Run: cp config/profile.example.yml config/profile.yml',
       'Then edit it with your details',
@@ -478,6 +480,7 @@ const USER_LAYER_PREREQS = [
   },
   {
     path: 'modes/_profile.md',
+    env: 'CAREER_OPS_PROFILE_MODE',
     fix: [
       'Run: cp modes/_profile.template.md modes/_profile.md',
       'Then customize your archetypes / targeting narrative',
@@ -485,6 +488,7 @@ const USER_LAYER_PREREQS = [
   },
   {
     path: 'portals.yml',
+    env: 'CAREER_OPS_PORTALS',
     fix: [
       'Run: cp templates/portals.example.yml portals.yml',
       'Then customize with your target companies',
@@ -492,8 +496,12 @@ const USER_LAYER_PREREQS = [
   },
 ];
 
+// The override wins so a run for a profile (profiles.mjs profileEnv) checks
+// that profile's files rather than reporting the owner's as present.
 function prereqPresent(root, path) {
-  return existsSync(join(root, ...path.split('/')));
+  const env = USER_LAYER_PREREQS.find(p => p.path === path)?.env;
+  const override = env && process.env[env];
+  return existsSync(override || join(root, ...path.split('/')));
 }
 
 function checkPrereq({ path, fix }) {
@@ -719,10 +727,12 @@ function onboardingState(root) {
     { target: 'voice-dna.md', template: 'voice-dna.template.md' },
   ];
   for (const { target, template } of templates) {
-    const targetPath = join(root, ...target.split('/'));
+    const env = USER_LAYER_PREREQS.find(p => p.path === target)?.env;
+    const targetPath = (env && process.env[env]) || join(root, ...target.split('/'));
     const templatePath = join(root, ...template.split('/'));
     if (!existsSync(targetPath) && existsSync(templatePath)) {
       try {
+        mkdirSync(dirname(targetPath), { recursive: true });
         copyFileSync(templatePath, targetPath);
         autoCopied.push(target);
       } catch {
