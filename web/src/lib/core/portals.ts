@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import * as yaml from "js-yaml";
-import { careerOpsRoot } from "@/lib/career-ops";
+import { userRoot } from "@/lib/career-ops";
 import { DEFAULT_FILTERS, cleanChips, type ExploreFilters } from "@/lib/explore";
 import { profileTargetKeywords } from "@/lib/profile-keywords.mjs";
 
@@ -50,7 +50,7 @@ export function cleanupTempPortals(file: string): void {
 
 function loadYaml(rel: string): Record<string, unknown> | null {
   try {
-    const doc = yaml.load(fs.readFileSync(path.join(careerOpsRoot(), rel), "utf8"));
+    const doc = yaml.load(fs.readFileSync(path.join(userRoot(), rel), "utf8"));
     return doc && typeof doc === "object" ? (doc as Record<string, unknown>) : null;
   } catch {
     return null;

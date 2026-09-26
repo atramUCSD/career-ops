@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import * as yaml from "js-yaml";
-import { careerOpsRoot } from "@/lib/career-ops";
+import { careerOpsRoot, userRoot } from "@/lib/career-ops";
 import { atomicWriteWithBackup } from "@/lib/core/safe-write";
 
 export const runtime = "nodejs";
@@ -27,14 +27,13 @@ export async function POST(req: Request) {
   const roles = (Array.isArray(body.roles) ? body.roles : []).map((r) => String(r).trim()).filter(Boolean).slice(0, 24);
   if (roles.length === 0) return Response.json({ error: "no roles" }, { status: 400 });
 
-  const root = careerOpsRoot();
-  const file = path.join(root, "portals.yml");
+  const file = path.join(userRoot(), "portals.yml");
   let doc: Record<string, unknown> = {};
   try {
     doc = (yaml.load(fs.readFileSync(file, "utf8")) as Record<string, unknown>) || {};
   } catch {
     try {
-      doc = (yaml.load(fs.readFileSync(path.join(root, "templates", "portals.example.yml"), "utf8")) as Record<string, unknown>) || {};
+      doc = (yaml.load(fs.readFileSync(path.join(careerOpsRoot(), "templates", "portals.example.yml"), "utf8")) as Record<string, unknown>) || {};
     } catch {
       doc = {};
     }

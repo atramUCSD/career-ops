@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { resolveCli } from "@/lib/clis";
-import { careerOpsRoot } from "@/lib/career-ops";
+import { careerOpsRoot, profilePreamble, spawnEnv } from "@/lib/career-ops";
 
 // Parse a CV (pasted text or an uploaded PDF) into clean cv.md markdown by running
 // the USER'S OWN CLI headless — the web never ships a heavyweight parser, and the
@@ -98,7 +98,7 @@ export async function POST(req: Request) {
     return Response.json({ error: `CLI '${cliId}' not found on this machine` }, { status: 404 });
   }
   const { spec, binPath } = resolved;
-  const prompt = ingestPrompt(promptSource);
+  const prompt = profilePreamble() + ingestPrompt(promptSource);
   const isClaude = cliId === "claude";
   const args = isClaude
     ? [
@@ -119,7 +119,7 @@ export async function POST(req: Request) {
 
   let child;
   try {
-    child = spawnHeadlessCli(binPath, args, { cwd: careerOpsRoot(), env: process.env });
+    child = spawnHeadlessCli(binPath, args, { cwd: careerOpsRoot(), env: await spawnEnv() });
   } catch (e) {
     if (tempFile) cleanupTemp(tempFile); // never leak the CV temp if spawn throws sync
     return Response.json({ error: e instanceof Error ? e.message : "failed to start the CLI" }, { status: 500 });

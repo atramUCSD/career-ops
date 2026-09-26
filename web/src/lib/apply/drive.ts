@@ -1,7 +1,7 @@
 import { spawnHeadlessCli } from "@/lib/spawn-cli.mjs";
 import type { Page, Frame } from "playwright-core";
 import { resolveCli } from "@/lib/clis";
-import { careerOpsRoot } from "@/lib/career-ops";
+import { careerOpsRoot, spawnEnv } from "@/lib/career-ops";
 import { dropNewTabs } from "./diagnose";
 import type { DriveStep } from "./issue";
 
@@ -55,11 +55,12 @@ async function snapshot(frame: Frame): Promise<{ text: string; n: number }> {
 }
 
 /** One planner turn (Claude-first: --resume keeps the loop's context cheaply). */
-function plannerTurn(binPath: string, prompt: string, resumeId: string | null): Promise<{ out: string; sessionId: string | null }> {
+async function plannerTurn(binPath: string, prompt: string, resumeId: string | null): Promise<{ out: string; sessionId: string | null }> {
   const base = resumeId ? ["-p", "--resume", resumeId, prompt] : ["-p", prompt];
   const args = [...base, "--output-format", "json", "--strict-mcp-config", "--disallowedTools", "Bash,Read,Write,Edit,NotebookEdit,Task,WebFetch,WebSearch,Glob,Grep"];
+  const env = await spawnEnv();
   return new Promise((resolve) => {
-    const child = spawnHeadlessCli(binPath, args, { cwd: careerOpsRoot(), env: process.env });
+    const child = spawnHeadlessCli(binPath, args, { cwd: careerOpsRoot(), env });
     let buf = "";
     child.stdout.on("data", (d: Buffer) => (buf += d.toString()));
     child.stderr.on("data", () => {});

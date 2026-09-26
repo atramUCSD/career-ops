@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
-import { careerOpsRoot, rootScript } from "@/lib/career-ops";
+import { careerOpsRoot, rootScript, spawnEnv } from "@/lib/career-ops";
 import { writeTempPortals, cleanupTempPortals } from "./portals";
 import { ATS_SOURCES, type DiscoveredOffer, type ExploreFilters, type ScanEvent } from "@/lib/explore";
 
@@ -80,9 +80,11 @@ type ScanJson = {
   offers?: JsonOffer[];
 };
 
-export function runDiscovery(filters: ExploreFilters, onEvent: (e: ScanEvent) => void): Promise<DiscoveredOffer[]> {
+export async function runDiscovery(filters: ExploreFilters, onEvent: (e: ScanEvent) => void): Promise<DiscoveredOffer[]> {
+  // The temp filter file wins over the profile's own portals.yml.
+  const tempPortals = writeTempPortals(filters);
+  const env = await spawnEnv({ CAREER_OPS_PORTALS: tempPortals });
   return new Promise((resolve) => {
-    const tempPortals = writeTempPortals(filters);
     const ats = (filters.ats.length ? filters.ats : [...ATS_SOURCES]).filter((a) => (ATS_SOURCES as readonly string[]).includes(a));
     const useJson = scannerSupportsJson();
     const args = [
@@ -99,7 +101,7 @@ export function runDiscovery(filters: ExploreFilters, onEvent: (e: ScanEvent) =>
 
     const child = spawn(process.execPath, args, {
       cwd: careerOpsRoot(),
-      env: { ...process.env, CAREER_OPS_PORTALS: tempPortals },
+      env,
     });
 
     const offers: DiscoveredOffer[] = [];

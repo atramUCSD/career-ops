@@ -37,6 +37,26 @@ production (the app ships inside the checkout), overridable with
 Never join paths from `process.cwd()` directly — that silently resolves to
 `web/` and reads a file that is not the user's.
 
+### Profiles
+
+`careerOpsRoot()` is the *code* root: scripts, `modes/`, templates, system
+files like `tracker-aliases.json`. The *data* root is `userRoot()` — the owner's
+checkout, or `profiles/<name>/` when a profile is active (the picker in the
+shell; `/api/profiles`). Join every user-layer path from `userRoot()`.
+
+- The active profile is a server-side file (`.career-ops-web/active-profile`),
+  not a cookie, so `userRoot()` stays synchronous. One server, one active
+  profile: every open tab follows a switch.
+- Spawned core scripts keep `cwd = careerOpsRoot()` and get
+  `env: await spawnEnv()`, which layers the core's `CAREER_OPS_*` overrides
+  (`profiles.mjs` `profileEnv`). A script with no override for a file it reads
+  needs an explicit path argument instead (see `review/page.tsx`).
+- Agent CLI prompts are prefixed with `profilePreamble()`, which tells the
+  agent where the profile's files are, because the agent's cwd is still the
+  code root.
+- For the owner, `spawnEnv()` is `process.env` and the preamble is empty, so
+  owner behaviour does not change.
+
 Call a core script through `rootScript("doctor")`, which assembles the `.mjs`
 suffix at runtime. This is not stylistic: Next's bundler statically traces a
 literal `"doctor.mjs"` passed to `execFile`/`spawn` as a module import and fails

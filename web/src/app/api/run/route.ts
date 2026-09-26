@@ -8,7 +8,7 @@ import path from "node:path";
 import { resolveCli } from "@/lib/clis";
 import { accumulateTokens, hasNewCompletedReport, isFatalGenericStderr, killMsForKind, timeoutMessage } from "@/lib/run-cli-support.mjs";
 import { spawnHeadlessCli } from "@/lib/spawn-cli.mjs";
-import { careerOpsRoot, readMemory, findReportFile, readInbox, readScanDates } from "@/lib/career-ops";
+import { careerOpsRoot, userRoot, spawnEnv, profilePreamble, readMemory, findReportFile, readInbox, readScanDates } from "@/lib/career-ops";
 import { resolvePdfPaths, type PdfPaths } from "@/lib/pdf-paths.mjs";
 import { renderAndMarkPdf, writeCvHtml, pdfRunOutcome } from "@/lib/pdf-render.mjs";
 import { createCvEnvelopeFilter, type CvEnvelope } from "@/lib/cv-envelope.mjs";
@@ -66,7 +66,7 @@ export async function POST(req: Request) {
 
   // An A–F score is meaningless without a CV to score against — the CLI would
   // hallucinate a fit narrative and still emit a VERDICT. Require cv.md first.
-  if ((kind === "evaluate" || kind === "pdf") && !fs.existsSync(path.join(careerOpsRoot(), "cv.md"))) {
+  if ((kind === "evaluate" || kind === "pdf") && !fs.existsSync(path.join(userRoot(), "cv.md"))) {
     return new Response(
       JSON.stringify({ error: "Add your CV first so I can score this against you — drop it on the home page." }),
       { status: 400, headers: { "Content-Type": "application/json" } },
@@ -82,7 +82,7 @@ export async function POST(req: Request) {
   // no longer told these paths, so a stale file cannot survive into a render.
   let pdfPaths: PdfPaths | undefined;
   if (kind === "pdf") {
-    const pathsResult = resolvePdfPaths(input, today, careerOpsRoot(), findReportFile);
+    const pathsResult = resolvePdfPaths(input, today, userRoot(), findReportFile);
     if (!pathsResult.ok) {
       return new Response(JSON.stringify({ error: pathsResult.error }), {
         status: 400,
@@ -102,7 +102,7 @@ export async function POST(req: Request) {
     kind === "evaluate"
       ? readInbox().find((j) => j.url === input)?.postedAt ?? readScanDates().get(input)
       : undefined;
-  const prompt = buildPrompt({ kind, input, memory: readMemory(), today, postedAt });
+  const prompt = profilePreamble() + buildPrompt({ kind, input, memory: readMemory(), today, postedAt });
 
   const isClaude = cliId === "claude";
   // Which tools each kind gets, and the whole claude argv, live in
@@ -125,7 +125,7 @@ export async function POST(req: Request) {
   // Names, not a count: reserving a number writes reports/NNN-RESERVED.md and the
   // final report REPLACES it, so the `.md` count is unchanged and a count-delta
   // gate reported "didn't save a report" for an evaluation that saved fine (#2085).
-  const reportsDir = path.join(careerOpsRoot(), "reports");
+  const reportsDir = path.join(userRoot(), "reports");
   const reportEntries = () => {
     try {
       return fs.readdirSync(reportsDir);
@@ -147,7 +147,8 @@ export async function POST(req: Request) {
   // every CLI-invoking route (assistant, explore/ai, cv/ingest, the apply planners),
   // which had the identical bug, and puts it behind one tested helper so it cannot
   // drift back in on any single call site.
-  const child = spawnHeadlessCli(binPath, args, { cwd: careerOpsRoot(), env: process.env });
+  const env = await spawnEnv();
+  const child = spawnHeadlessCli(binPath, args, { cwd: careerOpsRoot(), env });
   // Decode once on the stream, not per chunk. Buffer#toString() decodes each chunk
   // independently, so a chunk boundary falling inside a multi-byte UTF-8 sequence
   // yields a replacement character and mis-decodes the bytes after it. Those bytes
@@ -362,6 +363,7 @@ export async function POST(req: Request) {
             spawnFn: spawn,
             execPath: process.execPath,
             root: careerOpsRoot(),
+            env,
             pdfPaths: paths,
             format,
             reportNum: input,

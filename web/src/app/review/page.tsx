@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { careerOpsRoot, findReportFile, readApplications, rootScript } from "@/lib/career-ops";
+import { careerOpsRoot, findReportFile, readApplications, rootScript, spawnEnv, userRoot } from "@/lib/career-ops";
 import { matchClaims, reviewDelta } from "@/lib/review-diff.mjs";
 import { ReviewQueue, type ReviewItem } from "./review-queue";
 
@@ -19,8 +19,13 @@ async function uncertainClaims(): Promise<Claim[]> {
   const script = rootScript("story-provenance-check");
   if (!fs.existsSync(script)) return [];
   try {
-    const { stdout } = await execFileAsync(process.execPath, [script], {
+    // The checker's defaults are cwd-relative with no env override, so the
+    // active user layer's files are named explicitly.
+    const root = userRoot();
+    const args = [script, "--story-bank", path.join(root, "interview-prep", "story-bank.md"), "--cv", path.join(root, "cv.md")];
+    const { stdout } = await execFileAsync(process.execPath, args, {
       cwd: careerOpsRoot(),
+      env: await spawnEnv(),
       timeout: 15_000,
       windowsHide: true,
     });
@@ -46,7 +51,7 @@ function readOr(p: string | null, fallback = ""): string {
 }
 
 export default async function ReviewPage() {
-  const root = careerOpsRoot();
+  const root = userRoot();
   // Prepared = the Notes-cell marker, never a novel Status value (the tracker
   // Status stays canonical; see the bulk-prepare contract).
   const prepared = readApplications().filter(

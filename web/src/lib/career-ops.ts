@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { atomicWrite } from "@/lib/core/safe-write";
 import { parseApplications } from "@/lib/tracker-table.mjs";
 // One definition of the `{n}-RESERVED.md` convention, shared with
@@ -17,6 +18,101 @@ export function careerOpsRoot(): string {
   const env = process.env.CAREER_OPS_ROOT?.trim();
   if (env) return env;
   return path.resolve(process.cwd(), "..");
+}
+
+// ── Profiles ────────────────────────────────────────────────────────────────
+// careerOpsRoot() is the CODE: scripts, modes/, templates/. userRoot() is whose
+// DATA the app is showing: the owner's (the checkout itself) or a profile under
+// profiles/<name>/, the same user layer `node profiles.mjs` scaffolds.
+//
+// The selection lives in one server-side file, not a cookie. cookies() is async
+// in this Next, and a cookie would push an await into every sync reader below.
+// ponytail: one active profile per server, so every tab follows a switch. Move
+// to a cookie plus threaded roots if two people ever share one running app.
+
+// Mirrors profiles.mjs validName: a name becomes a directory, so reject, never sanitize.
+const PROFILE_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/i;
+
+function profilesDir(): string {
+  const env = process.env.CAREER_OPS_PROFILES_DIR?.trim();
+  return env ? path.resolve(env) : path.join(careerOpsRoot(), "profiles");
+}
+
+function activeProfileFile(): string {
+  return path.join(careerOpsRoot(), ".career-ops-web", "active-profile");
+}
+
+/** The selected profile's name, or null for the owner. A stale or tampered selection falls back to the owner. */
+export function activeProfile(): string | null {
+  let name: string;
+  try {
+    name = fs.readFileSync(activeProfileFile(), "utf8").trim();
+  } catch {
+    return null;
+  }
+  if (!PROFILE_NAME.test(name) || name === "." || name === "..") return null;
+  return fs.existsSync(path.join(profilesDir(), name)) ? name : null;
+}
+
+export function setActiveProfile(name: string | null): void {
+  if (name !== null && (!PROFILE_NAME.test(name) || !fs.existsSync(path.join(profilesDir(), name)))) {
+    throw new Error(`no such profile "${name}"`);
+  }
+  atomicWrite(activeProfileFile(), name ?? "");
+}
+
+/** Where the active user layer lives: cv.md, config/, data/, reports/, output/. */
+export function userRoot(): string {
+  const name = activeProfile();
+  return name ? path.join(profilesDir(), name) : careerOpsRoot();
+}
+
+type ProfilesModule = {
+  profileEnv: (dir: string) => Record<string, string>;
+  listProfiles: () => string[];
+  describe: (name: string) => { name: string; cv: boolean; profile: boolean; portals: boolean; pending: number };
+  scaffold: (name: string, opts?: { root?: string }) => { dir: string; created: string[] };
+  validName: (name: string) => boolean;
+};
+
+/** The core's profiles.mjs, so the override list has one definition. */
+export async function profilesModule(): Promise<ProfilesModule> {
+  const file = path.join(careerOpsRoot(), "profiles.mjs");
+  return import(/* webpackIgnore: true */ pathToFileURL(file).href);
+}
+
+/**
+ * Environment for a spawned core script: the active profile's CAREER_OPS_*
+ * overrides on top of this process's env. The owner gets process.env
+ * unchanged, so an owner run behaves exactly as it did before profiles.
+ */
+export async function spawnEnv(extra: Record<string, string> = {}): Promise<NodeJS.ProcessEnv> {
+  const name = activeProfile();
+  const overrides = name ? (await profilesModule()).profileEnv(path.join(profilesDir(), name)) : {};
+  return { ...process.env, ...overrides, ...extra };
+}
+
+/**
+ * Prompt preamble for an agent CLI. Its cwd has to stay the code root (it
+ * reads AGENTS.md and modes/ from there), and the modes name user files
+ * relative to that root, so a profile run has to be told where its files are.
+ * Empty for the owner.
+ */
+export function profilePreamble(): string {
+  const name = activeProfile();
+  if (!name) return "";
+  const rel = path.relative(careerOpsRoot(), path.join(profilesDir(), name)).split(path.sep).join("/");
+  return [
+    `ACTIVE PROFILE: ${name}. This run is for ${name}, not the repository owner.`,
+    `Every user-layer path in these instructions and in modes/ resolves under ${rel}/:`,
+    `read ${rel}/cv.md for cv.md, ${rel}/config/profile.yml for config/profile.yml,`,
+    `${rel}/modes/_profile.md for modes/_profile.md, and likewise for article-digest.md,`,
+    `portals.yml, data/, reports/, output/, jds/ and interview-prep/.`,
+    `Never read or write the owner's copies at the repository root. System files`,
+    `(modes/*.md other than _profile.md, templates/, *.mjs) stay at the root.`,
+    "",
+    "",
+  ].join("\n");
 }
 
 /**
@@ -42,7 +138,7 @@ export function trackerCanDelete(): boolean {
 
 function read(rel: string): string | null {
   try {
-    return fs.readFileSync(path.join(careerOpsRoot(), rel), "utf8");
+    return fs.readFileSync(path.join(userRoot(), rel), "utf8");
   } catch {
     return null;
   }
@@ -178,7 +274,7 @@ export function doctorState(): {
 } {
   const has = (rel: string) => {
     try {
-      return fs.existsSync(path.join(careerOpsRoot(), rel));
+      return fs.existsSync(path.join(userRoot(), rel));
     } catch {
       return false;
     }
@@ -205,7 +301,7 @@ export type PipelineSummary = {
 };
 
 export function pipelineSummary(): PipelineSummary {
-  const root = careerOpsRoot();
+  const root = userRoot();
   const scanDates = readScanDates();
   return {
     root,
@@ -242,7 +338,7 @@ export type ReportData = { content: string; file: string };
 export function findReportFile(n: string): string | null {
   const target = parseInt(n, 10);
   if (Number.isNaN(target)) return null;
-  const root = careerOpsRoot();
+  const root = userRoot();
   const app = readApplications().find((a) => parseInt(a.n, 10) === target);
   const linked = app?.report.match(/\]\(([^)]+)\)/)?.[1];
   if (linked) {
@@ -292,7 +388,7 @@ export function findApplication(n: string): Application | null {
  *  web assistant learns go HERE (single source of truth) inside a managed marker
  *  block — so the CLI sees them too. No web-only memory store (that would drift). */
 export function profilePath(): string {
-  return path.join(careerOpsRoot(), "modes", "_profile.md");
+  return path.join(userRoot(), "modes", "_profile.md");
 }
 
 const NOTES_START = "<!-- co-web-notes:start -->";
@@ -311,7 +407,7 @@ export function readMemory(): string {
     /* no _profile.md yet */
   }
   try {
-    return fs.readFileSync(path.join(careerOpsRoot(), ".career-ops-web", "memory.md"), "utf8").trim();
+    return fs.readFileSync(path.join(userRoot(), ".career-ops-web", "memory.md"), "utf8").trim();
   } catch {
     return "";
   }

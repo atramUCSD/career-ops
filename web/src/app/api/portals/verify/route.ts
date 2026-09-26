@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { careerOpsRoot, rootScript } from "@/lib/career-ops";
+import { careerOpsRoot, rootScript, spawnEnv, userRoot } from "@/lib/career-ops";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,15 +24,16 @@ export async function GET() {
   if (!fs.existsSync(verifyPortals)) {
     return Response.json({ available: false, configured: false, companies: [] });
   }
-  if (!fs.existsSync(path.join(root, "portals.yml"))) {
+  if (!fs.existsSync(path.join(userRoot(), "portals.yml"))) {
     return Response.json({ available: true, configured: false, companies: [] });
   }
 
+  const env = await spawnEnv();
   const stdout = await new Promise<string>((resolve) => {
     execFile(
       "node",
       [verifyPortals],
-      { cwd: root, timeout: 110_000, maxBuffer: 4 * 1024 * 1024 },
+      { cwd: root, env, timeout: 110_000, maxBuffer: 4 * 1024 * 1024 },
       (_e, out, err) => resolve((out || "") + (err || "")),
     );
   });

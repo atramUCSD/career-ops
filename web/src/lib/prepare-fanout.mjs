@@ -388,7 +388,9 @@ export function runTailorWorker({ spawnWorker, binPath, prompt, cwd, env, killMs
 
 /**
  * @typedef {Object} PrepareDeps
- * @property {string} root - careerOpsRoot().
+ * @property {string} root - careerOpsRoot(): scripts and the workers' cwd.
+ * @property {string} [userRoot] - userRoot(): reports, output, prepare state. Defaults to root.
+ * @property {string} [preamble] - profilePreamble(), prefixed to each tailor prompt.
  * @property {string} execPath - process.execPath.
  * @property {string} binPath - The agent CLI binary (Claude).
  * @property {string} today - YYYY-MM-DD.
@@ -417,7 +419,8 @@ export function runTailorWorker({ spawnWorker, binPath, prompt, cwd, env, killMs
 export async function runPrepareBatch(deps) {
   const { root, execPath, binPath, today, urls, emit, signal, spawnFn, spawnWorker, atomicWrite, inbox, rootScript, currentStatus } = deps;
   const baseEnv = deps.env ?? process.env;
-  const stateFile = prepareStateFile(root);
+  const userRoot = deps.userRoot ?? root;
+  const stateFile = prepareStateFile(userRoot);
   const now = () => new Date().toISOString();
   let prepared = 0;
   let failed = 0;
@@ -434,7 +437,7 @@ export async function runPrepareBatch(deps) {
   };
 
   emit({ type: "status", label: "Resolving shortlist…" });
-  const items = resolvePrepareItems({ urls, reportIndex: indexReportsByUrl(root), inbox, state: readPrepareState(stateFile) });
+  const items = resolvePrepareItems({ urls, reportIndex: indexReportsByUrl(userRoot), inbox, state: readPrepareState(stateFile) });
   for (const item of items.filter((i) => i.error)) failItem(item, item.error);
 
   // ── reserve + backfill (only items with no report at all) ────────────────
@@ -448,7 +451,8 @@ export async function runPrepareBatch(deps) {
     } else {
       toBackfill.forEach((item, i) => { item.reportNum = nums[i]; });
       // Backfill rows land through the ONLY row-adding path: TSV + merge-tracker.
-      const dir = path.join(root, "batch", "tracker-additions");
+      // merge-tracker reads CAREER_OPS_ADDITIONS when a profile sets it.
+      const dir = baseEnv.CAREER_OPS_ADDITIONS || path.join(root, "batch", "tracker-additions");
       for (const item of toBackfill) {
         const { line, fileName } = backfillTsvRow({ num: item.reportNum, date: today, company: item.company, role: item.role, url: item.url });
         atomicWrite(path.join(dir, fileName), line);
@@ -492,15 +496,15 @@ export async function runPrepareBatch(deps) {
     // findReportFile, which resolves tracker ROW numbers, a different number
     // space — with a synthetic basename for backfilled items so the company
     // slug still resolves (resolvePdfPaths only reads the basename off it).
-    const synthetic = path.join(root, "reports", `${n3}-${slug(item.company)}-${today}.md`);
-    const paths = resolvePdfPaths(n3, today, root, () => item.reportFile ?? synthetic);
+    const synthetic = path.join(userRoot, "reports", `${n3}-${slug(item.company)}-${today}.md`);
+    const paths = resolvePdfPaths(n3, today, userRoot, () => item.reportFile ?? synthetic);
     if (!paths.ok) { failItem(item, paths.error); continue; }
     const htmlPath = paths.paths.html;
     const answersPath = path.join(path.dirname(htmlPath), `answers-web-${n3}.json`);
     // A stale file from an earlier failed run must not fake a fresh success.
     for (const f of [htmlPath, answersPath]) { try { fs.rmSync(f, { force: true }); } catch { /* ignore */ } }
 
-    const prompt = buildTailorPrompt({
+    const prompt = (deps.preamble ?? "") + buildTailorPrompt({
       reportNum: item.reportNum, reportFile: item.reportFile, url: item.url,
       htmlRel: path.relative(root, htmlPath).split(path.sep).join("/"),
       answersRel: path.relative(root, answersPath).split(path.sep).join("/"),
@@ -518,7 +522,7 @@ export async function runPrepareBatch(deps) {
     // queue diffs against this exact HTML — hold it and restore it after.
     let htmlContent = null;
     try { htmlContent = fs.readFileSync(htmlPath, "utf8"); } catch { /* gate above saw it; race is theoretical */ }
-    const render = await renderAndMarkPdf({ spawnFn, execPath, root, pdfPaths: paths.paths, format: "letter", reportNum: n3 });
+    const render = await renderAndMarkPdf({ spawnFn, execPath, root, env: deps.env, pdfPaths: paths.paths, format: "letter", reportNum: n3 });
     if (render.kind === "render-failed") { failItem(item, render.error.slice(0, 200)); continue; }
     for (const w of render.warnings) emit({ type: "text", text: `⚠️ ${w}\n` });
     if (htmlContent !== null) atomicWrite(htmlPath, htmlContent);

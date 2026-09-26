@@ -170,4 +170,4 @@ data/intake-state.json
 
 # Profiles — a full user layer per person (profiles.mjs). Same reason cv.md and
 # data/ are ignored: this is someone else's CV, targeting and pipeline.
-profiles/
+/profiles/

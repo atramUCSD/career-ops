@@ -1,5 +1,5 @@
 import path from "node:path";
-import { careerOpsRoot } from "@/lib/career-ops";
+import { userRoot } from "@/lib/career-ops";
 import { withFollowupsLock, FollowupsBusyError } from "@/lib/core/followups-lock";
 
 export { FollowupsBusyError };
@@ -8,7 +8,7 @@ export { FollowupsBusyError };
 
 /** data/follow-ups.md — the follow-up log + next-date pins (user layer). */
 export function followupsLogPath(): string {
-  return path.join(careerOpsRoot(), "data", "follow-ups.md");
+  return path.join(userRoot(), "data", "follow-ups.md");
 }
 
 // In-process serialization of follow-up mutations: POST log derives the next

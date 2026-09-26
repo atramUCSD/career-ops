@@ -1,7 +1,7 @@
 import { spawnHeadlessCli } from "@/lib/spawn-cli.mjs";
 import type { Frame } from "playwright-core";
 import { resolveCli } from "@/lib/clis";
-import { careerOpsRoot } from "@/lib/career-ops";
+import { careerOpsRoot, spawnEnv } from "@/lib/career-ops";
 import type { ApplyField } from "./extract";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -79,10 +79,11 @@ Return ONLY a JSON array, no prose, no code fence:
 [{"n":0,"skip":false,"label":"First Name","type":"text","options":[],"required":true}, ...]`;
 }
 
-function runPlanner(binPath: string, isClaude: boolean, argsFor: (p: string) => string[], prompt: string): Promise<string> {
+async function runPlanner(binPath: string, isClaude: boolean, argsFor: (p: string) => string[], prompt: string): Promise<string> {
   const args = isClaude ? ["-p", prompt, "--permission-mode", "acceptEdits", "--strict-mcp-config", "--allowedTools", "Read", "--disallowedTools", "Bash,Write,Edit,NotebookEdit,Task,WebFetch,WebSearch"] : argsFor(prompt);
+  const env = await spawnEnv();
   return new Promise((resolve) => {
-    const child = spawnHeadlessCli(binPath, args, { cwd: careerOpsRoot(), env: process.env });
+    const child = spawnHeadlessCli(binPath, args, { cwd: careerOpsRoot(), env });
     let buf = "";
     child.stdout.on("data", (d: Buffer) => (buf += d.toString()));
     child.stderr.on("data", () => {});

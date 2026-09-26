@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { resolveCli } from "@/lib/clis";
-import { careerOpsRoot, readMemory } from "@/lib/career-ops";
+import { careerOpsRoot, profilePreamble, readMemory, spawnEnv } from "@/lib/career-ops";
 import { assembleDedupContext } from "@/lib/core/discover";
 
 // AI search orchestrates modes/discover.md by running the USER'S configured CLI
@@ -158,7 +158,7 @@ export async function POST(req: Request) {
   const memory = readMemory();
   const memoryLine = memory.trim() ? `\n\nWHAT YOU KNOW ABOUT THE USER (persistent memory):\n${memory.trim()}` : "";
   const knownBlock = lines.length ? `\n\n--- ALREADY KNOWN (dedup — do NOT propose these) ---\n${lines.join("\n")}` : "";
-  const prompt = `${mode}${OUTPUT_CONTRACT}${memoryLine}${knownBlock}\n\n--- USER INTENT ---\n${query}\n`;
+  const prompt = `${profilePreamble()}${mode}${OUTPUT_CONTRACT}${memoryLine}${knownBlock}\n\n--- USER INTENT ---\n${query}\n`;
 
   const isClaude = cliId === "claude";
   const isCodex = cliId === "codex";
@@ -242,7 +242,7 @@ export async function POST(req: Request) {
 
   const child = spawnHeadlessCli(binPath, args, {
     cwd: childCwd,
-    env: process.env,
+    env: await spawnEnv(),
     detached: useCodexProcessGroup,
   });
 

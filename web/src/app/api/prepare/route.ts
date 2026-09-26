@@ -22,7 +22,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { resolveCli } from "@/lib/clis";
 import { spawnHeadlessCli } from "@/lib/spawn-cli.mjs";
-import { careerOpsRoot, readApplications, readInbox, rootScript } from "@/lib/career-ops";
+import { careerOpsRoot, profilePreamble, readApplications, readInbox, rootScript, spawnEnv, userRoot } from "@/lib/career-ops";
 import { canonicalizeStatus } from "@/lib/core/states";
 import { atomicWrite } from "@/lib/core/safe-write";
 import { acquireTrackerWrite, releaseTrackerWrite } from "@/lib/core/run-registry";
@@ -64,7 +64,7 @@ export async function POST(req: Request) {
     return json({ error: "Bulk prepare runs on Claude Code only — its tool scopes are what keep ten headless workers write-restricted." }, 400);
   }
   // Tailoring is meaningless without a CV to tailor — same guard as /api/run's pdf kind.
-  if (!fs.existsSync(path.join(careerOpsRoot(), "cv.md"))) {
+  if (!fs.existsSync(path.join(userRoot(), "cv.md"))) {
     return json({ error: "Add your CV first so I can tailor it — drop it on the home page." }, 400);
   }
   // The web can run against a CAREER_OPS_ROOT that holds data and no scripts;
@@ -74,6 +74,7 @@ export async function POST(req: Request) {
   }
 
   const today = new Date().toISOString().slice(0, 10);
+  const env = await spawnEnv();
   const enc = new TextEncoder();
   // Render + stamp mutate the tracker; hold the write token for the batch so a
   // concurrent row delete can't race mark-pdf-ready/set-status mid-flight
@@ -124,6 +125,8 @@ export async function POST(req: Request) {
 
       runPrepareBatch({
         root: careerOpsRoot(),
+        userRoot: userRoot(),
+        preamble: profilePreamble(),
         execPath: process.execPath,
         binPath: resolved.binPath,
         today,
@@ -148,7 +151,7 @@ export async function POST(req: Request) {
           });
           return row ? canonicalizeStatus(row.status) : null;
         },
-        env: process.env,
+        env,
       })
         .catch((e: unknown) => {
           send({ type: "error", msg: `Bulk prepare crashed unexpectedly: ${e instanceof Error ? e.message : String(e)}`.slice(0, 200) });

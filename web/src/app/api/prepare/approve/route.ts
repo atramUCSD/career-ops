@@ -12,7 +12,7 @@ import { NextResponse } from "next/server";
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { careerOpsRoot, readApplications, rootScript } from "@/lib/career-ops";
+import { careerOpsRoot, readApplications, rootScript, spawnEnv } from "@/lib/career-ops";
 import { canonicalizeStatus } from "@/lib/core/states";
 import { clientErrorMessage, parseCliJson, trackerRowArg } from "@/lib/status-cli.mjs";
 import { boundedLockWaitEnv, CORE_SCRIPT_TIMEOUT_MS } from "@/lib/prepare-fanout.mjs";
@@ -27,7 +27,8 @@ const CLIENT_ERROR_CODES = new Set(["usage", "invalid-state"]);
 
 type CliResult = { code: number; stdout: string; stderr: string; spawnFailed: boolean; timedOut: boolean };
 
-function runSetStatus(args: string[]): Promise<CliResult> {
+async function runSetStatus(args: string[]): Promise<CliResult> {
+  const env = await spawnEnv(boundedLockWaitEnv(process.env));
   return new Promise((resolve) => {
     execFile(
       process.execPath,
@@ -35,7 +36,7 @@ function runSetStatus(args: string[]): Promise<CliResult> {
       {
         cwd: careerOpsRoot(),
         timeout: CORE_SCRIPT_TIMEOUT_MS,
-        env: { ...process.env, ...boundedLockWaitEnv(process.env) },
+        env,
       },
       (err, stdout, stderr) => {
         // Same three-way split as /api/status: non-zero exit, our kill

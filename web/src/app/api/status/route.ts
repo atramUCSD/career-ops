@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { execFile } from "node:child_process";
 import fs from "node:fs";
-import { careerOpsRoot, rootScript } from "@/lib/career-ops";
+import { careerOpsRoot, rootScript, spawnEnv } from "@/lib/career-ops";
 import { canonicalizeStatus } from "@/lib/core/states";
 import { parseCliJson, trackerRowArg, clientErrorMessage } from "@/lib/status-cli.mjs";
 
@@ -68,7 +68,8 @@ const CLIENT_ERROR_CODES = new Set(["usage", "invalid-state"]);
 
 type CliResult = { code: number; stdout: string; stderr: string; spawnFailed: boolean; timedOut: boolean };
 
-function runSetStatus(args: string[]): Promise<CliResult> {
+async function runSetStatus(args: string[]): Promise<CliResult> {
+  const env = await spawnEnv(boundedLockWait());
   return new Promise((resolve) => {
     execFile(
       process.execPath,
@@ -76,7 +77,7 @@ function runSetStatus(args: string[]): Promise<CliResult> {
       {
         cwd: careerOpsRoot(),
         timeout: SET_STATUS_TIMEOUT_MS,
-        env: { ...process.env, ...boundedLockWait() },
+        env,
       },
       (err, stdout, stderr) => {
         // execFile reports three different things through one error object: a

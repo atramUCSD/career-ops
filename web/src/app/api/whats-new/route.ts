@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { careerOpsRoot, readApplications } from "@/lib/career-ops";
+import { readApplications, userRoot } from "@/lib/career-ops";
 import { getNormalizeTextKey } from "@/lib/core/text-key";
 import { evaluatedKeys, isEvaluated } from "@/lib/whats-new-suppression.mjs";
 import type { DiscoveredOffer } from "@/lib/explore";
@@ -29,7 +29,7 @@ export async function GET(req: Request) {
   const cutoff = Date.now() - days * 86_400_000;
   let rows: string[];
   try {
-    rows = fs.readFileSync(path.join(careerOpsRoot(), "data", "scan-history.tsv"), "utf8").split("\n");
+    rows = fs.readFileSync(path.join(userRoot(), "data", "scan-history.tsv"), "utf8").split("\n");
   } catch {
     return Response.json({ offers: [], count: 0 });
   }

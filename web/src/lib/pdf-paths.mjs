@@ -41,7 +41,7 @@ export function slugify(s) {
  *
  * @param {string} input - The report number (e.g. "018").
  * @param {string} today - YYYY-MM-DD.
- * @param {string} root - careerOpsRoot().
+ * @param {string} root - userRoot(): profile.yml, output/ and the scratch dir are per-user.
  * @param {(input: string) => string | null} findReportFile - career-ops.ts's findReportFile.
  * @returns {{ok: true, paths: PdfPaths} | {ok: false, error: string}}
  */

@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { careerOpsRoot, rootScript } from "@/lib/career-ops";
+import { careerOpsRoot, rootScript, spawnEnv } from "@/lib/career-ops";
 import type { DiscoveredOffer } from "./scan";
 
 /**
@@ -19,7 +19,7 @@ import type { DiscoveredOffer } from "./scan";
  */
 export type AddResult = { added: number; error?: string };
 
-export function addOffersToPipeline(offers: DiscoveredOffer[]): Promise<AddResult> {
+export async function addOffersToPipeline(offers: DiscoveredOffer[]): Promise<AddResult> {
   const clean = offers
     .filter((o) => o && typeof o.url === "string" && /^https?:\/\//i.test(o.url))
     .map((o) => ({
@@ -64,10 +64,13 @@ process.stdin.on("end", async () => {
 });
 `;
 
+  // scan.mjs resolves pipeline.md and scan-history.tsv from CAREER_OPS_* at load,
+  // so the profile overrides route the writes into the active user layer.
+  const env = await spawnEnv();
   return new Promise((resolve) => {
     const child = spawn(process.execPath, ["--input-type=module", "-e", code], {
       cwd: careerOpsRoot(),
-      env: process.env,
+      env,
     });
     let out = "";
     let err = "";

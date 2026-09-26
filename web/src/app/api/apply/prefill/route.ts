@@ -2,7 +2,7 @@ import { spawnHeadlessCli } from "@/lib/spawn-cli.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { resolveCli } from "@/lib/clis";
-import { careerOpsRoot, readMemory } from "@/lib/career-ops";
+import { careerOpsRoot, userRoot, spawnEnv, profilePreamble, readMemory } from "@/lib/career-ops";
 import { getSession } from "@/lib/apply/session";
 import { extractJsonObject } from "@/lib/extract-json-object.mjs";
 
@@ -25,7 +25,7 @@ export async function POST(req: Request) {
   const { sessionId, cliId } = body;
   const t0 = Date.now();
   const encoder = new TextEncoder();
-  const logPath = path.join(careerOpsRoot(), ".career-ops-web", "apply-prefill.log");
+  const logPath = path.join(userRoot(), ".career-ops-web", "apply-prefill.log");
   try {
     fs.mkdirSync(path.dirname(logPath), { recursive: true });
   } catch {
@@ -71,7 +71,7 @@ export async function POST(req: Request) {
         .map((f) => `${f.id}\t${f.type}${f.required ? "*" : ""}\t${f.label}${f.options ? `\t[options: ${f.options.join(" | ")}]` : ""}`)
         .join("\n");
       const mem = readMemory().trim();
-      const prompt = `You are pre-filling a job application for the user (company/role: ${s.title}). Read cv.md and config/profile.yml; if a matching report for this company exists in reports/, read it too. Ground EVERY answer in the REAL candidate — never invent facts.${mem ? `\n\nDurable notes about the user:\n${mem}` : ""}
+      const prompt = profilePreamble() + `You are pre-filling a job application for the user (company/role: ${s.title}). Read cv.md and config/profile.yml; if a matching report for this company exists in reports/, read it too. Ground EVERY answer in the REAL candidate — never invent facts.${mem ? `\n\nDurable notes about the user:\n${mem}` : ""}
 
 FIELDS (id ⇥ type ⇥ label ⇥ options):
 ${fieldsList}
@@ -98,10 +98,11 @@ Output ONLY a compact JSON object mapping each field id → {"value": "...", "ne
       const killMs = Math.min(300_000, 150_000 + s.fields.length * 6_000);
       log(`Spawning planner (timeout ${Math.round(killMs / 1000)}s)…`);
 
+      const env = await spawnEnv();
       const result = await new Promise<{ buf: string; code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
         // spawnHeadlessCli closes stdin right after spawning, so the CLI doesn't
         // wait on piped input that will never arrive.
-        const child = spawnHeadlessCli(binPath, args, { cwd: careerOpsRoot(), env: process.env });
+        const child = spawnHeadlessCli(binPath, args, { cwd: careerOpsRoot(), env });
         let buf = "";
         let firstByteAt = 0;
         const hb = setInterval(() => {

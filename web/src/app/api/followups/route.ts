@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import fs from "node:fs";
-import { careerOpsRoot, rootScript } from "@/lib/career-ops";
+import { careerOpsRoot, rootScript, spawnEnv } from "@/lib/career-ops";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,8 +14,9 @@ export async function GET(req: Request) {
   const full = new URL(req.url).searchParams.get("full") === "1";
   const script = rootScript("followup-cadence");
   if (!fs.existsSync(script)) return Response.json({ available: false, metadata: null, entries: [] });
+  const env = await spawnEnv();
   const stdout = await new Promise<string>((resolve) => {
-    execFile("node", [script, "--json"], { cwd: careerOpsRoot(), timeout: 12_000 }, (_e, out) => resolve(out || ""));
+    execFile("node", [script, "--json"], { cwd: careerOpsRoot(), env, timeout: 12_000 }, (_e, out) => resolve(out || ""));
   });
   try {
     const start = stdout.indexOf("{");

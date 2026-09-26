@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import * as yaml from "js-yaml";
-import { careerOpsRoot } from "@/lib/career-ops";
+import { careerOpsRoot, userRoot } from "@/lib/career-ops";
 import { atomicWriteWithBackup } from "@/lib/core/safe-write";
 
 export const runtime = "nodejs";
@@ -65,8 +65,7 @@ export async function POST(req: Request) {
   const proposed = patchToProfile(patch);
   if (Object.keys(proposed).length === 0) return Response.json({ error: "nothing to write" }, { status: 400 });
 
-  const root = careerOpsRoot();
-  const file = path.join(root, "config", "profile.yml");
+  const file = path.join(userRoot(), "config", "profile.yml");
   let base: Record<string, unknown> = {};
   let seeded = false;
   // DATA-LOSS GUARD (maintainer, bug-class #649/#704/#920/#958): distinguish
@@ -74,7 +73,7 @@ export async function POST(req: Request) {
   // malformed" (NEVER overwrite — that would silently destroy the user's data).
   if (!fs.existsSync(file)) {
     try {
-      base = (yaml.load(fs.readFileSync(path.join(root, "config", "profile.example.yml"), "utf8")) as Record<string, unknown>) || {};
+      base = (yaml.load(fs.readFileSync(path.join(careerOpsRoot(), "config", "profile.example.yml"), "utf8")) as Record<string, unknown>) || {};
       seeded = Object.keys(base).length > 0;
     } catch {
       base = {};
