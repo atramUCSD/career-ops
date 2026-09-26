@@ -45,6 +45,7 @@ import { profileDir } from './profiles.mjs';
 const ROOT = dirname(fileURLToPath(import.meta.url));
 export const BAND_WEIGHT = { premier: 3, strong: 2, ordinary: 1 };
 const HAT_LABEL = { designer: 'designer', developer: 'developer', ai_advocate: 'AI advocate' };
+const CV_STATES = ['missing', 'shown', 'named'];
 
 // Widened to the whole word so the stem 'prototyp' reports as the JD's own
 // 'prototyping'; the most common spelling across the corpus labels the term.
@@ -126,7 +127,7 @@ export function heatMap(postings, cvText) {
 export function postingTerms(text, cvText) {
   const cv = readCv(cvText);
   return [...termsIn(text)].map(([id, { hat, spelling }]) => ({ term: spelling, hat, cv: cvStatusFor(id, cv) }))
-    .sort((a, b) => ['missing', 'shown', 'named'].indexOf(a.cv) - ['missing', 'shown', 'named'].indexOf(b.cv));
+    .sort((a, b) => CV_STATES.indexOf(a.cv) - CV_STATES.indexOf(b.cv));
 }
 
 const cachePath = url => join(ROOT, 'data/jd-cache', `${createHash('sha1').update(url).digest('hex')}.txt`);
@@ -210,7 +211,7 @@ async function main(args) {
     }
     const terms = postingTerms(readFileSync(path, 'utf8'), cvText);
     if (!hasFlag(args, '--summary')) return console.log(JSON.stringify(terms, null, 2));
-    for (const state of ['missing', 'shown', 'named']) {
+    for (const state of CV_STATES) {
       const list = terms.filter(t => t.cv === state).map(t => t.term);
       if (list.length) console.log(`${{ missing: 'Gaps (add only if true)', shown: 'Name in Skills', named: 'Covered' }[state]}: ${list.join(', ')}`);
     }
