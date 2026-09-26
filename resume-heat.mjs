@@ -24,6 +24,12 @@
  *   node resume-heat.mjs --jd <file>       one JD file against cv.md
  *   node resume-heat.mjs --top 40          rows per table (default 25)
  *   node resume-heat.mjs --cv <file>       read a draft instead of cv.md (before/after)
+ *   node resume-heat.mjs --profile alex    profiles/alex: their pipeline, scoring, cv.md, output/
+ *
+ * --profile follows build-artifact's --root: the whole user layer moves, not
+ * just the CV. Reading only CAREER_OPS_CV would score the owner's pipeline
+ * against someone else's resume. The JD cache is keyed by posting URL, so it
+ * stays shared.
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -34,6 +40,7 @@ import { extractSkills } from './skill-extract.mjs';
 import { splitSkillsSection } from './jd-skill-gap.mjs';
 import { flagValue, hasFlag, safeIntFlag } from './lib/cli-flags.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
+import { profileDir } from './profiles.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 export const BAND_WEIGHT = { premier: 3, strong: 2, ordinary: 1 };
@@ -124,9 +131,9 @@ export function postingTerms(text, cvText) {
 
 const cachePath = url => join(ROOT, 'data/jd-cache', `${createHash('sha1').update(url).digest('hex')}.txt`);
 
-async function loadPostings() {
+async function loadPostings(root) {
   const { buildModel } = await import('./build-artifact.mjs');
-  return buildModel({}).rows
+  return buildModel({ root }).rows
     .map(r => ({ url: r.u, company: r.c, title: r.t, score: r.cb, band: r.cbBand, path: cachePath(r.u) }))
     .filter(r => existsSync(r.path))
     .map(r => ({ ...r, text: readFileSync(r.path, 'utf8') }));
@@ -184,7 +191,14 @@ ${rows.map(t => `<tr><td>${esc(t.term)}</td><td class="kind">${hatTag(t.hat)}</t
 
 async function main(args) {
   const top = safeIntFlag(flagValue(args, '--top'), 25);
-  const cvText = readFileSync(flagValue(args, '--cv') || join(ROOT, 'cv.md'), 'utf8');
+  const profile = flagValue(args, '--profile');
+  const root = profile ? profileDir(profile) : ROOT;
+  if (!existsSync(root)) {
+    console.error(`No profile "${profile}". Create it with \`node profiles.mjs new ${profile}\`.`);
+    process.exitCode = 1;
+    return;
+  }
+  const cvText = readFileSync(flagValue(args, '--cv') || join(root, 'cv.md'), 'utf8');
   const url = flagValue(args, '--url'), jd = flagValue(args, '--jd');
 
   if (url || jd) {
@@ -203,7 +217,7 @@ async function main(args) {
     return;
   }
 
-  const postings = await loadPostings();
+  const postings = await loadPostings(root);
   if (!postings.length) {
     console.error('No cached descriptions. Run `node enrich-jd.mjs` first.');
     process.exitCode = 1;
@@ -211,10 +225,10 @@ async function main(args) {
   }
   const map = heatMap(postings, cvText);
   if (hasFlag(args, '--html')) {
-    mkdirSync(join(ROOT, 'output'), { recursive: true });
-    const out = join(ROOT, 'output/resume-heat.html');
+    mkdirSync(join(root, 'output'), { recursive: true });
+    const out = join(root, 'output/resume-heat.html');
     writeFileSync(out, renderHtml(map, top));
-    console.log(`output/resume-heat.html: ${map.terms.length} terms across ${map.reachable} postings`);
+    console.log(`${out}: ${map.terms.length} terms across ${map.reachable} postings`);
   } else if (hasFlag(args, '--summary')) printSummary(map, top);
   else console.log(JSON.stringify(map, null, 2));
 }
