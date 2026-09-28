@@ -119,11 +119,13 @@ const TRACKER_HEADER = [
 
 const PIPELINE_HEADER = ['# Pipeline', '', '## Pending', '', ''].join('\n');
 
+const STUB_NOTE = '> Until it is real, every score in this profile is scored against a stub.';
+
 const CV_STUB = [
   '# {NAME}',
   '',
   '> Replace this file with their CV before scanning or evaluating anything.',
-  '> Until it is real, every score in this profile is scored against a stub.',
+  STUB_NOTE,
   '',
   '## Summary',
   '',
@@ -132,6 +134,13 @@ const CV_STUB = [
   '## Skills',
   '',
 ].join('\n');
+
+/**
+ * A scaffolded cv.md exists, so an existence check calls the profile ready
+ * while every evaluation scores against an empty CV. The stub's own note is
+ * the marker: a real CV pasted over it drops the line.
+ */
+export const isStubCv = (text) => text.includes(STUB_NOTE);
 
 /**
  * Scaffold a profile. Copies rather than symlinks the shared config so the

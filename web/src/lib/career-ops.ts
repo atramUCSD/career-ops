@@ -99,13 +99,44 @@ type ProfilesModule = {
   pendingCount: (dir: string) => number;
   scaffold: (name: string, opts?: { root?: string }) => { dir: string; created: string[] };
   validName: (name: string) => boolean;
+  isStubCv: (text: string) => boolean;
 };
 
-/** The core's profiles.mjs, so the override list has one definition. */
-export async function profilesModule(): Promise<ProfilesModule> {
-  const file = path.join(careerOpsRoot(), "profiles.mjs");
-  return import(/* webpackIgnore: true */ pathToFileURL(file).href);
+/**
+ * A core root module, imported at runtime so the bundler never traces it.
+ * Only for modules whose import is side-effect free apart from dotenv, which
+ * reads web/.env and changes nothing Next has not already loaded.
+ */
+export function coreModule<T>(nameNoExt: string): Promise<T> {
+  return import(/* webpackIgnore: true */ pathToFileURL(rootScript(nameNoExt)).href);
 }
+
+/** The core's profiles.mjs, so the override list has one definition. */
+export function profilesModule(): Promise<ProfilesModule> {
+  return coreModule<ProfilesModule>("profiles");
+}
+
+export type AlertsConfig = {
+  enabled: boolean;
+  to: string;
+  min_match: number;
+  max_rows: number;
+  quiet_if_empty: boolean;
+  attach_artifact: boolean;
+};
+
+/** The parts of notify-email.mjs Home reads. Composing sends nothing and writes nothing. */
+export type NotifyModule = {
+  loadConfig: (root: string) => AlertsConfig;
+  loadState: (root: string) => { lastRun: string | null };
+  composeRun: (opts: { root: string }) => {
+    quiet: boolean;
+    subject: string;
+    html: string;
+    to: string;
+    counts: { fresh: number; upgraded: number; retired: number; pending: number };
+  };
+};
 
 /**
  * Environment for a spawned core script: the active profile's CAREER_OPS_*
