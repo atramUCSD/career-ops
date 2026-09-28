@@ -9,9 +9,20 @@ const OWNER = "";
 const NEW = "\u0000new";
 
 /** "vivian-chiong" -> "VC", "alex" -> "AL". */
-function initials(name: string): string {
+export function initials(name: string): string {
   const parts = name.split(/[-._\s]+/).filter(Boolean);
   return (parts.length > 1 ? parts[0][0] + parts[1][0] : name.slice(0, 2)).toUpperCase();
+}
+
+/** POST /api/profiles ({select} or {create}); throws the server's error. */
+export async function postProfiles(body: object): Promise<void> {
+  const r = await fetch("/api/profiles", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
 }
 
 // Whose user layer the app shows. A switch reloads the page rather than
@@ -41,13 +52,7 @@ export function ProfilePicker() {
     setBusy(true);
     setError(null);
     try {
-      const r = await fetch("/api/profiles", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      await postProfiles(body);
       then();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

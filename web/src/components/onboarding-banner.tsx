@@ -6,7 +6,7 @@ import { Sparkles, X, Settings } from "lucide-react";
 
 type Doctor = { available: boolean; onboardingNeeded: boolean; missing: string[]; warnings: string[] };
 
-function hasCli(): boolean {
+export function hasCli(): boolean {
   try {
     return !!JSON.parse(localStorage.getItem("career-ops:config") || "{}").cliId;
   } catch {

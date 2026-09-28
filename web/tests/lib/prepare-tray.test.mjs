@@ -1,5 +1,5 @@
 // Subtask C — shortlist-tray "Prepare N" wiring. TSX cannot be imported by
-// node --test, so structure is asserted on source (decision-card-cta pattern)
+// node --test, so structure is asserted on source (first-run-copy pattern)
 // and the pure characterizeBatch function is extracted and actually executed.
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";

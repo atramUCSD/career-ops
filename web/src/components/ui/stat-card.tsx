@@ -22,7 +22,7 @@ export function StatCard({
 }: {
   href: string;
   icon: React.ComponentType<{ className?: string }>;
-  value: number | string;
+  value: React.ReactNode;
   label: string;
   hint: string;
   featured?: boolean;

@@ -45,6 +45,9 @@
   --color-info: var(--info);
   --color-info-text: var(--info-text);
   --color-info-soft: var(--info-soft);
+  --color-boost: var(--boost);
+  --color-boost-text: var(--boost-text);
+  --color-boost-soft: var(--boost-soft);
 }
 
 :root {
@@ -71,6 +74,10 @@
   --info: #016BF8;
   --info-text: #083C90; /* blue.base is 4.25:1 on info-soft */
   --info-soft: #E1F7FF;
+  /* Boost is its own hue: LeafyGreen's brand green is also its success green. */
+  --boost: #B45AF2;
+  --boost-text: #5E0C9E;
+  --boost-soft: #F9EBFF;
   --dot: 196 7% 56% / 0.14;
   --pre-bg: #F9FBFA;
   color-scheme: light;
@@ -100,6 +107,9 @@
   --info: #0498EC;
   --info-text: #0498EC;
   --info-soft: #0C2657;
+  --boost: #B45AF2;
+  --boost-text: #F1D4FD;
+  --boost-soft: #2D0B59;
   --dot: 196 7% 56% / 0.16;
   --pre-bg: #112733;
   color-scheme: dark;

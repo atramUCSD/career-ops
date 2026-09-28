@@ -10,7 +10,7 @@ import { test } from "node:test";
 // — while the bug this PR fixes is fully back: Config renders a selected CLI over
 // an empty localStorage key, and every AI surface that reads that key silently
 // does nothing. These assertions cover that wiring, in the source-reading style of
-// first-run-copy.test.mjs and decision-card-cta.test.mjs.
+// first-run-copy.test.mjs.
 
 const src = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "../../src/components/config-form.tsx"),
