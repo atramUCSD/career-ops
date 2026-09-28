@@ -132,9 +132,10 @@ export function assertParsedSomething(html, url) {
 /** @param {string} htmlText @param {string} origin */
 export function parseArticles(htmlText, origin) {
   const out = [];
-  // Tenants vary the result class: Synopsys uses `article--result`, Siemens
-  // appends a position index (`article--result 1`). Accept any suffix.
-  const re = /<article class="article article--result[^"]*"[\s\S]*?<\/article>/g;
+  // Tenants vary the result class: Synopsys uses `article article--result`,
+  // Siemens appends a position index (`article--result 1`), Deloitte drops the
+  // leading `article` (`article--result `). Accept all three.
+  const re = /<article class="(?:article )?article--result[^"]*"[\s\S]*?<\/article>/g;
   let a;
   while ((a = re.exec(htmlText)) !== null) {
     const block = a[0];

@@ -64,8 +64,14 @@ try {
     </article>
     <article class="article article--result" id="article--2">
       <h3 class="title"><a href="https://acme.avature.net/en_US/careers/JobDetail/Director-Platform/13672">Director Platform Engineering</a></h3>
+    </article>
+    <article class="article--result " data-total="999+">
+      <h3 class="article__header__text__title"><a href="https://acme.avature.net/en_US/careers/JobDetail/Forward-Deployed-Engineer/368657" class="link">Forward Deployed Engineer</a></h3>
     </article>`;
   const vArts = parseArticles(variants, origin);
+  const vBare = vArts.find((a) => a.id === '368657');
+  if (vBare && vBare.title === 'Forward Deployed Engineer') pass('parseArticles handles a bare "article--result" class (Deloitte)');
+  else fail(`parseArticles missed the bare-class variant: ${JSON.stringify(vArts.map((a) => a.id))}`);
   const vSuffix = vArts.find((a) => a.id === '511918');
   if (vSuffix && vSuffix.title === 'Head of PLM') pass('parseArticles handles the "article--result 1" class suffix (Siemens)');
   else fail(`parseArticles missed the class-suffix variant: ${JSON.stringify(vArts.map((a) => a.id))}`);
