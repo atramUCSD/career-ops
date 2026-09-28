@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { MotionConfig } from "motion/react";
 import { cn } from "@/lib/cn";
 import { CoMark } from "@/components/co-mark";
 import { AssistantConsole } from "@/components/assistant-console";
@@ -23,6 +24,8 @@ import { NAV_ITEMS, isActivePath } from "@/lib/nav-items";
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   return (
+    // One switch for every motion visual: transforms go instant under reduced motion.
+    <MotionConfig reducedMotion="user">
     <JobsProvider>
       <PipelineProvider>
       <ApplyProvider>
@@ -67,10 +70,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="mt-auto space-y-3 pt-4">
             <ProfilePicker />
             <UsageMeter />
-            <div className="flex items-center justify-between px-1">
-              <span className={`${instrumentSerif.className} text-sm text-faint`}>local-first · v0</span>
-              <ThemeToggle />
-            </div>
+            <ThemeToggle className="w-full" />
+            <p className={`${instrumentSerif.className} px-1 text-sm text-faint`}>local-first · v0</p>
           </div>
         </aside>
         <main className="flex-1 overflow-x-hidden">{children}</main>
@@ -83,5 +84,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </ApplyProvider>
       </PipelineProvider>
     </JobsProvider>
+    </MotionConfig>
   );
 }

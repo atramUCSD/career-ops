@@ -14,10 +14,9 @@ import { useExplore } from "./explore-provider";
 const STYLE = `
 .co-aihunt{position:relative;z-index:1;display:flex;min-height:72vh;flex-direction:column;align-items:center;gap:1.2rem;padding:2.5rem 1rem 2rem;text-align:center}
 .co-aiorb{position:relative;display:grid;place-items:center;width:4rem;height:4rem}
-.co-aiorb__glow{position:absolute;inset:0;border-radius:50%;background:hsl(26 80% 55% /.28);filter:blur(18px);animation:co-aiorb-pulse 2.4s ease-in-out infinite}
-.co-aiorb__ring{position:absolute;inset:0;border-radius:50%;border:2px solid hsl(26 73% 51% /.25);border-top-color:hsl(26 73% 51%);animation:co-aiorb-spin 1.1s linear infinite}
-.co-ailedger{display:inline-flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:.45rem;border-radius:999px;border:1px solid hsl(26 73% 51% /.3);background:hsl(26 73% 51% /.1);color:hsl(26 78% 43%);padding:.4rem .9rem;font-size:12.5px;font-weight:600}
-html.dark .co-ailedger{color:hsl(26 86% 67%)}
+.co-aiorb__glow{position:absolute;inset:0;border-radius:50%;background:color-mix(in srgb,var(--brand) 28%,transparent);filter:blur(18px);animation:co-aiorb-pulse 2.4s ease-in-out infinite}
+.co-aiorb__ring{position:absolute;inset:0;border-radius:50%;border:2px solid color-mix(in srgb,var(--brand) 25%,transparent);border-top-color:var(--brand);animation:co-aiorb-spin 1.1s linear infinite}
+.co-ailedger{display:inline-flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:.45rem;border-radius:999px;border:1px solid color-mix(in srgb,var(--brand) 30%,transparent);background:color-mix(in srgb,var(--brand) 10%,transparent);color:var(--brand-text);padding:.4rem .9rem;font-size:12.5px;font-weight:600}
 @keyframes co-aiorb-spin{to{transform:rotate(360deg)}}
 @keyframes co-aiorb-pulse{0%,100%{opacity:.6;transform:scale(.92)}50%{opacity:1;transform:scale(1.08)}}
 @media(prefers-reduced-motion:reduce){.co-aiorb__ring,.co-aiorb__glow{animation:none}}

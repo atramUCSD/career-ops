@@ -110,8 +110,8 @@ export function MobileNav() {
           <CoMark size={26} />
           <span className={`${instrumentSerif.className} relative -top-px text-xl text-landing`}>career-ops</span>
         </Link>
-        <div className="ml-auto flex items-center gap-0.5">
-          <ThemeToggle />
+        <div className="ml-auto flex items-center gap-1">
+          <ThemeToggle labels={false} />
           <button
             type="button"
             onClick={() => setOpen(true)}
@@ -183,10 +183,8 @@ export function MobileNav() {
         <div className="co-msafe mt-auto space-y-3 border-t border-border px-4 pt-4">
           <ProfilePicker />
           <UsageMeter />
-          <div className="flex items-center justify-between">
-            <span className={`${instrumentSerif.className} text-sm text-faint`}>local-first · v0</span>
-            <ThemeToggle />
-          </div>
+          <ThemeToggle className="w-full" />
+          <p className={`${instrumentSerif.className} text-sm text-faint`}>local-first · v0</p>
         </div>
       </aside>
     </>

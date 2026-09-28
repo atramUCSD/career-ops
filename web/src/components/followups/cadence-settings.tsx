@@ -95,7 +95,7 @@ export function CadenceSettings() {
         </p>
         {loadError ? (
           <div className="mt-3 text-sm text-muted">
-            <p className="text-red-500">
+            <p className="text-bad-text">
               Couldn&apos;t read your current cadence settings — not showing defaults, to avoid overwriting real values in{" "}
               <span className="font-mono">config/profile.yml</span>.
             </p>
@@ -129,7 +129,7 @@ export function CadenceSettings() {
                 </label>
               ))}
             </div>
-            {error && <p className="mt-3 text-xs text-red-500">{error}</p>}
+            {error && <p className="mt-3 text-xs text-bad-text">{error}</p>}
             <button
               type="button"
               onClick={save}
@@ -139,7 +139,7 @@ export function CadenceSettings() {
                 "disabled:pointer-events-none disabled:opacity-60",
               )}
             >
-              {saving ? <Loader2 className="size-3.5 animate-spin" /> : saved ? <Check className="size-3.5 text-emerald-400" /> : null}
+              {saving ? <Loader2 className="size-3.5 animate-spin" /> : saved ? <Check className="size-3.5 text-good" /> : null}
               {saved ? "Saved" : "Save cadence"}
             </button>
           </>

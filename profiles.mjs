@@ -188,16 +188,21 @@ export function listProfiles() {
     .sort();
 }
 
+/** Unchecked rows in a user layer's data/pipeline.md; 0 when it has none. */
+export function pendingCount(dir) {
+  const pipelinePath = join(dir, 'data', 'pipeline.md');
+  if (!existsSync(pipelinePath)) return 0;
+  let pending = 0;
+  for (const line of readFileSync(pipelinePath, 'utf-8').split('\n')) {
+    if (/^\s*[-*]\s*\[ \]/.test(line)) pending++;
+  }
+  return pending;
+}
+
 /** Rows for `list`: what exists in each profile, without loading any of it. */
 export function describe(name) {
   const dir = profileDir(name);
-  const pipelinePath = join(dir, 'data', 'pipeline.md');
-  let pending = 0;
-  if (existsSync(pipelinePath)) {
-    for (const line of readFileSync(pipelinePath, 'utf-8').split('\n')) {
-      if (/^\s*[-*]\s*\[ \]/.test(line)) pending++;
-    }
-  }
+  const pending = pendingCount(dir);
   return {
     name,
     dir,

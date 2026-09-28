@@ -1,6 +1,6 @@
 import { cn } from "@/lib/cn";
 
-// Score / status pill. No brand tone — orange is reserved for "active/selected"
+// Score / status pill. No brand tone — brand is reserved for "active/selected"
 // (active tab, nav, focus ring), never for a score. Grades route through the
 // good/warn/bad scale so the table stays legible.
 export function Badge({
@@ -11,10 +11,10 @@ export function Badge({
   tone?: "good" | "warn" | "bad" | "info" | "muted";
 }) {
   const tones = {
-    good: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
-    warn: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
-    bad: "bg-red-500/15 text-red-700 dark:text-red-400",
-    info: "bg-sky-500/15 text-sky-700 dark:text-sky-400",
+    good: "bg-good-soft text-brand-text",
+    warn: "bg-warn-soft text-warn",
+    bad: "bg-bad-soft text-bad-text",
+    info: "bg-info-soft text-info-text",
     muted: "bg-surface-hover text-muted",
   } as const;
   return (

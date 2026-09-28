@@ -11,6 +11,7 @@ export async function GET() {
   const mod = await profilesModule();
   return Response.json({
     active: activeProfile(),
+    owner: { pending: mod.pendingCount(careerOpsRoot()) },
     profiles: mod.listProfiles().map((name) => mod.describe(name)),
   });
 }

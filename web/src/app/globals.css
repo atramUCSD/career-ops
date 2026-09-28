@@ -2,26 +2,20 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 /* ──────────────────────────────────────────────────────────────────────────
-   Design tokens — inherited from career-ops-docs. Brand burnt-orange #dd7627
-   (mode-invariant), zinc neutrals, light + dark (Fumadocs neutral values).
+   Design tokens — LeafyGreen palette values (Apache-2.0), light + dark.
+   Brand is no longer mode-invariant: green.dark2 #00684A carries white text in
+   light, green.base #00ED64 only reads on the dark navy. Every color is a
+   runtime var, so it swaps with the theme class.
    ────────────────────────────────────────────────────────────────────────── */
 @theme {
-  --color-brand: hsl(26 73% 51%);
-  --color-brand-200: hsl(33 100% 60%); /* hover / lighter */
-  /* Near-black on the brand orange: 5.2:1 on brand, 8.3:1 on brand-200 hover
-     (white was 3.14:1, an AA fail in BOTH themes since the button is the same).
-     The brand orange itself is untouched — only what sits on top of it. */
-  --color-brand-foreground: hsl(24 30% 12%);
-  --color-brand-soft: hsl(26 73% 51% / 0.12);
-  --color-brand-secondary: #fc7744;
-
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-serif: var(--font-instrument-serif), ui-serif, Georgia, serif;
   --font-display: var(--font-instrument-serif), ui-serif, Georgia, serif;
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
 }
 
-/* Semantic surfaces reference runtime vars so they swap with the theme class. */
+/* `inline` compiles utilities straight to var(--x), so no --color-* variable
+   exists at runtime: raw CSS reads the underlying vars (var(--brand)). */
 @theme inline {
   --color-background: var(--bg);
   --color-surface: var(--surface);
@@ -30,41 +24,84 @@
   --color-foreground: var(--fg);
   --color-muted: var(--muted);
   --color-faint: var(--faint);
-  --color-landing: var(--landing); /* editorial olive (light) / cream (dark) — docs landing-foreground */
-  /* Brand as SMALL TEXT: the raw orange only passes AA in dark (4.95); in light
-     it's 2.6-3.1 on cream/white. brand-text darkens it for light and keeps the
-     raw brand in dark. Use for small text/badges; brand stays for accents,
-     surfaces, icons and large headings (≥24px passes at 3:1). */
+  --color-landing: var(--landing); /* editorial serif headline */
+  --color-brand: var(--brand);
+  --color-brand-200: var(--brand-200); /* hover on a brand fill */
+  --color-brand-foreground: var(--brand-fg);
+  --color-brand-soft: var(--brand-soft);
+  /* Brand as small text. Dark steps up to green.light1: the base green is a
+     fill, and at 12px it vibrates on navy. */
   --color-brand-text: var(--brand-text);
+  /* Status. `good` is for graphics (bars, dots, segments) only; success TEXT is
+     brand-text. The -text variants exist where the base hue misses AA as small
+     text on its own soft background. */
+  --color-good: var(--good);
+  --color-good-soft: var(--good-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-bad: var(--bad);
+  --color-bad-text: var(--bad-text);
+  --color-bad-soft: var(--bad-soft);
+  --color-info: var(--info);
+  --color-info-text: var(--info-text);
+  --color-info-soft: var(--info-soft);
 }
 
 :root {
-  --bg: #f7f6f3; /* warm off-white (docs stone tone) */
-  --surface: #ffffff;
-  --surface-hover: #efeeea;
-  --border: hsl(40 9% 86%);
-  --fg: hsl(30 10% 11%); /* warm near-black, high legibility */
-  --muted: hsl(35 9% 34%); /* darker than before for readable body text */
-  --faint: hsl(35 7% 42%); /* AA: ~4.6:1 on #fff (was 50% ≈ 3.9:1, failed small text) */
-  --landing: #59592a; /* olive editorial headline */
-  --brand-text: hsl(26 80% 36%); /* darkened brand for small text: 5.5 white / 5.1 cream / 4.7 surface-hover */
-  --dot: 40 8% 42% / 0.09;
-  --pre-bg: #f2f1ed;
+  --bg: #F9FBFA;
+  --surface: #FFFFFF;
+  --surface-hover: #E8EDEB;
+  --border: #E8EDEB;
+  --fg: #001E2B;
+  --muted: #3D4F58;
+  --faint: #5C6C75; /* 5.5:1 on bg */
+  --landing: #023430;
+  --brand: #00684A;
+  --brand-200: #023430; /* darker, not lighter: white on green.light1 fails AA */
+  --brand-fg: #FFFFFF;
+  --brand-text: #00684A;
+  --brand-soft: #E3FCF7;
+  --good: #00A35C;
+  --good-soft: #E3FCF7;
+  --warn: #944F01;
+  --warn-soft: #FEF7DB;
+  --bad: #DB3030;
+  --bad-text: #970606; /* red.base is 4.49:1 on bg */
+  --bad-soft: #FFEAE5;
+  --info: #016BF8;
+  --info-text: #083C90; /* blue.base is 4.25:1 on info-soft */
+  --info-soft: #E1F7FF;
+  --dot: 196 7% 56% / 0.14;
+  --pre-bg: #F9FBFA;
   color-scheme: light;
 }
 
 .dark {
-  --bg: #0a0a0a;
-  --surface: #161616;
-  --surface-hover: #232323;
-  --border: #262626;
-  --fg: #fafafa;
-  --muted: #a1a1aa;
-  --faint: #8b8b95; /* AA: ~4.6:1 on #161616 (was #71717a ≈ 3.7:1, failed small text) */
-  --landing: #e4e2d0; /* cream editorial headline */
-  --brand-text: hsl(26 73% 51%); /* raw brand already passes in dark (≥4.95 on bg/surface) */
-  --dot: 240 5% 65% / 0.10;
-  --pre-bg: #111111;
+  --bg: #001E2B;
+  --surface: #112733;
+  --surface-hover: #1C2D38;
+  --border: #3D4F58;
+  --fg: #E8EDEB;
+  --muted: #C1C7C6;
+  --faint: #889397; /* 4.9:1 on surface */
+  --landing: #E3FCF7;
+  --brand: #00ED64;
+  --brand-200: #71F6BA;
+  --brand-fg: #001E2B;
+  --brand-text: #71F6BA;
+  --brand-soft: #023430;
+  --good: #00ED64;
+  --good-soft: #023430;
+  --warn: #FFC010;
+  --warn-soft: #4C2100;
+  --bad: #FF6960;
+  --bad-text: #FF6960;
+  --bad-soft: #5B0000;
+  --info: #0498EC;
+  --info-text: #0498EC;
+  --info-soft: #0C2657;
+  --dot: 196 7% 56% / 0.16;
+  --pre-bg: #112733;
   color-scheme: dark;
 }
 
@@ -120,7 +157,7 @@ html {
   position: absolute;
   inset: 0 auto 0 0;
   width: 35%;
-  background: linear-gradient(90deg, transparent, var(--color-brand), transparent);
+  background: linear-gradient(90deg, transparent, var(--brand), transparent);
   animation: job-progress 1.3s ease-in-out infinite;
 }
 
@@ -165,12 +202,12 @@ html {
 .report-prose li,
 .report-prose blockquote { max-width: 76ch; }
 .report-prose strong { color: var(--fg); font-weight: 600; }
-.report-prose a { color: var(--color-brand); text-decoration: none; }
+.report-prose a { color: var(--brand-text); text-decoration: none; }
 .report-prose a:hover { text-decoration: underline; }
 .report-prose code {
   font-family: var(--font-mono);
   font-size: 0.85em;
-  color: var(--color-brand);
+  color: var(--brand-text);
   background: var(--surface-hover);
   padding: 0.1em 0.35em;
   border-radius: 0.3rem;
@@ -190,7 +227,7 @@ html {
 .report-prose li { margin: 0.35rem 0; }
 .report-prose li::marker { color: var(--faint); }
 .report-prose blockquote {
-  border-left: 3px solid var(--color-brand);
+  border-left: 3px solid var(--brand);
   padding-left: 1rem;
   margin: 1rem 0;
   color: var(--muted);
@@ -255,8 +292,6 @@ html {
 .co-cost{display:inline-flex;align-items:center;gap:.28rem;border-radius:999px;font-weight:600;line-height:1;white-space:nowrap;border:1px solid transparent}
 .co-cost[data-size="xs"]{font-size:10.5px;padding:.16rem .4rem;letter-spacing:.04em;text-transform:uppercase}
 .co-cost[data-size="sm"]{font-size:11px;padding:.24rem .5rem}
-.co-cost[data-tone="free"]{color:hsl(162 91% 24%);background:hsl(160 64% 46% / .12);border-color:hsl(160 64% 46% / .28)}
-html.dark .co-cost[data-tone="free"]{color:hsl(158 64% 60%);background:hsl(158 64% 52% / .13);border-color:hsl(158 64% 52% / .26)}
-.co-cost[data-tone="spend"]{color:hsl(35 9% 34%);background:hsl(35 8% 46% / .12);border-color:hsl(35 8% 46% / .26)}
-html.dark .co-cost[data-tone="spend"]{color:hsl(35 8% 70%);background:hsl(35 6% 60% / .12);border-color:hsl(35 6% 60% / .24)}
+.co-cost[data-tone="free"]{color:var(--brand-text);background:color-mix(in srgb,var(--good) 12%,transparent);border-color:color-mix(in srgb,var(--good) 28%,transparent)}
+.co-cost[data-tone="spend"]{color:var(--muted);background:color-mix(in srgb,var(--faint) 12%,transparent);border-color:color-mix(in srgb,var(--faint) 26%,transparent)}
 .co-cost svg{width:.85em;height:.85em}

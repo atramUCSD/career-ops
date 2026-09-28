@@ -23,7 +23,7 @@ function cliId(): string | null {
 
 const STYLE = `
 .co-cvdrop{position:relative;border:1.5px dashed color-mix(in srgb, var(--fg) 22%, transparent);border-radius:1rem;transition:border-color .2s,background .2s}
-.co-cvdrop[data-over="true"]{border-color:hsl(26 73% 51%);background:hsl(26 73% 51% /.05)}
+.co-cvdrop[data-over="true"]{border-color:var(--brand);background:color-mix(in srgb,var(--brand) 5%,transparent)}
 .co-cvtrace{animation:co-rise .4s ease both}
 `;
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Gauge } from "lucide-react";
+import { motion } from "motion/react";
 import { cn } from "@/lib/cn";
 
 type Usage = { window5h: { tokens: number }; window7d: { tokens: number } };
@@ -16,9 +17,9 @@ function fmt(n: number): string {
   return `${n}`;
 }
 function tone(pct: number): string {
-  if (pct >= 85) return "bg-red-400";
-  if (pct >= 60) return "bg-amber-400";
-  return "bg-emerald-400";
+  if (pct >= 85) return "bg-bad";
+  if (pct >= 60) return "bg-warn";
+  return "bg-good";
 }
 
 export function UsageMeter() {
@@ -80,9 +81,11 @@ export function UsageMeter() {
                 </span>
               </div>
               <div className="mt-0.5 h-1 w-full overflow-hidden rounded-full bg-surface-hover">
-                <div
-                  className={cn("h-full rounded-full transition-all", tone(pct))}
-                  style={{ width: `${Math.max(pct, 2)}%` }}
+                <motion.div
+                  className={cn("h-full origin-left rounded-full transition-colors", tone(pct))}
+                  initial={{ scaleX: 0 }}
+                  animate={{ scaleX: Math.max(pct, 2) / 100 }}
+                  transition={{ duration: 0.6, ease: "easeOut" }}
                 />
               </div>
             </div>

@@ -14,7 +14,7 @@ import { Fragment, useEffect, useRef, useState } from "react";
 const STYLE = `
 @keyframes co-rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
 .co-rise{animation:co-rise .55s cubic-bezier(.22,1,.36,1) both}
-@keyframes co-flash{0%{box-shadow:0 0 0 0 hsl(26 82% 55% / 0)}22%{box-shadow:0 0 0 3px hsl(26 82% 55% / .38)}100%{box-shadow:0 0 0 0 hsl(26 82% 55% / 0)}}
+@keyframes co-flash{0%{box-shadow:0 0 0 0 transparent}22%{box-shadow:0 0 0 3px color-mix(in srgb,var(--brand) 38%,transparent)}100%{box-shadow:0 0 0 0 transparent}}
 .co-flash{animation:co-flash 1.15s ease both;border-radius:.6rem}
 @keyframes co-shim{0%{background-position:-200% 0}100%{background-position:200% 0}}
 .co-skel{background:linear-gradient(90deg, color-mix(in srgb,var(--fg) 5%, transparent) 25%, color-mix(in srgb,var(--fg) 12%, transparent) 37%, color-mix(in srgb,var(--fg) 5%, transparent) 63%);background-size:200% 100%;animation:co-shim 1.6s linear infinite;border-radius:.5rem}

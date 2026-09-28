@@ -16,7 +16,7 @@ const SEEN_KEY = "career-ops:first-score-seen";
 const STYLE = `
 .co-aha{position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;padding:1.2rem;background:color-mix(in srgb, var(--bg) 70%, rgba(0,0,0,.5));-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);animation:co-aha-in .35s ease both}
 .co-aha__card{position:relative;width:min(34rem,100%);border-radius:1.3rem;border:1px solid var(--border,hsl(0 0% 50% /.2));background:var(--bg);box-shadow:0 24px 70px -20px rgba(0,0,0,.5);overflow:hidden}
-.co-aha__glow{position:absolute;inset:0;background:radial-gradient(80% 60% at 50% -10%, hsl(26 82% 55% /.22), transparent 70%);pointer-events:none}
+.co-aha__glow{position:absolute;inset:0;background:radial-gradient(80% 60% at 50% -10%, color-mix(in srgb,var(--brand) 22%,transparent), transparent 70%);pointer-events:none}
 .co-aha__grade{font-variant-numeric:tabular-nums;line-height:1}
 @keyframes co-aha-in{from{opacity:0;transform:translateY(10px) scale(.985)}to{opacity:1;transform:none}}
 @media(prefers-reduced-motion:reduce){.co-aha{animation:none}}

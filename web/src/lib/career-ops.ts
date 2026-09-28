@@ -95,7 +95,8 @@ export function userRoot(): string {
 type ProfilesModule = {
   profileEnv: (dir: string) => Record<string, string>;
   listProfiles: () => string[];
-  describe: (name: string) => { name: string; cv: boolean; profile: boolean; portals: boolean; pending: number };
+  describe: (name: string) => { name: string; dir: string; cv: boolean; profile: boolean; portals: boolean; pending: number };
+  pendingCount: (dir: string) => number;
   scaffold: (name: string, opts?: { root?: string }) => { dir: string; created: string[] };
   validName: (name: string) => boolean;
 };
