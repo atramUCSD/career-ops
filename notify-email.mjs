@@ -25,6 +25,7 @@
  *
  *   node notify-email.mjs --seed        # mark the current pipeline known, send nothing
  *   node notify-email.mjs --dry-run     # compose only; writes output/alert-preview.eml
+ *   node notify-email.mjs --test        # send now, even if nothing changed; state untouched
  *   node notify-email.mjs               # compose and send
  *   node notify-email.mjs --to a@b.com  # override the configured recipient
  *   node notify-email.mjs --root profiles/<name>  # alert for another user layer
@@ -57,6 +58,7 @@ const STATE_PATH = 'data/alert-state.json';
 const ARTIFACT_PATH = 'output/pipeline-artifact.html';
 
 export const DEFAULTS = {
+  enabled: true,
   to: '',
   min_match: 42,
   max_rows: 15,
@@ -235,21 +237,22 @@ export const toBase64Url = mime =>
  * Compose the run. Pure enough to test: it reads the repo but sends nothing
  * and writes nothing. `send` is a separate step on purpose.
  */
-export function composeRun({ root = ROOT, now = new Date(), cfg = null, model = null } = {}) {
+export function composeRun({ root = ROOT, now = new Date(), cfg = null, model = null, test = false } = {}) {
   const config = cfg || loadConfig(root);
   const m = model || buildModel({ root, now });
   const state = loadState(root);
   const date = now.toISOString().slice(0, 10);
   const { fresh, upgraded, nextSeen, nextStrong } = diffRows(m.rows, state, config);
   const retired = Math.max(0, m.expired.count - state.expired);
-  const quiet = config.quiet_if_empty && !fresh.length && !upgraded.length && !retired;
+  // A test proves the pipe works, so it sends even when nothing changed.
+  const quiet = !test && config.quiet_if_empty && !fresh.length && !upgraded.length && !retired;
 
   const artifactPath = join(root, ARTIFACT_PATH);
   const attachment = config.attach_artifact && existsSync(artifactPath)
     ? { name: 'pipeline-artifact.html', content: readFileSync(artifactPath, 'utf-8') }
     : null;
 
-  const subject = subjectFor({ fresh, upgraded, retired, date });
+  const subject = (test ? '[test] ' : '') + subjectFor({ fresh, upgraded, retired, date });
   const html = composeBody({ fresh, upgraded, model: m, cfg: config, date });
   return {
     quiet,
@@ -264,6 +267,8 @@ export function composeRun({ root = ROOT, now = new Date(), cfg = null, model = 
 
 async function main(argv) {
   const dry = argv.includes('--dry-run');
+  const test = argv.includes('--test');
+  const seed = argv.includes('--seed');
   const toIdx = argv.indexOf('--to');
   // Same flag as build-artifact.mjs: config, state, pipeline and attachment all
   // move to that user layer, so a profile gets its own recipient and its own diff.
@@ -271,14 +276,20 @@ async function main(argv) {
   const root = rootIdx >= 0 ? resolve(argv[rootIdx + 1]) : ROOT;
   const cfg = loadConfig(root);
   if (toIdx >= 0) cfg.to = argv[toIdx + 1];
+  // Off silences the scheduled run only. A test, a dry run or a seed is a
+  // person asking for that one thing now.
+  if (cfg.enabled === false && !test && !dry && !seed) {
+    console.log('  alerts off in config/alerts.yml — nothing sent');
+    return;
+  }
 
-  const run = composeRun({ root, cfg });
+  const run = composeRun({ root, cfg, test });
   const { fresh, upgraded, retired } = run.counts;
 
   // First run against an established pipeline is not an alert, it is a
   // backlog: 221 postings the reader already knows about. Seeding marks the
   // current state as known so the first scheduled mail is a real diff.
-  if (argv.includes('--seed')) {
+  if (seed) {
     saveState(run.nextState, root);
     console.log(`  seeded — ${run.nextState.seen.length} postings marked known, nothing sent`);
     return;
@@ -302,6 +313,12 @@ async function main(argv) {
     return;
   }
   const id = await sendRaw(toBase64Url(run.mime));
+  // A test leaves state alone, so the next scheduled digest still reports
+  // everything the test showed.
+  if (test) {
+    console.log(`  test sent to ${run.to}${id ? ` (${id})` : ''}, state untouched`);
+    return;
+  }
   // Only now. A send that threw leaves every posting unseen for the next run.
   saveState(run.nextState, root);
   console.log(`  sent to ${run.to}${id ? ` (${id})` : ''}`);

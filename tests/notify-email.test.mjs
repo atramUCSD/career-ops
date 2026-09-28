@@ -117,6 +117,16 @@ quiet.quiet && quiet.mime === ''
   ? pass('a run with nothing new composes no message at all')
   : fail('a quiet run still produced a message');
 
+const probe = composeRun({
+  cfg: { ...DEFAULTS, to: 'me@example.com' },
+  model: { rows: [], expired: { count: 0 }, generated: '2026-08-21' },
+  now: new Date('2026-08-21T00:00:00Z'),
+  test: true,
+});
+!probe.quiet && probe.mime !== '' && probe.subject.startsWith('[test] ')
+  ? pass('a test run composes a tagged message even when nothing changed')
+  : fail('a test run stayed quiet or went out untagged');
+
 // ── credentials ──────────────────────────────────────────────────────────────
 
 credentialsFrom({}).missing.length === 3

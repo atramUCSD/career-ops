@@ -8,6 +8,10 @@
 # docs/ALERTS.md for minting a send-scoped token.
 
 alerts:
+  # false stops the scheduled mail; the scan still runs. `--test`, `--dry-run`
+  # and `--seed` still work, because each is someone asking for it now.
+  enabled: true
+
   # Where the alert goes. `node notify-email.mjs --to x@y.com` overrides it.
   to: ""
 
