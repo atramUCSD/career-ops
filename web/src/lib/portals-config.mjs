@@ -1,97 +1,77 @@
-import fs from "node:fs";
-import * as yaml from "js-yaml";
+// The web-owned settings in portals.yml, validated into a patch for
+// yaml-doc's setIn. Everything the request does not name is left alone, so
+// tracked_companies, search_queries and the user's comments are never touched.
+
+const LISTS = {
+  title_filter: ["positive", "negative", "seniority_boost"],
+  location_filter: ["block_hard", "always_allow", "block", "allow"],
+};
+
+const isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v);
+const words = (v) =>
+  Array.isArray(v) ? v.filter((s) => typeof s === "string").map((s) => s.trim()).filter(Boolean) : null;
+const count = (v) => Number.isInteger(v) && v >= 0;
 
 /**
- * A configuration error that lets the route distinguish a broken user-layer
- * file (409: the user must repair it) from an installation/read failure (500).
- */
-export class PortalsConfigError extends Error {
-  /**
-   * @param {string} message
-   * @param {"invalid-user-config" | "read-failed" | "invalid-template"} kind
-   * @param {unknown} [cause]
-   */
-  constructor(message, kind, cause) {
-    super(message, { cause });
-    this.name = "PortalsConfigError";
-    this.kind = kind;
-  }
-}
-
-/** @param {unknown} value */
-export function isMapping(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
-}
-
-/**
- * Load portals.yml without treating parse/read failures as a missing file.
- * The shipped template is used only when the user-layer file is absent.
+ * `roles` (with an optional `location`) is the assistant's onboarding write: it
+ * replaces title_filter.positive and, when given, location_filter.allow.
+ * `filters` is the Home page's: any subset of the scan filters, each validated
+ * against what scan.mjs accepts.
  *
- * @param {string} file
- * @param {string} templateFile
- * @returns {{ doc: Record<string, unknown>, seeded: boolean }}
+ * @param {Record<string, unknown>} body
+ * @returns {{ patch: Record<string, unknown> } | { error: string }}
  */
-export function loadPortalsDocument(file, templateFile) {
-  let source;
-  let seeded = false;
+export function portalsPatch(body) {
+  const patch = { title_filter: {}, location_filter: {}, salary_filter: {} };
 
-  try {
-    source = fs.readFileSync(file, "utf8");
-  } catch (error) {
-    if (!error || typeof error !== "object" || error.code !== "ENOENT") {
-      throw new PortalsConfigError("could not read portals.yml", "read-failed", error);
+  if (body.roles !== undefined) {
+    const roles = words(body.roles);
+    if (!roles?.length) return { error: "no roles" };
+    patch.title_filter.positive = roles.slice(0, 24);
+    const location = words(body.location);
+    if (location?.length) patch.location_filter.allow = location;
+  }
+
+  const f = body.filters;
+  if (f !== undefined) {
+    if (!isObj(f)) return { error: "filters must be an object" };
+    for (const block of ["title_filter", "location_filter", "salary_filter"]) {
+      if (f[block] !== undefined && !isObj(f[block])) return { error: `${block} must be an object` };
     }
-
-    seeded = true;
-    try {
-      source = fs.readFileSync(templateFile, "utf8");
-    } catch (templateError) {
-      throw new PortalsConfigError("could not read portals template", "read-failed", templateError);
+    for (const [block, keys] of Object.entries(LISTS)) {
+      for (const key of keys) {
+        const value = f[block]?.[key];
+        if (value === undefined) continue;
+        const list = words(value);
+        if (!list) return { error: `${block}.${key} must be a list` };
+        patch[block][key] = list;
+      }
+    }
+    const strict = f.location_filter?.strict;
+    if (strict !== undefined) {
+      if (typeof strict !== "boolean") return { error: "location_filter.strict must be true or false" };
+      patch.location_filter.strict = strict;
+    }
+    const salary = f.salary_filter ?? {};
+    for (const key of ["min", "max"]) {
+      if (salary[key] === undefined) continue;
+      if (!count(salary[key])) return { error: `salary_filter.${key} must be a whole number, 0 or more` };
+      patch.salary_filter[key] = salary[key];
+    }
+    if (salary.currency !== undefined) {
+      if (typeof salary.currency !== "string" || !/^[A-Z]{3}$/.test(salary.currency)) {
+        return { error: "salary_filter.currency must be a three-letter code such as USD" };
+      }
+      patch.salary_filter.currency = salary.currency;
+    }
+    if (f.max_posting_age_days !== undefined) {
+      if (!count(f.max_posting_age_days)) return { error: "max_posting_age_days must be a whole number, 0 or more" };
+      patch.max_posting_age_days = f.max_posting_age_days;
     }
   }
 
-  let parsed;
-  try {
-    parsed = yaml.load(source);
-  } catch (error) {
-    throw new PortalsConfigError(
-      seeded ? "portals template contains invalid YAML" : "portals.yml contains invalid YAML",
-      seeded ? "invalid-template" : "invalid-user-config",
-      error,
-    );
+  for (const block of ["title_filter", "location_filter", "salary_filter"]) {
+    if (!Object.keys(patch[block]).length) delete patch[block];
   }
-
-  if (!isMapping(parsed)) {
-    throw new PortalsConfigError(
-      seeded ? "portals template must contain a YAML mapping" : "portals.yml must contain a YAML mapping",
-      seeded ? "invalid-template" : "invalid-user-config",
-    );
-  }
-
-  return { doc: parsed, seeded };
-}
-
-/**
- * Return a merge-safe document that changes only the filters owned by the web
- * onboarding flow. All scanner sources and user customizations are preserved.
- *
- * @param {Record<string, unknown>} doc
- * @param {string[]} roles
- * @param {string[] | undefined} locations
- */
-export function mergePortalFilters(doc, roles, locations) {
-  const merged = { ...doc };
-  const titleFilter = isMapping(doc.title_filter) ? { ...doc.title_filter } : {};
-  titleFilter.positive = [...roles];
-  merged.title_filter = titleFilter;
-
-  if (locations?.length) {
-    const locationFilter = isMapping(doc.location_filter) ? { ...doc.location_filter } : {};
-    locationFilter.allow = [...locations];
-    merged.location_filter = locationFilter;
-  }
-
-  return merged;
+  return Object.keys(patch).length ? { patch } : { error: "nothing to write" };
 }

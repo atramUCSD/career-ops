@@ -4,17 +4,17 @@ import path from "node:path";
 import * as yaml from "js-yaml";
 import { careerOpsRoot, rootScript, spawnEnv, userRoot } from "@/lib/career-ops";
 import { atomicWriteWithBackup } from "@/lib/core/safe-write";
-import { isMapping } from "@/lib/portals-config.mjs";
 import { PROFILE_CADENCE_KEYS, type ProfileCadenceKey } from "@/lib/followups";
+import { configErrorResponse, loadYamlDoc, setIn, toYaml } from "@/lib/yaml-doc.mjs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // The follow-up cadence knobs live in config/profile.yml → followup_cadence
 // (a USER-LAYER file) — the SAME keys the core followup-cadence.mjs reads, so
-// tuning them here changes the CLI's verdict too. Reads are live; writes are
-// merge-safe + atomic and never clobber the rest of the profile (mirrors the
-// /api/profile guards for the malformed-YAML and first-create cases).
+// tuning them here changes the CLI's verdict too. Reads are live; writes go
+// through yaml-doc like /api/profile, so the rest of the profile, comments
+// included, is left as written.
 
 function isObj(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
@@ -112,40 +112,14 @@ export async function POST(req: Request) {
   if (Object.keys(cadence).length === 0) return Response.json({ error: "nothing to write" }, { status: 400 });
 
   const file = path.join(userRoot(), "config", "profile.yml");
-  let base: Record<string, unknown> = {};
-  if (!fs.existsSync(file)) {
-    // First create: seed from the example so we never leave a cadence-only profile.
-    try {
-      const seeded = yaml.load(fs.readFileSync(path.join(careerOpsRoot(), "config", "profile.example.yml"), "utf8"));
-      base = isObj(seeded) ? seeded : {};
-    } catch {
-      base = {};
-    }
-  } else {
-    // DATA-LOSS GUARD (mirrors /api/profile): a profile that EXISTS but cannot be
-    // read/parsed must never be overwritten with a cadence-only file.
-    let parsed: unknown;
-    try {
-      parsed = yaml.load(fs.readFileSync(file, "utf8"));
-    } catch {
-      return Response.json({ error: "config/profile.yml exists but could not be read as YAML — refusing to overwrite it." }, { status: 409 });
-    }
-    // A parseable list/scalar is still an invalid profile. Never replace its
-    // contents with a document containing only the cadence patch.
-    if (!isMapping(parsed)) {
-      return Response.json({ error: "config/profile.yml must contain named settings, not a list or single value. Refusing to overwrite it." }, { status: 409 });
-    }
-    base = parsed as Record<string, unknown>;
-  }
-
-  const merged = {
-    ...base,
-    followup_cadence: { ...(isObj(base.followup_cadence) ? base.followup_cadence : {}), ...cadence },
-  };
   try {
-    atomicWriteWithBackup(file, yaml.dump(merged, { lineWidth: 100, noRefs: true }));
-  } catch (e) {
-    return Response.json({ error: e instanceof Error ? e.message : "write failed" }, { status: 500 });
+    // First create seeds from the example, so a profile is never cadence-only.
+    const template = path.join(careerOpsRoot(), "config", "profile.example.yml");
+    const { doc, src } = loadYamlDoc(file, template, "config/profile.yml");
+    setIn(doc, ["followup_cadence"], cadence);
+    atomicWriteWithBackup(file, toYaml(doc, src));
+    return Response.json({ ok: true, followup_cadence: doc.toJS().followup_cadence });
+  } catch (error) {
+    return configErrorResponse(error);
   }
-  return Response.json({ ok: true, followup_cadence: merged.followup_cadence });
 }

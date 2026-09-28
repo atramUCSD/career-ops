@@ -562,6 +562,7 @@ export const USER_PATHS = [
   'build-hub.mjs',
   'build-artifact.mjs',
   'profiles.mjs',
+  'personalization.mjs',
   'callback-score.mjs',
   'enrich-jd.mjs',
   'notify-email.mjs',

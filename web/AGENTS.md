@@ -25,7 +25,8 @@ before changing anything under `web/`.
 Treating a parse error as "not there yet" is how a user's config gets overwritten
 with the shipped example. Distinguish `ENOENT` from every other failure, and let a
 broken user-layer file surface as an error the user can act on rather than as an
-empty default. (`web/src/lib/portals-config.mjs` is the worked example.)
+empty default. (`web/src/lib/yaml-doc.mjs` is the worked example, and every
+user-layer YAML write goes through it so the user's comments survive.)
 
 ## Testing
 

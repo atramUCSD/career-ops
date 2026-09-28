@@ -1,106 +1,88 @@
-import fs from "node:fs";
 import path from "node:path";
-import * as yaml from "js-yaml";
 import { careerOpsRoot, userRoot } from "@/lib/career-ops";
 import { atomicWriteWithBackup } from "@/lib/core/safe-write";
-import { isMapping } from "@/lib/portals-config.mjs";
+import { configErrorResponse, loadYamlDoc, setIn, toYaml } from "@/lib/yaml-doc.mjs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // Merge-safe writer for config/profile.yml (a USER-LAYER file — DATA_CONTRACT:
-// never clobber the user's archetypes/narrative/proof-points). On first create we
-// seed from config/profile.example.yml; on an existing file we deep-merge ONLY the
-// proposed keys, write atomically (temp + rename), and only ever via the confirm-
-// gated setProfile action. The web orchestrates the real file — no parallel store.
+// never clobber the user's archetypes/narrative/proof-points). Only the fields
+// in the patch change, and the user's comments stay; a missing file is seeded
+// from config/profile.example.yml. Callers: the assistant's confirm-gated
+// setProfile, and the Home page's preferences.
 
-type ProfilePatch = {
-  name?: string;
-  email?: string;
-  location?: string;
-  roles?: string[];
-  compMin?: number;
-  compMax?: number;
-  currency?: string;
-  remote?: string;
+const TEXT: Record<string, string[]> = {
+  name: ["candidate", "full_name"],
+  email: ["candidate", "email"],
+  location: ["candidate", "location"],
+  currency: ["compensation", "currency"],
+  remote: ["compensation", "location_flexibility"],
+  targetRange: ["compensation", "target_range"],
+  walkAway: ["compensation", "minimum"],
 };
+const SPEND_TIERS = new Set(["economy", "standard", "premium"]);
 
-function isObj(v: unknown): v is Record<string, unknown> {
-  return !!v && typeof v === "object" && !Array.isArray(v);
-}
+type Edit = [string[], unknown];
 
-/** Deep-merge src onto dst (objects recurse; arrays/scalars replace). Non-mutating. */
-function deepMerge(dst: unknown, src: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = isObj(dst) ? { ...dst } : {};
-  for (const [k, v] of Object.entries(src)) {
-    out[k] = isObj(v) ? deepMerge(out[k], v) : v;
+/** The patch as path edits, or an error message. Empty text is skipped, not cleared. */
+function profileEdits(p: Record<string, unknown>): Edit[] | string {
+  const edits: Edit[] = [];
+  for (const [field, keys] of Object.entries(TEXT)) {
+    const v = p[field];
+    if (v == null) continue;
+    if (typeof v !== "string" || v.length > 200) return `${field} must be text of at most 200 characters`;
+    if (v.trim()) edits.push([keys, v.trim()]);
   }
-  return out;
-}
-
-function patchToProfile(p: ProfilePatch): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  const candidate: Record<string, unknown> = {};
-  if (p.name) candidate.full_name = p.name;
-  if (p.email) candidate.email = p.email;
-  if (p.location) candidate.location = p.location;
-  if (Object.keys(candidate).length) out.candidate = candidate;
-  if (p.roles?.length) out.target_roles = { primary: p.roles.slice(0, 6) };
-  const comp: Record<string, unknown> = {};
-  if (p.compMin && p.compMax) comp.target_range = `${p.compMin}-${p.compMax}`;
-  if (p.currency) comp.currency = p.currency;
-  if (p.remote) comp.location_flexibility = p.remote;
-  if (Object.keys(comp).length) out.compensation = comp;
+  if (p.roles !== undefined) {
+    if (!Array.isArray(p.roles) || p.roles.some((r) => typeof r !== "string")) return "roles must be a list of text";
+    const roles = (p.roles as string[]).map((r) => r.trim()).filter(Boolean).slice(0, 24);
+    if (roles.length) edits.push([["target_roles", "primary"], roles]);
+  }
+  // The assistant's shape: a numeric range the user stated.
+  const { compMin, compMax } = p;
+  if (typeof compMin === "number" && typeof compMax === "number" && compMin > 0 && compMax > 0) {
+    edits.push([["compensation", "target_range"], `${compMin}-${compMax}`]);
+  }
+  if (p.language !== undefined) {
+    if (typeof p.language !== "string" || !/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(p.language)) {
+      return "language must be a language code such as en or pt-BR";
+    }
+    edits.push([["language", "output"], p.language]);
+  }
+  if (p.spendTier !== undefined) {
+    if (typeof p.spendTier !== "string" || !SPEND_TIERS.has(p.spendTier)) {
+      return "spendTier must be economy, standard or premium";
+    }
+    edits.push([["spend_tier"], p.spendTier]);
+  }
   // seniority intentionally not written (no canonical home in profile.yml);
   // archetypes/narrative live in modes/_profile.md — this writer never touches them.
-  return out;
+  return edits;
 }
 
 export async function POST(req: Request) {
-  let patch: ProfilePatch;
+  let body: unknown;
   try {
-    patch = (await req.json()) as ProfilePatch;
+    body = await req.json();
   } catch {
     return Response.json({ error: "bad json" }, { status: 400 });
   }
-  const proposed = patchToProfile(patch);
-  if (Object.keys(proposed).length === 0) return Response.json({ error: "nothing to write" }, { status: 400 });
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return Response.json({ error: "expected an object" }, { status: 400 });
+  }
+  const edits = profileEdits(body as Record<string, unknown>);
+  if (typeof edits === "string") return Response.json({ error: edits }, { status: 400 });
+  if (edits.length === 0) return Response.json({ error: "nothing to write" }, { status: 400 });
 
   const file = path.join(userRoot(), "config", "profile.yml");
-  let base: Record<string, unknown> = {};
-  let seeded = false;
-  // DATA-LOSS GUARD (maintainer, bug-class #649/#704/#920/#958): distinguish
-  // "no profile yet" (safe to seed from the example) from "profile EXISTS but is
-  // malformed" (NEVER overwrite — that would silently destroy the user's data).
-  if (!fs.existsSync(file)) {
-    try {
-      base = (yaml.load(fs.readFileSync(path.join(careerOpsRoot(), "config", "profile.example.yml"), "utf8")) as Record<string, unknown>) || {};
-      seeded = Object.keys(base).length > 0;
-    } catch {
-      base = {};
-    }
-  } else {
-    let parsed: unknown;
-    try {
-      parsed = yaml.load(fs.readFileSync(file, "utf8"));
-    } catch {
-      return Response.json({ error: "config/profile.yml exists but is not valid YAML — refusing to overwrite it." }, { status: 409 });
-    }
-    // Valid YAML can still be a list, scalar, or null. Treating those as an
-    // empty profile would discard the existing document on this partial write.
-    if (!isMapping(parsed)) {
-      return Response.json({ error: "config/profile.yml must contain named settings, not a list or single value. Refusing to overwrite it." }, { status: 409 });
-    }
-    base = parsed as Record<string, unknown>;
-  }
-
-  const merged = deepMerge(base, proposed);
   try {
-    // Back up the prior profile before the first normalized write (yaml.dump
-    // reformats — comments are not preserved; the .bak is the safety net).
-    atomicWriteWithBackup(file, yaml.dump(merged, { lineWidth: 100, noRefs: true }));
-  } catch (e) {
-    return Response.json({ error: e instanceof Error ? e.message : "write failed" }, { status: 500 });
+    const template = path.join(careerOpsRoot(), "config", "profile.example.yml");
+    const { doc, src, seeded } = loadYamlDoc(file, template, "config/profile.yml");
+    for (const [keys, value] of edits) setIn(doc, keys, value);
+    atomicWriteWithBackup(file, toYaml(doc, src));
+    return Response.json({ ok: true, seeded });
+  } catch (error) {
+    return configErrorResponse(error);
   }
-  return Response.json({ ok: true, seeded });
 }

@@ -19,6 +19,7 @@ import { resolveExtractorMode } from './browser-extract.mjs';
 import { parseConfigByExtension } from './jsonc-parse.mjs';
 import { validateFlags } from './lib/cli-flags.mjs';
 import { geminiNodeFloor } from './lib/gemini-node-floor.mjs';
+import { unpersonalizedFiles } from './personalization.mjs';
 
 // gmail-send.mjs is fork-local (USER_PATHS in update-system.mjs), so an install
 // upgraded from upstream may not have it; doctor must still run there.
@@ -821,67 +822,6 @@ async function main() {
     console.log('Read the manifesto: `npm run manifesto` — a new way of job searching is taking shape, and you are now part of it.');
     process.exit(0);
   }
-}
-
-// Personalization files that silently degrade output while still passing the
-// existence check. `modes/_custom.md` is deliberately absent: it holds optional
-// procedural house rules, so shipping it unedited is a valid end state. These
-// two are not —
-//   _profile.md unedited feeds the TEMPLATE AUTHOR's archetypes and North Star
-//     into every A-F evaluation, so offers are scored against a stranger.
-//   _brief.md unedited hands the triage first pass literal `{placeholders}`
-//     instead of the candidate's archetypes, comp floor and hard DQ criteria.
-// doctor auto-copies both from their templates on first run, so "the file
-// exists" is guaranteed and tells us nothing — only its CONTENT does.
-const PERSONALIZATION_FILES = [
-  {
-    path: 'modes/_profile.md',
-    template: 'modes/_profile.template.md',
-    impact: 'evaluations score against the template author\'s targeting, not yours',
-  },
-  {
-    path: 'modes/_brief.md',
-    template: 'modes/_brief.template.md',
-    impact: 'triage reads literal {placeholders} instead of your archetypes',
-  },
-];
-
-// Placeholder tokens the template itself ships, e.g. `{Your Name}`. Comparing
-// against the template's own set (rather than any `{...}` run) keeps braces the
-// user legitimately wrote — a code snippet, a JSON example — from false-firing.
-function templatePlaceholders(text) {
-  return new Set(text.match(/\{[^{}\n]{2,60}\}/g) || []);
-}
-
-// Returns [{ path, reason }] for personalization files still carrying template
-// content. Missing files are NOT reported here — that is `missing`'s job.
-function unpersonalizedFiles(root) {
-  const out = [];
-  for (const { path, template, impact } of PERSONALIZATION_FILES) {
-    const targetPath = join(root, ...path.split('/'));
-    const templatePath = join(root, ...template.split('/'));
-    if (!existsSync(targetPath) || !existsSync(templatePath)) continue;
-    let target, tpl;
-    try {
-      target = readFileSync(targetPath, 'utf-8');
-      tpl = readFileSync(templatePath, 'utf-8');
-    } catch {
-      continue; // unreadable → let the existence checks speak
-    }
-    if (target === tpl) {
-      out.push({ path, reason: 'still identical to the shipped template', impact });
-      continue;
-    }
-    const left = [...templatePlaceholders(tpl)].filter((p) => target.includes(p));
-    if (left.length > 0) {
-      out.push({
-        path,
-        reason: `still has ${left.length} unfilled placeholder${left.length === 1 ? '' : 's'} (e.g. ${left[0]})`,
-        impact,
-      });
-    }
-  }
-  return out;
 }
 
 function checkPersonalization(root) {
