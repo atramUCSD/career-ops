@@ -1,8 +1,10 @@
 import Link from "next/link";
+import { Building2, Gauge, Layers } from "lucide-react";
 import { pipelineSummary } from "@/lib/career-ops";
 import { canonStatus, scoreNum } from "@/lib/format";
 import { cumulativeTiles } from "@/lib/funnel-tiles.mjs";
-import { barWidths } from "@/lib/chart-geometry.mjs";
+import { Card } from "@/components/ui/card";
+import { BarList, CountUp } from "@/components/ui/charts";
 
 export const dynamic = "force-dynamic";
 
@@ -64,109 +66,71 @@ export default function Analytics() {
     : "No companies tracked yet.";
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-10">
-      <h1 className="font-display text-2xl tracking-tight text-landing">Analytics</h1>
-      <p className="mt-1 text-sm text-muted">Across {total} tracked evaluation{total === 1 ? "" : "s"}.</p>
+    <div className="mx-auto max-w-6xl px-4 py-6 max-sm:pb-24 sm:px-6 sm:py-8">
+      <header className="mb-6">
+        <h1 className="font-display text-2xl tracking-tight text-landing">Analytics</h1>
+        <p className="mt-1 text-sm text-muted">Across {total} tracked evaluation{total === 1 ? "" : "s"}.</p>
+      </header>
 
-      {/* headline stats */}
-      <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
-        <Stat value={total} label="evaluated" />
-        <Stat value={avg ? avg.toFixed(2) : "—"} label="avg score" />
-        <Stat
-          value={interviews}
-          label="interviews"
-          hint={interviews === 0 ? "Interviews follow replies — keep follow-ups warm →" : undefined}
-        />
-        <Stat
-          value={offers}
-          label="offers"
-          hint={offers === 0 ? "Offers follow interviews — keep the conversations going →" : undefined}
-        />
+      <div className="space-y-8">
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <Stat value={<CountUp value={total} />} label="evaluated" />
+          <Stat value={avg ? avg.toFixed(2) : "—"} label="avg score" />
+          <Stat
+            value={<CountUp value={interviews} />}
+            label="interviews"
+            hint={interviews === 0 ? "Interviews follow replies — keep follow-ups warm" : undefined}
+          />
+          <Stat
+            value={<CountUp value={offers} />}
+            label="offers"
+            hint={offers === 0 ? "Offers follow interviews — keep the conversations going" : undefined}
+          />
+        </div>
+
+        <Card title="Pipeline by stage" icon={Layers}>
+          <BarList
+            items={stageCounts.map((s) => ({ label: s.label, value: s.n, tone: s.key === "OFFER" ? "good" : "muted" }))}
+            total={total}
+            takeaway={stageTakeaway}
+          />
+        </Card>
+
+        <div className="grid items-start gap-4 lg:grid-cols-2">
+          <Card title="Score distribution" icon={Gauge}>
+            <BarList
+              items={buckets.map((b) => ({ label: b.label, value: b.n }))}
+              total={scores.length}
+              takeaway={scoreTakeaway}
+            />
+          </Card>
+
+          <Card title="Top companies" icon={Building2} id="companies" className="scroll-mt-8">
+            <BarList
+              items={topCompanies.map(([label, n]) => ({ label, value: n }))}
+              total={total}
+              takeaway={companyTakeaway}
+            />
+          </Card>
+        </div>
       </div>
-
-      <Section title="Pipeline by stage">
-        <BarChart
-          items={stageCounts.map((s) => ({ label: s.label, n: s.n, positive: s.key === "OFFER" }))}
-          total={total}
-          takeaway={stageTakeaway}
-        />
-      </Section>
-
-      <Section title="Score distribution">
-        <BarChart items={buckets} total={scores.length} takeaway={scoreTakeaway} />
-      </Section>
-
-      <Section title="Top companies" id="companies">
-        <BarChart items={topCompanies.map(([label, n]) => ({ label, n }))} takeaway={companyTakeaway} />
-      </Section>
     </div>
   );
 }
 
-function Stat({ value, label, hint }: { value: number | string; label: string; hint?: string }) {
+function Stat({ value, label, hint }: { value: React.ReactNode; label: string; hint?: string }) {
+  // The last word rides with the arrow so the arrow never wraps onto a line alone.
+  const cut = hint ? hint.lastIndexOf(" ") + 1 : 0;
   return (
-    <div className="rounded-2xl border border-border bg-surface/50 p-4">
-      <div className="text-3xl font-semibold tabular-nums">{value}</div>
-      <div className="mt-1 text-xs text-faint">{label}</div>
+    <Card>
+      <div className="text-4xl leading-none font-semibold tabular-nums">{value}</div>
+      <div className="mt-2 text-sm text-foreground">{label}</div>
       {hint && (
-        <Link href="/" className="mt-2 block text-xs text-muted transition-colors hover:text-brand">
-          {hint}
+        <Link href="/" className="mt-2 block rounded-md text-xs text-muted transition-colors duration-150 ease-out hover:text-brand-text focus-ring">
+          {hint.slice(0, cut)}
+          <span className="whitespace-nowrap">{hint.slice(cut)} →</span>
         </Link>
       )}
-    </div>
-  );
-}
-
-function Section({ title, children, id }: { title: string; children: React.ReactNode; id?: string }) {
-  return (
-    <section id={id} className="mt-10 scroll-mt-8">
-      <h2 className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">{title}</h2>
-      <div className="mt-4 space-y-2.5">{children}</div>
-    </section>
-  );
-}
-
-/**
- * One horizontal bar chart, server-rendered. Widths come from the shared
- * geometry module (the same code path as the artifact's SVG charts) with a
- * 4% floor so a small non-zero count stays visible; n = 0 renders an empty
- * track. Labels and counts stay real text; the SVG marks are aria-hidden and
- * the chart speaks through its takeaway aria-label.
- */
-function BarChart({
-  items,
-  takeaway,
-  total,
-}: {
-  items: { label: string; n: number; positive?: boolean }[];
-  takeaway: string;
-  total?: number;
-}) {
-  const widths = barWidths(items.map((i) => i.n), 100, 4);
-  return (
-    <div role="img" aria-label={takeaway} className="space-y-2.5">
-      {items.map((it, i) => (
-        <div key={it.label} className="flex items-center gap-3">
-          <div className="w-32 shrink-0 truncate text-sm text-muted">{it.label}</div>
-          <svg className="h-7 flex-1" aria-hidden="true">
-            <rect width="100%" height="100%" rx="6" className="fill-surface" />
-            {widths[i] > 0 && (
-              <rect
-                width={`${widths[i]}%`}
-                height="100%"
-                rx="6"
-                className={it.positive ? "fill-emerald-500/50" : "fill-foreground/20"}
-              />
-            )}
-          </svg>
-          <div className="w-20 shrink-0 text-right text-sm tabular-nums">
-            {it.n}
-            {total !== undefined && total > 0 && (
-              <span className="ml-1 text-xs text-faint">{Math.round((it.n / total) * 100)}%</span>
-            )}
-          </div>
-        </div>
-      ))}
-    </div>
+    </Card>
   );
 }

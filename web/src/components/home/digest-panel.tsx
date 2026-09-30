@@ -5,7 +5,10 @@ import { useRouter } from "next/navigation";
 import { Eye, Mail, Send } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import type { Schedule } from "@/lib/home/home-data";
-import { Label, Panel, SaveBar, Toggle, postJson } from "./motion-bits";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Field, Input, Switch } from "@/components/ui/field";
+import { SaveBar, postJson } from "./motion-bits";
 
 export type AlertsView = {
   enabled: boolean;
@@ -89,54 +92,51 @@ export function DigestPanel({
   const gmailOk = gmailMissing.length === 0;
 
   return (
-    <Panel
+    <Card
       icon={Mail}
       title="Email digest"
       hint={alerts.exists ? "config/alerts.yml" : "not set up yet"}
-      aside={<Toggle checked={draft.enabled} onChange={(v) => set("enabled", v)} label="Digest on" />}
+      aside={<Switch checked={draft.enabled} onChange={(v) => set("enabled", v)} label="Digest on" />}
     >
       <div className="grid gap-px overflow-hidden rounded-xl border border-border bg-border text-sm sm:grid-cols-2">
         <div className="bg-background/60 px-4 py-3">
-          <div className="text-[11px] uppercase tracking-[0.14em] text-faint">Last sent</div>
+          <div className="eyebrow text-2xs text-muted">Last sent</div>
           <div className="text-foreground">{last ?? "Not yet"}</div>
         </div>
         <div className="bg-background/60 px-4 py-3">
-          <div className="text-[11px] uppercase tracking-[0.14em] text-faint">Next</div>
+          <div className="eyebrow text-2xs text-muted">Next</div>
           <div className="text-foreground">{draft.enabled ? (next ?? "Not scheduled") : "Off"}</div>
         </div>
       </div>
 
       <div className="mt-5 grid gap-5 md:grid-cols-2">
-        <div>
-          <Label code="to">Send to</Label>
-          <input
-            type="text"
-            inputMode="email"
-            value={draft.to}
-            onChange={(e) => set("to", e.target.value)}
-            placeholder="name@example.com"
-            aria-label="Send to"
-            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-          />
-          <p className="mt-1.5 text-xs text-faint">
-            Sent from your own Gmail through OAuth.{" "}
-            {gmailOk ? (
-              <span className="text-brand-text">Connected.</span>
-            ) : (
-              <span className="text-warn">Not connected: {gmailMissing.join(", ")} unset in .env.</span>
-            )}
-          </p>
-        </div>
-        <div>
-          <Label>Schedule</Label>
-          <p className="rounded-md border border-border bg-background/60 px-3 py-2 text-sm text-foreground">
+        <Input
+          compact
+          label="Send to"
+          meta="to"
+          type="text"
+          inputMode="email"
+          value={draft.to}
+          onChange={(e) => set("to", e.target.value)}
+          placeholder="name@example.com"
+          hint={
+            <>
+              Sent from your own Gmail through OAuth.{" "}
+              {gmailOk ? (
+                <span className="text-brand-text">Connected.</span>
+              ) : (
+                <span className="text-warn">Not connected: {gmailMissing.join(", ")} unset in .env.</span>
+              )}
+            </>
+          }
+        />
+        <Field compact label="Schedule" hint="Set by the career-ops-alert task in Task Scheduler.">
+          <p className="flex h-9 items-center rounded-md border border-border bg-background/60 px-3 text-sm text-foreground">
             {schedule?.times.length ? schedule.times.join(" · ") : "No scheduled task found"}
           </p>
-          <p className="mt-1.5 text-xs text-faint">Set by the career-ops-alert task in Task Scheduler.</p>
-        </div>
-        <div>
-          <Label code="min_match">Min match</Label>
-          <div className="flex items-center gap-3">
+        </Field>
+        <Field compact label="Min match" meta="min_match">
+          <div className="flex h-9 items-center gap-3">
             <input
               type="range"
               min={0}
@@ -144,23 +144,22 @@ export function DigestPanel({
               value={draft.min_match}
               onChange={(e) => set("min_match", Number(e.target.value))}
               aria-label="Minimum match percent"
-              className="flex-1 accent-[var(--color-brand)]"
+              className="flex-1 rounded-md accent-[var(--color-brand)] focus-ring"
             />
             <span className="w-12 text-right text-sm font-semibold tabular-nums text-foreground">{draft.min_match}%</span>
           </div>
-        </div>
-        <div>
-          <Label code="max_rows">Max rows</Label>
-          <input
-            type="number"
-            min={1}
-            max={100}
-            value={draft.max_rows}
-            onChange={(e) => set("max_rows", Math.trunc(Number(e.target.value)))}
-            aria-label="Maximum rows"
-            className="w-24 rounded-md border border-border bg-background px-3 py-2 text-sm tabular-nums"
-          />
-        </div>
+        </Field>
+        <Input
+          compact
+          label="Max rows"
+          meta="max_rows"
+          type="number"
+          min={1}
+          max={100}
+          value={draft.max_rows}
+          onChange={(e) => set("max_rows", Math.trunc(Number(e.target.value)))}
+          className="w-24 tabular-nums"
+        />
       </div>
 
       <div className="mt-5 divide-y divide-border rounded-xl border border-border">
@@ -175,36 +174,29 @@ export function DigestPanel({
               <div className="text-sm text-foreground">{title}</div>
               <div className="text-xs text-faint">{hint}</div>
             </div>
-            <Toggle checked={draft[k]} onChange={(v) => set(k, v)} label={title} />
+            <Switch checked={draft[k]} onChange={(v) => set(k, v)} label={title} />
           </div>
         ))}
       </div>
 
       <div className="mt-5 flex flex-wrap items-center gap-2">
-        <button
+        <Button type="button" variant="secondary" onClick={onPreview}>
+          <Eye aria-hidden className="size-4" /> Preview
+        </Button>
+        <Button
           type="button"
-          onClick={onPreview}
-          className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm hover:border-brand/50 max-sm:min-h-[44px]"
-        >
-          <Eye className="size-4" /> Preview
-        </button>
-        <button
-          type="button"
+          variant="secondary"
           onClick={() => run("test")}
           disabled={!!action.busy || !alerts.to || !gmailOk || dirty}
           title={dirty ? "Save first: the test uses the saved settings" : undefined}
-          className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm hover:border-brand/50 disabled:opacity-40 max-sm:min-h-[44px]"
+          // Keeps the "save first" tooltip reachable while disabled.
+          className="disabled:pointer-events-auto disabled:cursor-not-allowed"
         >
-          <Send className="size-4" /> {action.busy === "test" ? "Sending…" : "Send test"}
-        </button>
-        <button
-          type="button"
-          onClick={() => run("seed")}
-          disabled={!!action.busy}
-          className="rounded-md px-3 py-1.5 text-sm text-muted hover:text-foreground disabled:opacity-40 max-sm:min-h-[44px]"
-        >
+          <Send aria-hidden className="size-4" /> {action.busy === "test" ? "Sending…" : "Send test"}
+        </Button>
+        <Button type="button" variant="ghost" onClick={() => run("seed")} disabled={!!action.busy} className="text-muted">
           {action.busy === "seed" ? "Marking…" : "Mark all seen"}
-        </button>
+        </Button>
         {action.message && (
           <span role="status" className={action.error ? "text-xs text-bad-text" : "text-xs text-muted"}>
             {action.message}
@@ -226,6 +218,6 @@ export function DigestPanel({
         onSave={save}
         onDiscard={() => setDraft(pick(alerts))}
       />
-    </Panel>
+    </Card>
   );
 }

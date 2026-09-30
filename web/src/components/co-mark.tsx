@@ -8,7 +8,7 @@ export function CoMark({ size = 28 }: { size?: number }) {
   return (
     <span
       aria-hidden="true"
-      className={`${instrumentSerif.className} inline-flex shrink-0 items-center justify-center rounded-md bg-brand text-white`}
+      className={`${instrumentSerif.className} inline-flex shrink-0 items-center justify-center rounded-md bg-brand text-brand-foreground`}
       style={{
         width: size,
         height: size,

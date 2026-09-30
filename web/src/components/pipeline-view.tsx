@@ -3,9 +3,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { AnimatePresence, motion } from "motion/react";
 import { Search, ChevronsUpDown, X, Compass, ArrowRight } from "lucide-react";
 import type { Application, InboxJob } from "@/lib/career-ops";
 import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/field";
+import { rowItem } from "@/components/ui/motion";
 import { CompanyLogo } from "@/components/company-logo";
 import { canonStatus, scoreNum, scoreTone, statusDot } from "@/lib/format";
 import { InboxTriage } from "@/components/inbox/inbox-triage";
@@ -28,6 +33,20 @@ const TABS = [
   "SKIP",
 ] as const;
 type Tab = (typeof TABS)[number];
+// TABS stay uppercase because they are the ?tab= URL values; this is only what renders.
+const TAB_LABEL: Record<Tab, string> = {
+  INBOX: "Inbox",
+  ALL: "All",
+  EVALUATED: "Evaluated",
+  APPLIED: "Applied",
+  RESPONDED: "Responded",
+  INTERVIEW: "Interview",
+  OFFER: "Offer",
+  HIRED: "Hired",
+  REJECTED: "Rejected",
+  DISCARDED: "Discarded",
+  SKIP: "Skip",
+};
 
 const SORT_KEYS = ["tracker", "company", "role", "score", "status", "date"] as const;
 type SortKey = (typeof SORT_KEYS)[number];
@@ -120,6 +139,7 @@ export function PipelineView({
       return aValue.localeCompare(bValue) * sort.dir;
     });
   }, [applications, tab, q, sort, minFilter]);
+  const rowKeys = new Map<string, number>();
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8 max-sm:pb-24">
@@ -134,19 +154,21 @@ export function PipelineView({
         {/* the tracker has its own search; the inbox brings its own facet filters */}
         {tab !== "INBOX" && (
           <div className="relative w-64 max-w-[40vw]">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-faint" />
-            <input
+            <Search aria-hidden className="pointer-events-none absolute left-3 top-1/2 z-10 size-4 -translate-y-1/2 text-faint" />
+            <Input
+              type="search"
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Search company or role…"
-              className="w-full rounded-md border border-border bg-surface/60 py-2 pl-9 pr-3 text-sm outline-none transition-colors placeholder:text-faint focus:border-brand/50 focus-visible:ring-2 focus-visible:ring-brand/40"
+              aria-label="Search company or role"
+              className="pl-9"
             />
           </div>
         )}
       </div>
 
       {/* tabs */}
-      <div className="mt-6 flex flex-wrap gap-1 border-b border-border">
+      <div className="mt-6 flex gap-1 border-b border-border max-sm:overflow-x-auto max-sm:scroll-px-4 max-sm:[mask-image:linear-gradient(to_right,#000_calc(100%-2rem),transparent)] sm:flex-wrap">
         {TABS.map((t) => {
           const count =
             t === "INBOX"
@@ -157,17 +179,19 @@ export function PipelineView({
           return (
             <button
               key={t}
+              type="button"
+              aria-pressed={tab === t}
               onClick={() => setParams({ tab: t === "INBOX" ? null : t })}
               className={cn(
                 // gap-1, not a whitespace text node: flex containers drop
                 // whitespace-only anonymous items, which rendered "INBOX0".
-                "-mb-px inline-flex items-center justify-center gap-1 border-b-2 px-3 py-2 text-xs font-medium transition-colors max-sm:min-h-[44px]",
+                "-mb-px inline-flex shrink-0 items-center justify-center gap-1 border-b-2 px-3 py-2 text-sm font-medium focus-ring-inset transition-colors duration-150 ease-out max-sm:min-h-11",
                 tab === t
                   ? "border-brand text-foreground"
                   : "border-transparent text-muted hover:text-foreground",
               )}
             >
-              {t} <span className="text-faint tabular-nums">{count}</span>
+              {TAB_LABEL[t]} <span className="text-faint tabular-nums">{count}</span>
             </button>
           );
         })}
@@ -176,15 +200,16 @@ export function PipelineView({
       {tab !== "INBOX" && minFilter != null && (
         <div className="mt-3 flex items-center gap-2">
           <span className="text-xs text-faint">Filtered:</span>
-          <button
-            type="button"
+          <Button
+            variant="soft"
+            size="sm"
             onClick={() => setParams({ min: null })}
-            className="inline-flex items-center gap-1.5 rounded-full border border-brand/40 bg-brand-soft px-2.5 py-1 text-xs font-medium text-brand transition-colors hover:bg-brand/15"
             title="Clear score filter"
+            aria-label={`Clear score filter (score ≥ ${minFilter.toFixed(1)})`}
           >
             score ≥ {minFilter.toFixed(1)}
-            <X className="size-3" />
-          </button>
+            <X aria-hidden className="size-3" />
+          </Button>
         </div>
       )}
 
@@ -201,9 +226,9 @@ export function PipelineView({
            but a table too wide for the viewport can now be scrolled to instead
            of being silently cut off. min-w keeps the columns readable rather
            than letting w-full crush them on a phone. */
-        <div className="mt-4 overflow-x-auto rounded-2xl border border-border">
+        <div className="mt-4 overflow-x-auto rounded-xl border border-border">
           <table className="w-full min-w-[44rem] text-sm">
-            <thead className="bg-surface/60 text-left text-xs uppercase tracking-wide text-faint">
+            <thead className="bg-surface/60 text-left text-xs eyebrow text-faint">
               <tr>
                 {SORT_KEYS.map((k) => (
                   <th
@@ -216,7 +241,7 @@ export function PipelineView({
                   >
                     <button
                       type="button"
-                      className="inline-flex cursor-pointer select-none items-center gap-1 uppercase tracking-wide hover:text-foreground"
+                      className="inline-flex cursor-pointer select-none items-center gap-1 rounded-md eyebrow focus-ring-inset transition-colors duration-150 ease-out hover:text-foreground"
                       onClick={() => setParams({ sort: k, dir: sort.key === k ? sort.dir * -1 : -1 })}
                     >
                       {k}
@@ -227,45 +252,60 @@ export function PipelineView({
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {filtered.map((r, i) => {
-                const company = companyPresentation(r);
-                return (
-                  <tr key={`${r.n}-${i}`} className="group transition-colors hover:bg-surface/40">
-                    <td className="whitespace-nowrap px-4 py-3 font-medium tabular-nums">
-                      <Link href={`/pipeline/${r.n}`} className="transition-colors group-hover:text-brand">
-                        #{r.n}
-                      </Link>
-                    </td>
-                    <td className="px-4 py-3 font-medium">
-                      <Link href={`/pipeline/${r.n}`} className="flex items-center gap-2.5 transition-colors group-hover:text-brand">
-                        <CompanyLogo name={company.logoName} size={20} />
-                        {company.label}
-                      </Link>
-                    </td>
-                  <td className="px-4 py-3 text-muted">
-                    <Link href={`/pipeline/${r.n}`}>{r.role}</Link>
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge tone={scoreTone(r.score)}>{r.score || "—"}</Badge>
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-muted">
-                    <span className="inline-flex items-center gap-1.5">
-                      <span className={cn("size-1.5 shrink-0 rounded-full", statusDot(r.status))} />
-                      {r.status}
-                    </span>
-                  </td>
-                  <td className="hidden whitespace-nowrap px-4 py-3 text-faint tabular-nums lg:table-cell">{r.date}</td>
-                  </tr>
-                );
-              })}
+              <AnimatePresence initial={false}>
+                {filtered.map((r) => {
+                  const company = companyPresentation(r);
+                  // Keyed by tracker # (plus occurrence, pipeline.md can repeat one), not by
+                  // index: an index key re-keys every row on a filter and fades them all.
+                  const seen = (rowKeys.get(r.n) ?? 0) + 1;
+                  rowKeys.set(r.n, seen);
+                  return (
+                    <motion.tr
+                      key={`${r.n}-${seen}`}
+                      {...rowItem}
+                      className="group transition-colors duration-150 ease-out hover:bg-surface/40"
+                    >
+                      <td className="whitespace-nowrap px-4 py-3 font-medium tabular-nums">
+                        <Link href={`/pipeline/${r.n}`} className="rounded-md focus-ring-inset transition-colors duration-150 ease-out group-hover:text-brand">
+                          #{r.n}
+                        </Link>
+                      </td>
+                      <td className="px-4 py-3 font-medium">
+                        <Link
+                          href={`/pipeline/${r.n}`}
+                          className="flex items-center gap-2.5 rounded-md focus-ring-inset transition-colors duration-150 ease-out group-hover:text-brand"
+                        >
+                          <CompanyLogo name={company.logoName} size={20} />
+                          {company.label}
+                        </Link>
+                      </td>
+                      <td className="px-4 py-3 text-muted">
+                        <Link href={`/pipeline/${r.n}`} className="rounded-md focus-ring-inset">
+                          {r.role}
+                        </Link>
+                      </td>
+                      <td className="px-4 py-3">
+                        <Badge tone={scoreTone(r.score)}>{r.score || "—"}</Badge>
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-muted">
+                        <span className="inline-flex items-center gap-1.5">
+                          <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", statusDot(r.status))} />
+                          {r.status}
+                        </span>
+                      </td>
+                      <td className="hidden whitespace-nowrap px-4 py-3 text-faint tabular-nums lg:table-cell">{r.date}</td>
+                    </motion.tr>
+                  );
+                })}
+              </AnimatePresence>
             </tbody>
           </table>
         </div>
       ) : (
-        <div className="mt-4 rounded-2xl border border-dashed border-border bg-surface/30 px-6 py-12 text-center">
+        <Card className="mt-4 border-dashed bg-surface/30 py-12 text-center">
           <p className="font-display text-lg">No matches</p>
           <p className="mx-auto mt-1 max-w-sm text-sm text-muted">Try a different tab or clear the search.</p>
-        </div>
+        </Card>
       )}
     </div>
   );
@@ -276,21 +316,21 @@ export function PipelineView({
 function InboxEmpty({ count, filtered }: { count: number; filtered: boolean }) {
   if (filtered) {
     return (
-      <div className="mt-4 rounded-2xl border border-dashed border-border bg-surface/30 px-6 py-12 text-center">
+      <Card className="mt-4 border-dashed bg-surface/30 py-12 text-center">
         <p className="font-display text-lg">No matches</p>
         <p className="mx-auto mt-1 max-w-sm text-sm text-muted">Clear the search to see the full inbox.</p>
-      </div>
+      </Card>
     );
   }
   return (
-    <div className="dot-bg mt-4 overflow-hidden rounded-2xl border border-border bg-surface/50 bg-origin-border bg-gradient-to-tr from-brand/10 via-transparent to-transparent shadow-lg">
+    <Card corner="tr" elevated className="dot-bg mt-4 bg-surface/50 p-0">
       <div className="flex items-center gap-2 border-b border-foreground/10 px-5 py-3">
         <span className="size-2.5 rounded-full bg-foreground/15" aria-hidden="true" />
         <span className="size-2.5 rounded-full bg-foreground/15" aria-hidden="true" />
         <span className="size-2.5 rounded-full bg-foreground/15" aria-hidden="true" />
         <span className="ml-3 font-mono text-xs tracking-wide text-muted">career-ops · inbox</span>
       </div>
-      <div className="px-6 py-10 text-center">
+      <div className="px-5 py-10 text-center">
         <p className="font-display text-lg">
           Your <span className="text-brand">inbox</span> is empty.
         </p>
@@ -299,19 +339,16 @@ function InboxEmpty({ count, filtered }: { count: number; filtered: boolean }) {
         ) : (
           <>
             <p className="mx-auto mt-2 max-w-sm text-sm text-muted">Find roles that match your CV — free, no tokens spent.</p>
-            <Link
-              href="/explore?run=1"
-              className="mt-5 inline-flex items-center gap-2 rounded-full bg-brand px-5 py-2.5 text-sm font-medium text-brand-foreground shadow-sm transition-all duration-200 hover:bg-brand-200 hover:-translate-y-0.5 hover:shadow-md"
-            >
-              <Compass className="size-4" /> Run your first free scan <ArrowRight className="size-4" />
+            <Link href="/explore?run=1" className={cn(buttonVariants({ size: "lg" }), "mt-5")}>
+              <Compass aria-hidden className="size-4" /> Run your first free scan <ArrowRight aria-hidden className="size-4" />
             </Link>
             <p className="mx-auto mt-4 max-w-sm text-xs text-muted">
-              Prefer the terminal? Run <code className="rounded bg-surface-hover px-1 py-0.5 font-mono">career-ops scan</code>, or add job URLs to{" "}
-              <code className="rounded bg-surface-hover px-1 py-0.5 font-mono">data/pipeline.md</code>.
+              Prefer the terminal? Run <code className="rounded-md bg-surface-muted px-1 py-0.5 font-mono">career-ops scan</code>, or add job URLs to{" "}
+              <code className="rounded-md bg-surface-muted px-1 py-0.5 font-mono">data/pipeline.md</code>.
             </p>
           </>
         )}
       </div>
-    </div>
+    </Card>
   );
 }

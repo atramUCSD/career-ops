@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { ChevronDown } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input, Select } from "@/components/ui/field";
 
 type Profile = { name: string; pending: number };
 
@@ -64,27 +66,27 @@ export function ProfilePicker() {
   const current = profiles.find((p) => p.name === active);
 
   return (
-    <div className="space-y-1.5 px-1">
+    <div className="space-y-1.5">
       {/* The native select sits invisibly over the card: the OS picker, keyboard
           and screen-reader behaviour come free, and the card is its face. */}
-      <div className="relative flex items-center gap-2.5 rounded-xl border border-border bg-surface px-2.5 py-2 transition-colors focus-within:ring-2 focus-within:ring-brand/50 hover:bg-surface-hover max-sm:min-h-[44px]">
+      <div title="Own scan" className="relative flex items-center gap-2.5 rounded-md border border-control-border bg-surface px-2.5 py-2 field-focus-within transition-colors duration-150 ease-out hover:bg-surface-muted max-sm:min-h-11">
         <span
           aria-hidden
-          className="grid size-8 shrink-0 place-items-center rounded-full bg-brand-soft text-[11px] font-semibold text-brand-text"
+          className="grid size-8 shrink-0 place-items-center rounded-full bg-brand-soft text-2xs font-semibold text-brand-text"
         >
           {current ? initials(current.name) : "ME"}
         </span>
         <span aria-hidden className="min-w-0 flex-1">
           <span className="block truncate text-sm font-medium text-foreground">{current ? current.name : "Me (owner)"}</span>
           <span className="block truncate text-xs text-faint">
-            Own scan · {(current ? current.pending : ownerPending).toLocaleString()} pending
+            {(current ? current.pending : ownerPending).toLocaleString()} pending
           </span>
         </span>
         <ChevronDown aria-hidden className="size-4 shrink-0 text-faint" />
         <label htmlFor="co-profile" className="sr-only">
           Profile
         </label>
-        <select
+        <Select
           id="co-profile"
           value={creating ? NEW : active}
           disabled={busy}
@@ -94,7 +96,8 @@ export function ProfilePicker() {
             setCreating(false);
             post({ select: v === OWNER ? null : v }, () => window.location.reload());
           }}
-          className="absolute inset-0 size-full cursor-pointer opacity-0 disabled:cursor-wait"
+          // The card face above draws border and focus; the control itself stays an invisible hit area.
+          className="absolute inset-0 size-full cursor-pointer border-0 opacity-0 disabled:cursor-wait"
         >
           <option value={OWNER}>Me (owner)</option>
           {profiles.map((p) => (
@@ -103,11 +106,11 @@ export function ProfilePicker() {
             </option>
           ))}
           <option value={NEW}>New profile from a resume…</option>
-        </select>
+        </Select>
       </div>
       {creating && (
         <form
-          className="flex gap-1.5"
+          className="flex gap-2"
           onSubmit={(e) => {
             e.preventDefault();
             // A new profile's first job is its CV: land on the page whose
@@ -115,19 +118,21 @@ export function ProfilePicker() {
             post({ create: name.trim() }, () => window.location.assign("/cv"));
           }}
         >
-          <input
-            autoFocus
-            required
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="name, e.g. alex or me-design"
-            pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,63}"
-            aria-label="New profile name"
-            className="min-w-0 flex-1 rounded-md border border-border bg-surface px-2 py-1 text-sm"
-          />
-          <button type="submit" disabled={busy} className="rounded-md bg-brand-soft px-2 py-1 text-sm text-brand-text">
+          <div className="min-w-0 flex-1">
+            <Input
+              size="sm"
+              autoFocus
+              required
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="name, e.g. alex or me-design"
+              pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,63}"
+              aria-label="New profile name"
+            />
+          </div>
+          <Button type="submit" variant="soft" size="sm" loading={busy}>
             Create
-          </button>
+          </Button>
         </form>
       )}
       {error && <p role="alert" className="text-xs text-bad-text">{error}</p>}

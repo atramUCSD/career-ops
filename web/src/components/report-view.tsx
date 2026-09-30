@@ -2,7 +2,9 @@ import Link from "next/link";
 import { ArrowLeft, FileText, ExternalLink, ChevronDown } from "lucide-react";
 import type { Application } from "@/lib/career-ops";
 import { Badge } from "@/components/ui/badge";
-import { scoreTone, legitimacyTone, parseReport } from "@/lib/format";
+import { buttonVariants } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { legitimacyTone, parseReport } from "@/lib/format";
 import {
   APPLY_LINE,
   applyCtaQuiet,
@@ -91,23 +93,40 @@ export function ReportView({
   const companyName = company?.label ?? app?.company ?? meta?.title ?? id;
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-8 xl:max-w-5xl 2xl:max-w-[1600px]">
+    <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-8 max-sm:pb-24 xl:max-w-5xl 2xl:max-w-[1600px]">
       <Link
         href="/pipeline"
-        className="inline-flex items-center gap-1.5 text-sm text-muted transition-colors hover:text-brand"
+        className="inline-flex items-center gap-1.5 rounded-md text-sm text-muted focus-ring transition-colors duration-150 ease-out hover:text-brand max-sm:min-h-11"
       >
-        <ArrowLeft className="size-4" /> Pipeline
+        <ArrowLeft aria-hidden className="size-4" /> Pipeline
       </Link>
 
       <header className="mt-5">
-        <p className="font-mono text-xs uppercase tracking-[0.18em] text-faint">#{id}</p>
+        <p className="font-mono text-xs eyebrow text-faint">#{id}</p>
         <div className="mt-2 flex items-center gap-3">
           <CompanyLogo name={company?.logoName ?? meta?.title ?? `Report #${id}`} size={40} />
-          <h1 className="font-display text-3xl tracking-tight text-landing">
+          <h1 className="font-display text-2xl tracking-tight text-landing">
             {company?.label ?? meta?.title ?? `Report #${id}`}
           </h1>
         </div>
         {app?.role && <p className="mt-1 text-muted">{app.role}</p>}
+
+        {(archetype || date || applyUrl) && (
+          <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
+            {archetype && <span className="max-w-full truncate">{archetype}</span>}
+            {date && <span className="tabular-nums text-faint">{date}</span>}
+            {applyUrl && (
+              <a
+                href={applyUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center justify-center gap-1 rounded-md text-brand focus-ring hover:underline max-sm:min-h-11"
+              >
+                posting <ExternalLink aria-hidden className="size-3" />
+              </a>
+            )}
+          </div>
+        )}
 
         <div className="mt-4 flex flex-wrap items-center gap-2.5">
           {app && <StatusSelect n={id} current={app.status} />}
@@ -117,35 +136,17 @@ export function ReportView({
               href={`/api/cover-pdf?application=${encodeURIComponent(id)}`}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center justify-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-700 transition-colors hover:bg-emerald-500/15 dark:text-emerald-400 max-sm:min-h-[44px]"
+              className={buttonVariants({ variant: "soft", size: "sm" })}
             >
-              <FileText className="size-3.5" /> View cover
+              <FileText aria-hidden className="size-3.5" /> View cover
             </a>
           )}
+          {app && canDelete && (
+            <div className="sm:ml-auto">
+              <DeleteFromTracker n={id} />
+            </div>
+          )}
         </div>
-
-        {app && canDelete && (
-          <div className="mt-3">
-            <DeleteFromTracker n={id} />
-          </div>
-        )}
-
-        {(archetype || date || applyUrl) && (
-          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
-            {archetype && <span className="max-w-full truncate">{archetype}</span>}
-            {date && <span className="tabular-nums text-faint">{date}</span>}
-            {applyUrl && (
-              <a
-                href={applyUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center justify-center gap-1 text-brand hover:underline max-sm:min-h-[44px]"
-              >
-                posting <ExternalLink className="size-3" />
-              </a>
-            )}
-          </div>
-        )}
       </header>
 
       {report ? (
@@ -161,12 +162,9 @@ export function ReportView({
               intro,
               verdictContent: verdictSection?.content,
             });
-            const verdictClass = recommended
-              ? "border-brand/25 bg-brand-soft/50"
-              : "border-border bg-surface/50";
             const callout = (
-              <div className={`rounded-2xl border px-5 py-5 ${verdictClass}`}>
-                <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-faint">Verdict</p>
+              <Card tone={recommended ? "good" : "neutral"} className="mb-6">
+                <p className="font-mono text-2xs eyebrow text-muted">Verdict</p>
                 <div className="mt-2 flex flex-wrap items-end gap-x-3 gap-y-1">
                   {score ? (
                     <p className="font-display text-4xl tabular-nums tracking-tight text-landing">{score}</p>
@@ -176,12 +174,13 @@ export function ReportView({
                   <p className="pb-1 text-xs text-muted">Apply line is {APPLY_LINE.toFixed(1)}</p>
                 </div>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  {score && <Badge tone={scoreTone(score)}>{score}</Badge>}
-                  {line && <Badge tone={recommended ? "good" : "muted"}>{line}</Badge>}
-                  {decision && <Badge tone="info">{decision}</Badge>}
-                  {meta?.legitimacy && <Badge tone={legitimacyTone(meta.legitimacy)}>{meta.legitimacy}</Badge>}
+                  {line && <Badge tone={recommended ? "good" : "muted"} className="bg-surface">{line}</Badge>}
+                  {decision && <Badge tone="info" className="bg-surface">{decision}</Badge>}
+                  {meta?.legitimacy && (
+                    <Badge tone={legitimacyTone(meta.legitimacy)} className="bg-surface">{meta.legitimacy}</Badge>
+                  )}
                 </div>
-                {reason && <p className="mt-4 text-[15px] font-medium leading-relaxed text-foreground">{reason}</p>}
+                {reason && <p className="mt-4 text-base font-medium leading-relaxed text-foreground">{reason}</p>}
                 <div className="mt-4">
                   <ApplyButton
                     n={id}
@@ -191,7 +190,7 @@ export function ReportView({
                     quiet={quietApply}
                   />
                 </div>
-              </div>
+              </Card>
             );
             if (sections.length === 0) {
               return (
@@ -219,10 +218,10 @@ export function ReportView({
                   }
                   return (
                     <details key={i} className="group mt-3 overflow-hidden rounded-xl border border-border bg-surface/30">
-                      <summary className="flex min-h-[44px] cursor-pointer list-none items-center gap-2 px-4 py-3 transition-colors hover:bg-surface-hover">
+                      <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 px-4 py-3 focus-ring-inset transition-colors duration-150 ease-out hover:bg-surface-hover">
                         <span className="text-sm font-medium">{cleanHeading(s.heading)}</span>
                         <span className="hidden truncate text-xs text-faint sm:inline">{preview(s.content)}</span>
-                        <ChevronDown className="ml-auto size-4 shrink-0 text-faint transition-transform group-open:rotate-180" />
+                        <ChevronDown aria-hidden className="ml-auto size-4 shrink-0 text-faint group-open:rotate-180 motion-safe:transition-transform motion-safe:duration-200 motion-safe:ease-out" />
                       </summary>
                       <div className="report-prose border-t border-border px-4 py-3">
                         <ReportMarkdown>{s.content}</ReportMarkdown>
@@ -233,16 +232,16 @@ export function ReportView({
 
                 {machine.length > 0 && (
                   <>
-                    <div className="mt-6 flex items-center gap-3 text-[11px] uppercase tracking-[0.14em] text-faint">
+                    <div className="mt-6 flex items-center gap-3 text-2xs eyebrow text-faint">
                       <span className="h-px flex-1 bg-border" />
                       Technical details · for developers
                       <span className="h-px flex-1 bg-border" />
                     </div>
                     {machine.map((s, i) => (
                       <details key={i} className="group mt-2 overflow-hidden rounded-xl border border-border/60 bg-surface/20">
-                        <summary className="flex min-h-[44px] cursor-pointer list-none items-center gap-2 px-4 py-3 font-mono text-xs text-muted transition-colors hover:bg-surface-hover">
+                        <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 px-4 py-3 font-mono text-xs text-muted focus-ring-inset transition-colors duration-150 ease-out hover:bg-surface-hover">
                           {cleanHeading(s.heading)}
-                          <ChevronDown className="ml-auto size-4 shrink-0 text-faint transition-transform group-open:rotate-180" />
+                          <ChevronDown aria-hidden className="ml-auto size-4 shrink-0 text-faint group-open:rotate-180 motion-safe:transition-transform motion-safe:duration-200 motion-safe:ease-out" />
                         </summary>
                         <div className="report-prose border-t border-border/60 px-4 py-3">
                           <ReportMarkdown>{s.content}</ReportMarkdown>
@@ -257,10 +256,12 @@ export function ReportView({
           <ScoreMethodology />
         </>
       ) : (
-        <div className="mt-8 flex items-center gap-3 rounded-2xl border border-dashed border-border bg-surface/30 p-5 text-sm text-muted">
-          <FileText className="size-5 shrink-0 text-faint" />
-          No report file found for #{id} in <code className="text-foreground">reports/</code>.
-        </div>
+        <Card className="mt-8 flex items-center gap-3 border-dashed bg-surface/30 text-sm text-muted">
+          <FileText aria-hidden className="size-5 shrink-0 text-faint" />
+          <span>
+            No report file found for #{id} in <code className="text-foreground">reports/</code>.
+          </span>
+        </Card>
       )}
     </div>
   );

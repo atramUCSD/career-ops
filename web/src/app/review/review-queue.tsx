@@ -2,7 +2,11 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, Check, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
+import { AlertTriangle, Check, ChevronDown, ChevronRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { listItem } from "@/components/ui/motion";
 import { cn } from "@/lib/cn";
 
 export type ReviewBullet = {
@@ -26,8 +30,8 @@ export type ReviewItem = {
 
 const SOURCE_TONE: Record<ReviewBullet["source"], string> = {
   "verbatim-in-cv.md": "border-border text-muted",
-  reworded: "border-sky-400/40 text-sky-400",
-  "story-bank claim": "border-amber-400/50 text-amber-400",
+  reworded: "border-info/30 text-info-text",
+  "story-bank claim": "border-warn/50 text-warn",
 };
 
 /** The per-application review list. The approve control lives ONLY inside the
@@ -42,9 +46,11 @@ export function ReviewQueue({ items }: { items: ReviewItem[] }) {
 
   if (items.length === 0) {
     return (
-      <p className="mt-8 rounded-lg border border-border bg-surface/30 p-6 text-sm text-muted">
-        Nothing awaiting review. Prepare applications from the inbox shortlist and they land here.
-      </p>
+      <Card inset>
+        <p className="text-sm text-muted">
+          Nothing awaiting review. Prepare applications from the inbox shortlist and they land here.
+        </p>
+      </Card>
     );
   }
 
@@ -73,24 +79,32 @@ export function ReviewQueue({ items }: { items: ReviewItem[] }) {
   }
 
   return (
-    <div className="mt-6 space-y-2">
+    // relative: popLayout pins an approved item absolutely while it fades out.
+    <div className="relative space-y-3">
+      <AnimatePresence initial={false} mode="popLayout">
       {items.map((item) => {
         const isOpen = open === item.n;
         const done = approved.has(item.n);
         return (
-          <div key={item.n} className="rounded-lg border border-border bg-surface/30">
+          <motion.div key={item.n} {...listItem}>
+          <Card inset className="p-0">
+            {/* Whole-row disclosure target: kept a raw button (Button centers and pads a control). */}
             <button
               type="button"
               onClick={() => {
                 setOpen(isOpen ? null : item.n);
                 setErr("");
               }}
-              className="flex w-full items-center gap-3 px-4 py-3 text-left"
+              aria-expanded={isOpen}
+              className={cn(
+                "flex w-full items-center gap-3 px-4 py-3 text-left transition-colors duration-150 ease-out hover:bg-surface-hover focus-ring max-sm:min-h-11",
+                isOpen ? "rounded-t-xl" : "rounded-xl",
+              )}
             >
               {isOpen ? (
-                <ChevronDown className="size-4 shrink-0 text-faint" />
+                <ChevronDown aria-hidden className="size-4 shrink-0 text-faint" />
               ) : (
-                <ChevronRight className="size-4 shrink-0 text-faint" />
+                <ChevronRight aria-hidden className="size-4 shrink-0 text-faint" />
               )}
               <span className="min-w-0 flex-1 truncate text-sm">
                 <span className="font-medium">{item.company}</span>
@@ -98,17 +112,17 @@ export function ReviewQueue({ items }: { items: ReviewItem[] }) {
               </span>
               {item.bullets.some((b) => b.claims.length > 0) && (
                 <Chip tone="amber">
-                  <AlertTriangle className="size-3" /> unverified figures
+                  <AlertTriangle aria-hidden className="size-3" /> <span className="max-sm:sr-only">unverified figures</span>
                 </Chip>
               )}
               {item.jdUnread && (
                 <Chip tone="amber">
-                  <AlertTriangle className="size-3" /> JD unread
+                  <AlertTriangle aria-hidden className="size-3" /> <span className="max-sm:sr-only">JD unread</span>
                 </Chip>
               )}
               {done && (
                 <Chip tone="green">
-                  <Check className="size-3" /> approved
+                  <Check aria-hidden className="size-3" /> <span className="max-sm:sr-only">approved</span>
                 </Chip>
               )}
             </button>
@@ -121,20 +135,17 @@ export function ReviewQueue({ items }: { items: ReviewItem[] }) {
                     the list, never in bulk. It only stamps the Notes marker;
                     submitting the application remains a human act elsewhere. */}
                 <div className="mt-4 flex items-center gap-3 border-t border-border pt-4">
-                  <button
-                    type="button"
-                    disabled={!item.report || done || busy === item.n}
+                  <Button
+                    variant={done ? "soft" : "secondary"}
+                    disabled={!item.report || done}
+                    loading={busy === item.n}
                     onClick={() => approve(item)}
-                    className={cn(
-                      "inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm transition-colors",
-                      done
-                        ? "border-emerald-400/40 text-emerald-400"
-                        : "border-border hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50",
-                    )}
+                    // The approved state reads as a result, not a dimmed control.
+                    className={cn("shrink-0", done && "disabled:opacity-100")}
                   >
-                    {busy === item.n ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
+                    {busy !== item.n && <Check aria-hidden className="size-4" />}
                     {done ? "Approved" : "Approve"}
-                  </button>
+                  </Button>
                   <span className="text-xs text-faint">
                     {item.report
                       ? done
@@ -143,12 +154,20 @@ export function ReviewQueue({ items }: { items: ReviewItem[] }) {
                       : "No report resolved for this row — can’t approve."}
                   </span>
                 </div>
-                {err && <p className="mt-2 text-xs text-red-400">{err}</p>}
+                <AnimatePresence initial={false}>
+                  {err && (
+                    <motion.p key="err" {...listItem} role="alert" className="mt-2 text-xs text-bad-text">
+                      {err}
+                    </motion.p>
+                  )}
+                </AnimatePresence>
               </div>
             )}
-          </div>
+          </Card>
+          </motion.div>
         );
       })}
+      </AnimatePresence>
     </div>
   );
 }
@@ -171,7 +190,7 @@ function Delta({ item }: { item: ReviewItem }) {
           <div className="flex items-start gap-2">
             <span
               className={cn(
-                "mt-0.5 shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] uppercase tracking-wide",
+                "eyebrow mt-0.5 shrink-0 rounded-md border px-1.5 py-0.5 text-2xs",
                 SOURCE_TONE[b.source],
               )}
             >
@@ -181,7 +200,7 @@ function Delta({ item }: { item: ReviewItem }) {
           </div>
           {b.closest && <p className="mt-1 pl-2 text-xs text-faint">was: {b.closest}</p>}
           {b.claims.map((c, j) => (
-            <p key={j} className="mt-1 flex items-start gap-1.5 pl-2 text-xs text-amber-400">
+            <p key={j} className="mt-1 flex items-start gap-1.5 pl-2 text-xs text-warn">
               <AlertTriangle className="mt-0.5 size-3 shrink-0" />
               <span>
                 “{c.claim}” is {c.bucket}
@@ -199,8 +218,8 @@ function Chip({ tone, children }: { tone: "amber" | "green"; children: React.Rea
   return (
     <span
       className={cn(
-        "inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
-        tone === "amber" ? "border-amber-400/50 text-amber-400" : "border-emerald-400/40 text-emerald-400",
+        "eyebrow inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-0.5 text-2xs font-medium",
+        tone === "amber" ? "border-warn/50 text-warn" : "border-good/30 text-brand-text",
       )}
     >
       {children}

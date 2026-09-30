@@ -3,7 +3,10 @@
 import { useState } from "react";
 import Link from "next/link";
 import { ChevronDown, Coins, FileText, Loader2, Settings, Sparkles, X } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { layoutMove, listItem } from "@/components/ui/motion";
 import { CompanyLogo } from "@/components/company-logo";
 import { CostBadge } from "@/components/cost/cost-badge";
 import { cn } from "@/lib/cn";
@@ -98,58 +101,74 @@ export function ShortlistTray({
   const prepCostText = costLine(prepEstimate);
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-30 sm:bottom-4">
-      <div className="mx-auto max-w-3xl sm:px-6">
-        <div className="border-t border-border bg-surface shadow-lg shadow-black/10 sm:rounded-2xl sm:border">
-          {/* expandable saved-items list */}
+    <div className="fixed inset-x-0 bottom-0 z-30 sm:bottom-4 md:left-60">
+      {/* mirrors the page container so the tray lines up with the left-aligned list above it */}
+      <div className="mx-auto max-w-6xl sm:px-6">
+        <div className="max-w-3xl border-t border-border bg-surface shadow-raised sm:rounded-2xl sm:border">
+          {/* expandable saved-items list; relative so popLayout can pin a removed row */}
           {open && (
-            <ul className="max-h-64 divide-y divide-border overflow-y-auto px-3 py-1">
-              {items.map((it) => (
-                <li key={it.url} className="flex items-center gap-2.5 py-2">
-                  <CompanyLogo name={it.company} size={18} />
-                  <span className="min-w-0 flex-1 truncate text-sm">
-                    <span className="font-medium">{it.company}</span> <span className="text-muted">· {it.role}</span>
-                  </span>
-                  {/* per-item prepare outcome, streamed in while the batch runs */}
-                  {prep.byUrl[it.url] ? (
-                    <Badge tone={prep.byUrl[it.url] === "prepared" ? "good" : "bad"}>{prep.byUrl[it.url]}</Badge>
-                  ) : prep.running ? (
-                    <Loader2 className="size-3.5 shrink-0 animate-spin text-muted" />
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={() => onRemove(it.url)}
-                    aria-label={`Remove ${it.company}`}
-                    className="inline-flex items-center justify-center rounded-md p-1 text-faint transition-colors hover:text-foreground max-sm:min-h-[44px] max-sm:min-w-[44px]"
+            <ul id="shortlist-items" className="relative max-h-64 divide-y divide-border overflow-y-auto px-3 py-1">
+              <AnimatePresence initial={false} mode="popLayout">
+                {items.map((it) => (
+                  <motion.li
+                    key={it.url}
+                    {...listItem}
+                    layout="position"
+                    transition={{ ...listItem.transition, layout: layoutMove }}
+                    className="flex items-center gap-2.5 py-2"
                   >
-                    <X className="size-4" />
-                  </button>
-                </li>
-              ))}
+                    <CompanyLogo name={it.company} size={18} />
+                    <span className="min-w-0 flex-1 truncate text-sm">
+                      <span className="font-medium">{it.company}</span> <span className="text-muted">· {it.role}</span>
+                    </span>
+                    {/* per-item prepare outcome, streamed in while the batch runs */}
+                    {prep.byUrl[it.url] ? (
+                      <Badge tone={prep.byUrl[it.url] === "prepared" ? "good" : "bad"}>{prep.byUrl[it.url]}</Badge>
+                    ) : prep.running ? (
+                      <Loader2 aria-hidden className="size-3.5 shrink-0 text-muted motion-safe:animate-spin" />
+                    ) : null}
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => onRemove(it.url)}
+                      aria-label={`Remove ${it.company}`}
+                      className="text-faint focus-ring-inset"
+                    >
+                      <X aria-hidden className="size-4" />
+                    </Button>
+                  </motion.li>
+                ))}
+              </AnimatePresence>
             </ul>
           )}
 
           {/* the persistent bar */}
-          <div className="flex items-center gap-3 px-3 py-2.5 sm:px-4">
-            <button
-              type="button"
+          <div className="flex items-center gap-2 px-3 py-2.5 sm:px-4">
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => setOpen((v) => !v)}
-              className="inline-flex items-center gap-1.5 text-sm font-medium max-sm:min-h-[44px]"
+              aria-expanded={open}
+              aria-controls="shortlist-items"
+              className="text-sm"
             >
-              <ChevronDown className={cn("size-4 text-muted transition-transform", open && "rotate-180")} />
+              <ChevronDown
+                aria-hidden
+                className={cn("size-4 text-muted motion-safe:transition-transform motion-safe:duration-200 motion-safe:ease-out", open && "rotate-180")}
+              />
               Shortlist <span className="tabular-nums text-brand-text">({n})</span>
-            </button>
+            </Button>
 
             {open && (
-              <button type="button" onClick={onClear} className="text-xs text-faint transition-colors hover:text-foreground max-sm:min-h-[44px]">
+              <Button variant="ghost" size="sm" onClick={onClear} className="text-faint">
                 Clear
-              </button>
+              </Button>
             )}
 
             <div className="ml-auto flex items-center gap-2">
               {prep.running ? (
                 <span className="inline-flex items-center gap-2 text-xs text-muted">
-                  <Loader2 className="size-3.5 animate-spin text-brand" />
+                  <Loader2 aria-hidden className="size-3.5 text-brand motion-safe:animate-spin" />
                   <span className="max-w-64 truncate">{prep.label || "Preparing…"}</span>
                 </span>
               ) : confirming === "score" ? (
@@ -158,41 +177,50 @@ export function ShortlistTray({
                 <ConfirmPrepare n={n} costText={prepCostText} batchText={batchLine(batch)} hasCli={hasCli} onCancel={() => setConfirming(null)} onConfirm={() => { setConfirming(null); onPrepare(); }} />
               ) : (
                 <>
-                  <button
-                    type="button"
-                    onClick={() => setConfirming("prepare")}
-                    className="inline-flex items-center gap-2 rounded-full border border-brand/40 bg-brand-soft px-4 py-2 text-sm font-medium text-brand transition-colors hover:border-brand max-sm:min-h-[44px]"
-                  >
-                    <FileText className="size-4" />
+                  <Button variant="soft" onClick={() => setConfirming("prepare")}>
+                    <FileText aria-hidden className="size-4" />
                     <span>Prepare {n}</span>
-                    <span className="hidden text-xs font-normal text-brand/80 sm:inline">· {batchLine(batch)} · {prepCostText}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setConfirming("score")}
-                    className="inline-flex items-center gap-2 rounded-full bg-brand px-4 py-2 text-sm font-medium text-brand-foreground transition-colors hover:bg-brand-200 max-sm:min-h-[44px]"
-                  >
-                    <Sparkles className="size-4" />
+                    <span className="hidden text-xs font-normal sm:inline">· {batchLine(batch)} · {prepCostText}</span>
+                  </Button>
+                  <Button onClick={() => setConfirming("score")}>
+                    <Sparkles aria-hidden className="size-4" />
                     <span>Score {n}</span>
-                    <span className="hidden text-xs font-normal text-brand-foreground/80 sm:inline">· {costText}</span>
-                  </button>
+                    <span className="hidden text-xs font-normal sm:inline">· {costText}</span>
+                  </Button>
                 </>
               )}
             </div>
           </div>
 
           {/* cost line — always visible on mobile (where it doesn't fit in the buttons) */}
-          <div className="flex items-center gap-2 border-t border-border/60 px-3 py-1.5 text-[11px] text-muted sm:hidden">
+          <div className="flex items-center gap-2 border-t border-border/60 px-3 py-1.5 text-2xs text-muted sm:hidden">
             <CostBadge kind="spend" size="xs" />
             <span>Score {costText} · Prepare {prepCostText} — the only steps that spend</span>
           </div>
 
           {/* finished-batch summary (latched from the stream's done/error event) */}
           {!prep.running && prep.label && (
-            <div className="border-t border-border/60 px-3 py-1.5 text-[11px] text-muted sm:px-4">{prep.label}</div>
+            <div role="status" className="border-t border-border/60 px-3 py-1.5 text-2xs text-muted sm:px-4">
+              {prep.label}
+            </div>
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// Shown in place of either confirm when no agent CLI is configured.
+function NoCli({ onCancel }: { onCancel: () => void }) {
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <span className="text-muted">No AI configured.</span>
+      <Link href="/config" className={buttonVariants({ variant: "soft", size: "sm" })}>
+        <Settings aria-hidden className="size-3.5" /> Set up
+      </Link>
+      <Button variant="ghost" size="sm" onClick={onCancel} className="text-faint">
+        Cancel
+      </Button>
     </div>
   );
 }
@@ -210,34 +238,16 @@ function ConfirmScore({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
-  if (!hasCli) {
-    return (
-      <div className="flex items-center gap-2 text-xs">
-        <span className="text-muted">No AI configured.</span>
-        <Link href="/config" className="inline-flex items-center gap-1 rounded-full border border-brand/40 bg-brand-soft px-3 py-1.5 font-medium text-brand max-sm:min-h-[44px]">
-          <Settings className="size-3.5" /> Set up
-        </Link>
-        <button type="button" onClick={onCancel} className="text-faint hover:text-foreground max-sm:min-h-[44px]">
-          Cancel
-        </button>
-      </div>
-    );
-  }
+  if (!hasCli) return <NoCli onCancel={onCancel} />;
   return (
     <div className="flex items-center gap-2">
-      <span className="hidden items-center gap-1 text-[11px] text-muted sm:inline-flex">
-        <Coins className="size-3.5 text-brand" /> {costText}
+      <span className="hidden items-center gap-1 text-2xs text-muted sm:inline-flex">
+        <Coins aria-hidden className="size-3.5 text-brand" /> {costText}
       </span>
-      <button
-        type="button"
-        onClick={onConfirm}
-        className="inline-flex items-center gap-1.5 rounded-full bg-brand px-4 py-2 text-sm font-medium text-brand-foreground transition-colors hover:bg-brand-200 max-sm:min-h-[44px]"
-      >
-        Score {n} now
-      </button>
-      <button type="button" onClick={onCancel} className="rounded-full px-2 py-2 text-xs text-faint transition-colors hover:text-foreground max-sm:min-h-[44px]">
+      <Button onClick={onConfirm}>Score {n} now</Button>
+      <Button variant="ghost" size="sm" onClick={onCancel} className="text-faint">
         Cancel
-      </button>
+      </Button>
     </div>
   );
 }
@@ -261,44 +271,26 @@ function ConfirmPrepare({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
-  if (!hasCli) {
-    return (
-      <div className="flex items-center gap-2 text-xs">
-        <span className="text-muted">No AI configured.</span>
-        <Link href="/config" className="inline-flex items-center gap-1 rounded-full border border-brand/40 bg-brand-soft px-3 py-1.5 font-medium text-brand max-sm:min-h-[44px]">
-          <Settings className="size-3.5" /> Set up
-        </Link>
-        <button type="button" onClick={onCancel} className="text-faint hover:text-foreground max-sm:min-h-[44px]">
-          Cancel
-        </button>
-      </div>
-    );
-  }
+  if (!hasCli) return <NoCli onCancel={onCancel} />;
   if (n > PREPARE_MAX) {
     return (
       <div className="flex items-center gap-2 text-xs">
         <span className="text-muted">Max {PREPARE_MAX} per batch — trim the shortlist first.</span>
-        <button type="button" onClick={onCancel} className="text-faint hover:text-foreground max-sm:min-h-[44px]">
+        <Button variant="ghost" size="sm" onClick={onCancel} className="text-faint">
           Cancel
-        </button>
+        </Button>
       </div>
     );
   }
   return (
     <div className="flex items-center gap-2">
-      <span className="hidden items-center gap-1 text-[11px] text-muted sm:inline-flex">
-        <Coins className="size-3.5 text-brand" /> {batchText} · {costText}
+      <span className="hidden items-center gap-1 text-2xs text-muted sm:inline-flex">
+        <Coins aria-hidden className="size-3.5 text-brand" /> {batchText} · {costText}
       </span>
-      <button
-        type="button"
-        onClick={onConfirm}
-        className="inline-flex items-center gap-1.5 rounded-full bg-brand px-4 py-2 text-sm font-medium text-brand-foreground transition-colors hover:bg-brand-200 max-sm:min-h-[44px]"
-      >
-        Prepare {n} now
-      </button>
-      <button type="button" onClick={onCancel} className="rounded-full px-2 py-2 text-xs text-faint transition-colors hover:text-foreground max-sm:min-h-[44px]">
+      <Button onClick={onConfirm}>Prepare {n} now</Button>
+      <Button variant="ghost" size="sm" onClick={onCancel} className="text-faint">
         Cancel
-      </button>
+      </Button>
     </div>
   );
 }

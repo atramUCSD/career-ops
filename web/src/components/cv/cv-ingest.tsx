@@ -6,7 +6,12 @@ import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Upload, FileText, Loader2, Check, AlertTriangle, Lock, ArrowRight, RotateCcw } from "lucide-react";
-import { cn } from "@/lib/cn";
+import { AnimatePresence, motion } from "motion/react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/field";
+import { listItem } from "@/components/ui/motion";
 import { instrumentSerif } from "@/lib/fonts";
 import { cvReadiness, parseCvStream, type CvSeed } from "@/lib/cv/quality";
 import { DEFAULT_FILTERS, filtersToParams } from "@/lib/explore";
@@ -24,7 +29,6 @@ function cliId(): string | null {
 const STYLE = `
 .co-cvdrop{position:relative;border:1.5px dashed color-mix(in srgb, var(--fg) 22%, transparent);border-radius:1rem;transition:border-color .2s,background .2s}
 .co-cvdrop[data-over="true"]{border-color:var(--brand);background:color-mix(in srgb,var(--brand) 5%,transparent)}
-.co-cvtrace{animation:co-rise .4s ease both}
 `;
 
 export function CvIngest({ onSaved }: { onSaved?: () => void }) {
@@ -178,10 +182,10 @@ export function CvIngest({ onSaved }: { onSaved?: () => void }) {
   // ── INPUT ──
   if (phase === "input" || phase === "error") {
     return (
-      <div className="space-y-3">
+      <div className="relative space-y-3">
         <style>{STYLE}</style>
         <div
-          className="co-cvdrop p-6"
+          className="co-cvdrop p-5 field-focus-within"
           data-over={over}
           onDragOver={(e) => {
             e.preventDefault();
@@ -195,51 +199,58 @@ export function CvIngest({ onSaved }: { onSaved?: () => void }) {
             if (f) ingestFile(f);
           }}
         >
+          {/* Borderless on purpose: the dashed drop zone is the field edge and carries the focus state. */}
           <textarea
+            aria-label="Paste your CV"
             value={paste}
             onChange={(e) => setPaste(e.target.value)}
             onKeyDown={(e) => {
               if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && paste.trim()) ingestText(paste.trim());
             }}
             placeholder="Paste your CV here — or drop a PDF / .md file below. Even a rough paste works; we'll clean it up."
-            className="h-32 w-full resize-none bg-transparent text-[14px] leading-relaxed outline-none placeholder:text-faint"
+            className="h-32 w-full resize-none bg-transparent text-sm leading-relaxed outline-none placeholder:text-faint"
           />
           <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-border pt-3">
-            <button
-              type="button"
-              onClick={() => fileRef.current?.click()}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface/50 px-3 py-1.5 text-xs font-medium text-foreground transition hover:border-brand/40 hover:text-brand max-sm:min-h-[44px] max-sm:px-4"
-            >
-              <Upload className="size-3.5" /> Upload PDF / file
-            </button>
-            <input ref={fileRef} type="file" accept=".pdf,.md,.markdown,.txt,.docx" hidden onChange={(e) => e.target.files?.[0] && ingestFile(e.target.files[0])} />
-            <span className="inline-flex items-center gap-1 text-[11px] text-faint">
-              <Lock className="size-3" /> Stays on your machine. Parsed by your own AI.
+            <Button type="button" variant="secondary" size="sm" onClick={() => fileRef.current?.click()}>
+              <Upload aria-hidden className="size-3.5" /> Upload PDF / file
+            </Button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".pdf,.md,.markdown,.txt,.docx"
+              hidden
+              onChange={(e) => e.target.files?.[0] && ingestFile(e.target.files[0])}
+            />
+            <span className="inline-flex items-center gap-1 text-2xs text-faint">
+              <Lock aria-hidden className="size-3" /> Stays on your machine. Parsed by your own AI.
             </span>
-            <button
-              type="button"
-              disabled={!paste.trim()}
-              onClick={() => ingestText(paste.trim())}
-              className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-brand-foreground shadow-sm transition hover:brightness-110 disabled:opacity-50 max-sm:min-h-[44px]"
-            >
-              Read my CV <ArrowRight className="size-4" />
-            </button>
+            <Button type="button" disabled={!paste.trim()} onClick={() => ingestText(paste.trim())} className="ml-auto">
+              Read my CV <ArrowRight aria-hidden className="size-4" />
+            </Button>
           </div>
         </div>
-        {phase === "error" &&
-          (err === "needs-cli" ? (
-            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-[13px] text-amber-700 dark:text-amber-300">
-              <AlertTriangle className="size-3.5 shrink-0" />
-              <span>To read a PDF or Word file, connect an AI CLI in Config. Paste or drop .md / .txt to start without one.</span>
-              <Link href="/config" className="ml-auto inline-flex items-center gap-1 rounded-md bg-amber-500/20 px-2.5 py-1 font-medium text-amber-700 transition hover:bg-amber-500/30 dark:text-amber-200">
-                Connect your AI CLI <ArrowRight className="size-3.5" />
-              </Link>
-            </div>
-          ) : (
-            <p className="flex items-center gap-1.5 text-[13px] text-amber-600 dark:text-amber-400">
-              <AlertTriangle className="size-3.5 shrink-0" /> {err}
-            </p>
-          ))}
+        <AnimatePresence initial={false} mode="popLayout">
+          {phase === "error" && (
+            <motion.div key={err === "needs-cli" ? "needs-cli" : "err"} role="alert" {...listItem}>
+              {err === "needs-cli" ? (
+                <Card inset tone="warn" className="flex flex-wrap items-center gap-2 text-sm text-warn">
+                  <AlertTriangle aria-hidden className="size-3.5 shrink-0" />
+                  <span>To read a PDF or Word file, connect an AI CLI in Config. Paste or drop .md / .txt to start without one.</span>
+                  <Link
+                    href="/config"
+                    className="ml-auto inline-flex items-center gap-1 rounded-md bg-warn/15 px-2 py-0.5 font-medium text-warn transition-colors duration-150 ease-out hover:bg-warn/25 focus-ring max-sm:min-h-11"
+                  >
+                    Connect your AI CLI <ArrowRight aria-hidden className="size-3.5" />
+                  </Link>
+                </Card>
+              ) : (
+                <p className="flex items-center gap-1.5 text-sm text-warn">
+                  <AlertTriangle aria-hidden className="size-3.5 shrink-0" /> {err}
+                </p>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     );
   }
@@ -247,80 +258,91 @@ export function CvIngest({ onSaved }: { onSaved?: () => void }) {
   // ── PARSING (the 10s bridge) ──
   if (phase === "parsing") {
     return (
-      <div className="rounded-2xl border border-border bg-surface/60 p-6 backdrop-blur-sm">
-        <style>{STYLE}</style>
-        <div className="flex items-center gap-2.5">
-          <Loader2 className="size-4 animate-spin text-brand" />
+      <Card role="status" className="bg-surface/60 backdrop-blur-sm">
+        <div className="flex items-center gap-2">
+          <Loader2 aria-hidden className="size-4 text-brand motion-safe:animate-spin" />
           <span className={`${instrumentSerif.className} text-lg text-foreground`}>{trace || "Reading your CV…"}</span>
         </div>
-        <div className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
-          <span className="size-1.5 rounded-full bg-emerald-500" /> 0 tokens · $0.00 · local
+        <div className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-good/30 bg-good-soft px-2 py-0.5 text-2xs font-semibold text-brand-text">
+          <span aria-hidden className="size-1.5 rounded-full bg-good" /> 0 tokens · $0.00 · local
         </div>
-        {md && <div className="co-cvtrace mt-4 max-h-40 overflow-hidden rounded-lg border border-border bg-surface/40 p-3 text-[11px] text-faint">{md.slice(0, 400)}…</div>}
-      </div>
+        {md && (
+          <motion.div
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={listItem.transition}
+            className="mt-4 max-h-40 overflow-hidden rounded-xl border border-border bg-surface/40 p-3 text-2xs text-faint"
+          >
+            {md.slice(0, 400)}…
+          </motion.div>
+        )}
+      </Card>
     );
   }
 
   // ── REVIEW (propose → confirm) ──
   return (
-    <div className="rounded-2xl border border-border bg-surface/60 p-4 backdrop-blur-sm md:p-5">
-      <style>{STYLE}</style>
+    <Card className="relative bg-surface/60 backdrop-blur-sm">
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <FileText className="size-4 text-brand" />
-        <h3 className={`${instrumentSerif.className} text-lg text-foreground`}>Here&apos;s your CV — review and save</h3>
+        <FileText aria-hidden className="size-4 text-brand" />
+        <h2 className={`${instrumentSerif.className} text-lg text-foreground`}>Here&apos;s your CV — review and save</h2>
         {readiness && (
-          <span
-            className={cn(
-              "ml-auto inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium",
-              readiness.scoreable ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-amber-500/10 text-amber-600 dark:text-amber-400",
-            )}
+          <Badge
+            tone={readiness.scoreable ? "good" : "warn"}
+            className="ml-auto inline-flex items-center gap-1 text-2xs font-medium"
           >
-            {readiness.scoreable ? <Check className="size-3" /> : <AlertTriangle className="size-3" />}
+            {readiness.scoreable ? <Check aria-hidden className="size-3" /> : <AlertTriangle aria-hidden className="size-3" />}
             {readiness.scoreable ? "Ready to match" : "A bit thin"}
-          </span>
+          </Badge>
         )}
       </div>
-      {readiness?.hint && <p className="mb-2 text-[12px] text-amber-600 dark:text-amber-400">{readiness.hint}</p>}
-      {saveErr && (
-        <p className="mb-2 flex items-center gap-1.5 text-[12px] text-red-500">
-          <AlertTriangle className="size-3.5 shrink-0" /> {saveErr}
-        </p>
-      )}
+      {readiness?.hint && <p className="mb-2 text-xs text-warn">{readiness.hint}</p>}
+      <AnimatePresence initial={false} mode="popLayout">
+        {saveErr && (
+          <motion.p key="save-err" role="alert" {...listItem} className="mb-2 flex items-center gap-1.5 text-xs text-bad-text">
+            <AlertTriangle aria-hidden className="size-3.5 shrink-0" /> {saveErr}
+          </motion.p>
+        )}
+      </AnimatePresence>
       <div className="grid gap-3 md:grid-cols-2">
-        <textarea
+        {/* Editor pane keeps the preview's inset radius so the pair reads as one split view. */}
+        <Textarea
+          aria-label="CV markdown"
+          mono
           value={md}
           onChange={(e) => setMd(e.target.value)}
-          className="h-72 w-full resize-none rounded-lg border border-border bg-surface/40 p-3 font-mono text-[12px] leading-relaxed outline-none focus:border-brand/40"
+          className="h-72 resize-none rounded-xl bg-surface/40 p-3 text-xs leading-relaxed"
         />
-        <div className="prose prose-sm dark:prose-invert h-72 max-w-none overflow-y-auto rounded-lg border border-border bg-surface/40 p-3 text-[13px]">
+        <div
+          tabIndex={0}
+          role="region"
+          aria-label="CV preview"
+          className="report-prose h-72 max-w-none overflow-y-auto rounded-xl border border-border bg-surface/40 p-3 text-sm focus-ring"
+        >
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{md}</ReactMarkdown>
         </div>
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          onClick={save}
-          disabled={phase === "saving"}
-          className="inline-flex items-center gap-2 rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-brand-foreground shadow-sm transition hover:brightness-110 disabled:opacity-60"
-        >
-          {phase === "saving" ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
+        <Button type="button" size="lg" onClick={save} loading={phase === "saving"}>
+          {phase !== "saving" && <Check aria-hidden className="size-4" />}
           Save &amp; find my matches
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          variant="ghost"
           onClick={() => {
             setMd("");
             setSeed(null);
             setPhase("input");
           }}
-          className="inline-flex items-center gap-1.5 text-[13px] text-muted transition hover:text-foreground"
+          className="text-muted"
         >
-          <RotateCcw className="size-3.5" /> Start over
-        </button>
-        <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-faint">
-          <Lock className="size-3" /> Saved locally to cv.md
+          <RotateCcw aria-hidden className="size-3.5" /> Start over
+        </Button>
+        <span className="ml-auto inline-flex items-center gap-1 text-2xs text-faint">
+          <Lock aria-hidden className="size-3" /> Saved locally to cv.md
         </span>
       </div>
-    </div>
+    </Card>
   );
 }

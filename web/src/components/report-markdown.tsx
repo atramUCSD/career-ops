@@ -22,9 +22,19 @@ function nodeText(node: ReactNode): string {
   return "";
 }
 
+// Tables span the column and scroll inside an Inset container instead of overflowing at phone width.
+function Table({ node: _node, ...props }: React.TableHTMLAttributes<HTMLTableElement> & { node?: unknown }) {
+  return (
+    <div className="my-4 overflow-x-auto rounded-xl border border-border">
+      <table {...props} className="w-full" />
+    </div>
+  );
+}
+
 function markdownComponents(fitCol: number) {
   let tdIndex = 0;
   return {
+    table: Table,
     tr: ({ children, ...props }: React.HTMLAttributes<HTMLTableRowElement>) => {
       tdIndex = 0;
       return <tr {...props}>{children}</tr>;
@@ -69,13 +79,13 @@ function StarCards({ header, rows }: { header: string[]; rows: string[][] }) {
         return (
           <li key={i}>
             <details className="group overflow-hidden rounded-xl border border-border bg-surface/40">
-              <summary className="flex min-h-[44px] cursor-pointer list-none items-start gap-3 px-4 py-3 transition-colors hover:bg-surface-hover">
+              <summary className="flex min-h-11 cursor-pointer list-none items-start gap-3 px-4 py-3 focus-ring-inset transition-colors duration-150 ease-out hover:bg-surface-hover">
                 <span className="mt-0.5 shrink-0 font-mono text-xs tabular-nums text-faint">{num}</span>
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm font-medium text-foreground">{req || story || `Story ${num}`}</span>
                   {req && story ? <span className="mt-0.5 block text-xs text-muted">{story}</span> : null}
                 </span>
-                <ChevronDown className="mt-0.5 size-4 shrink-0 text-faint transition-transform group-open:rotate-180" />
+                <ChevronDown aria-hidden className="mt-0.5 size-4 shrink-0 text-faint group-open:rotate-180 motion-safe:transition-transform motion-safe:duration-200 motion-safe:ease-out" />
               </summary>
               <dl className="grid gap-3 border-t border-border px-4 py-3 sm:grid-cols-2">
                 {fields.map((f) => {
@@ -83,7 +93,7 @@ function StarCards({ header, rows }: { header: string[]; rows: string[][] }) {
                   if (!value) return null;
                   return (
                     <div key={f.label} className={f.label === "Reflection" ? "sm:col-span-2" : undefined}>
-                      <dt className="font-mono text-[11px] uppercase tracking-[0.14em] text-faint">{f.label}</dt>
+                      <dt className="font-mono text-2xs eyebrow text-faint">{f.label}</dt>
                       <dd className="mt-1 text-sm text-foreground">{value}</dd>
                     </div>
                   );
@@ -116,7 +126,7 @@ export function ReportMarkdown({ children }: { children: string }) {
           );
         }
         return (
-          <ReactMarkdown key={i} remarkPlugins={[remarkGfm]}>
+          <ReactMarkdown key={i} remarkPlugins={[remarkGfm]} components={{ table: Table }}>
             {c.text}
           </ReactMarkdown>
         );

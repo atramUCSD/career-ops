@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Sparkles, X, Settings } from "lucide-react";
+import { Button, buttonVariants } from "@/components/ui/button";
 
 type Doctor = { available: boolean; onboardingNeeded: boolean; missing: string[]; warnings: string[] };
 
@@ -44,13 +45,15 @@ export function OnboardingBanner() {
 
   return (
     <div className="dot-bg relative mb-6 overflow-hidden rounded-2xl border border-brand/30 bg-gradient-to-br from-brand/10 via-surface/40 to-transparent p-5">
-      <button
+      <Button
+        variant="ghost"
+        size="icon-sm"
         onClick={() => setDismissed(true)}
-        className="absolute right-3 top-3 text-faint transition-colors hover:text-foreground"
+        className="absolute top-2 right-2 text-muted"
         aria-label="Dismiss"
       >
-        <X className="size-4" />
-      </button>
+        <X aria-hidden className="size-4" />
+      </Button>
       <h2 className="font-display text-xl text-landing">Let&apos;s finish setting you up</h2>
       <p className="mt-1.5 max-w-xl text-sm text-muted">
         career-ops works best when it knows you. We still need {items.join(", ")}.{" "}
@@ -58,20 +61,20 @@ export function OnboardingBanner() {
         for you.
       </p>
       {cli ? (
-        <button
+        <Button
           onClick={() => window.dispatchEvent(new CustomEvent("co-assistant", { detail: { message: kickoff } }))}
-          className="mt-4 inline-flex items-center gap-2 rounded-full bg-brand px-4 py-2 text-sm font-medium text-brand-foreground transition-colors hover:bg-brand-200"
+          className="mt-4"
         >
-          <Sparkles className="size-4" /> Set me up with the assistant
-        </button>
+          <Sparkles aria-hidden className="size-4" /> Set me up with the assistant
+        </Button>
       ) : (
         // The assistant needs a CLI to run — without one the kickoff would silently
         // drop. Send them to connect one first.
         <Link
           href="/config"
-          className="mt-4 inline-flex items-center gap-2 rounded-full bg-brand px-4 py-2 text-sm font-medium text-brand-foreground transition-colors hover:bg-brand-200"
+          className={buttonVariants({ className: "mt-4" })}
         >
-          <Settings className="size-4" /> Connect your AI CLI to get started
+          <Settings aria-hidden className="size-4" /> Connect your AI CLI to get started
         </Link>
       )}
     </div>

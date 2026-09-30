@@ -10,14 +10,16 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { WorkerPills } from "@/components/jobs/worker-pills";
 import { UsageMeter } from "@/components/usage-meter";
 import { ProfilePicker } from "@/components/profile-picker";
+import { Button } from "@/components/ui/button";
 import { instrumentSerif } from "@/lib/fonts";
 import { NAV_ITEMS, isActivePath } from "@/lib/nav-items";
 import { useJobs } from "@/components/jobs/job-store";
 
-// Mobile navigation (< md): a glass top bar + a right-side slide-over drawer that
-// mirrors the desktop sidebar (nav + workers + usage + theme). Premium details:
-// spring slide, scrim blur, swipe-to-close, body scroll-lock, Escape, focus move,
-// safe-area insets (notch / home bar), worker pulse, reduced-motion aware.
+// Mobile navigation (< md): a top bar + a right-side slide-over drawer that
+// mirrors the desktop sidebar. Not ui/Dialog: that is a centred modal with its
+// own header and scale-in, and a side drawer with swipe-to-close would have to
+// override most of it. The drawer matches it by hand instead: Escape, a Tab
+// trap, and focus back on the opener when it closes.
 // Motion/inset CSS is co-located (env() insets + the Tailwind v4 stale-CSS HMR gotcha).
 const STYLE = `
 /* Solid bg == the page bg == the theme-color meta, so Safari's top bar / status
@@ -25,15 +27,19 @@ const STYLE = `
    on iOS, esp. dark). Top padding = the notch inset PLUS a comfortable base, so
    the title never sits flush/cramped at the top (env() is 0 in browser mode). */
 .co-mnav{position:sticky;top:0;z-index:30;background:var(--bg);padding-top:calc(env(safe-area-inset-top) + .8rem)}
-.co-mscrim{position:fixed;inset:0;z-index:60;background:rgba(8,8,12,.45);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);opacity:0;pointer-events:none;transition:opacity .3s ease}
+.co-mscrim{position:fixed;inset:0;z-index:60;background:var(--scrim);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);opacity:0;pointer-events:none;transition:opacity .3s var(--ease-in-out)}
 .co-mscrim.open{opacity:1;pointer-events:auto}
-.co-mdrawer{position:fixed;top:0;right:0;bottom:0;z-index:61;width:min(20rem,86vw);display:flex;flex-direction:column;overflow-y:auto;overscroll-behavior:contain;transform:translateX(102%);transition:transform .34s cubic-bezier(.32,.72,0,1);will-change:transform;box-shadow:-16px 0 48px -16px rgba(0,0,0,.4);padding-top:calc(env(safe-area-inset-top) + .25rem)}
+.co-mdrawer{position:fixed;top:0;right:0;bottom:0;z-index:61;width:min(20rem,86vw);overflow-y:auto;overscroll-behavior:contain;transform:translateX(102%);transition:transform .3s var(--ease-in-out);will-change:transform;padding-top:calc(env(safe-area-inset-top) + .25rem)}
 .co-mdrawer.open{transform:translateX(0)}
+/* visibility waits out the slide, then pulls the closed drawer out of the tab order. */
+.co-mdrawer:not(.open){visibility:hidden;transition:transform .3s var(--ease-in-out),visibility 0s .3s}
 .co-msafe{padding-bottom:calc(1rem + env(safe-area-inset-bottom))}
 .co-pulse{animation:co-pulse 1.6s ease-in-out infinite}
 @keyframes co-pulse{0%,100%{opacity:1}50%{opacity:.35}}
-@media(prefers-reduced-motion:reduce){.co-mdrawer,.co-mscrim{transition:none}.co-pulse{animation:none}}
+@media(prefers-reduced-motion:reduce){.co-mdrawer,.co-mdrawer:not(.open),.co-mscrim{transition:none}.co-pulse{animation:none}}
 `;
+
+const FOCUSABLE = 'a[href], button:not([disabled]), select:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 export function MobileNav() {
   const pathname = usePathname();
@@ -47,9 +53,10 @@ export function MobileNav() {
     setOpen(false);
   }, [pathname]);
 
-  // Scroll-lock + Escape + move focus into the drawer while open.
+  // Scroll-lock + Escape + Tab trap while open; focus goes back to the opener on close.
   useEffect(() => {
     if (!open) return;
+    const opener = document.activeElement as HTMLElement | null;
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const onKey = (e: KeyboardEvent) => {
@@ -57,9 +64,8 @@ export function MobileNav() {
         setOpen(false);
         return;
       }
-      // Trap Tab focus within the drawer while open.
       if (e.key === "Tab" && panelRef.current) {
-        const f = panelRef.current.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])');
+        const f = panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE);
         if (f.length === 0) return;
         const first = f[0];
         const last = f[f.length - 1];
@@ -78,6 +84,7 @@ export function MobileNav() {
       document.body.style.overflow = prevOverflow;
       document.removeEventListener("keydown", onKey);
       window.clearTimeout(t);
+      if (opener?.isConnected) opener.focus();
     };
   }, [open]);
 
@@ -106,22 +113,24 @@ export function MobileNav() {
       <style>{STYLE}</style>
 
       <header className="co-mnav flex items-center gap-2 border-b border-border px-4 pb-3 md:hidden">
-        <Link href="/" className="flex min-h-[44px] items-center gap-2" aria-label="career-ops home">
+        <Link href="/" className="flex min-h-11 items-center gap-2 rounded-md focus-ring" aria-label="career-ops home">
           <CoMark size={26} />
           <span className={`${instrumentSerif.className} relative -top-px text-xl text-landing`}>career-ops</span>
         </Link>
         <div className="ml-auto flex items-center gap-1">
-          <ThemeToggle labels={false} />
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="icon"
             onClick={() => setOpen(true)}
             aria-label="Open menu"
             aria-expanded={open}
-            className="relative inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md p-2 text-muted transition-colors hover:bg-surface-hover hover:text-foreground"
+            className="relative text-muted"
           >
-            <Menu className="size-5" />
-            {running > 0 && <span aria-hidden className="co-pulse absolute right-1.5 top-1.5 size-2 rounded-full bg-brand ring-2 ring-surface" />}
-          </button>
+            <Menu aria-hidden className="size-5" />
+            {running > 0 && (
+              <span aria-hidden className="co-pulse absolute top-1.5 right-1.5 size-2 rounded-full bg-brand ring-2 ring-background" />
+            )}
+          </Button>
         </div>
       </header>
 
@@ -133,21 +142,16 @@ export function MobileNav() {
         aria-modal="true"
         aria-label="Navigation menu"
         inert={!open}
-        className={cn("co-mdrawer border-l border-border bg-surface md:hidden", open && "open")}
+        className={cn("co-mdrawer flex flex-col border-l border-border bg-surface shadow-overlay md:hidden", open && "open")}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
       >
         <div className="flex items-center justify-between px-4 py-3">
           <span className={`${instrumentSerif.className} text-lg text-landing`}>Menu</span>
-          <button
-            type="button"
-            onClick={() => setOpen(false)}
-            aria-label="Close menu"
-            className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md p-1.5 text-muted transition-colors hover:bg-surface-hover hover:text-foreground"
-          >
-            <X className="size-5" />
-          </button>
+          <Button variant="ghost" size="icon" onClick={() => setOpen(false)} aria-label="Close menu" className="text-muted">
+            <X aria-hidden className="size-5" />
+          </Button>
         </div>
 
         <nav className="flex flex-col gap-1 px-3">
@@ -160,14 +164,14 @@ export function MobileNav() {
                 onClick={() => setOpen(false)}
                 aria-current={active ? "page" : undefined}
                 className={cn(
-                  "flex items-center gap-3 rounded-lg px-3 py-3 text-[15px] transition-colors",
+                  "flex items-center gap-3 rounded-md px-3 py-3 text-base focus-ring-inset transition-colors duration-150 ease-out",
                   active ? "bg-brand-soft text-brand-text" : "text-muted hover:bg-surface-hover hover:text-foreground",
                 )}
               >
                 <Icon className="size-5" />
                 {label}
                 {chip && (
-                  <span className="ml-auto rounded-full border border-brand/30 bg-brand-soft px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-brand-text">
+                  <span className="eyebrow ml-auto rounded-md border border-brand/30 bg-brand-soft px-1.5 py-0.5 text-2xs font-bold text-brand-text">
                     {chip}
                   </span>
                 )}

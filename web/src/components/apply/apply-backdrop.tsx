@@ -18,8 +18,8 @@ const CSS = `
   mask-image:radial-gradient(140% 110% at 50% 38%, #000 50%, transparent 100%)}
 .co-bd__halo{position:absolute;width:65%;height:80%;border-radius:50%;filter:blur(70px);mix-blend-mode:screen;will-change:transform}
 .co-bd__halo.a{left:-6%;top:-14%;background:radial-gradient(circle at center, color-mix(in srgb,var(--brand) 48%,transparent), color-mix(in srgb,var(--brand) 12%,transparent) 45%, transparent 70%);animation:co-halo-a 15s ease-in-out infinite}
-.co-bd__halo.b{right:-10%;bottom:-16%;background:radial-gradient(circle at center, hsl(220 90% 72% / .42), hsl(220 90% 72% / .10) 45%, transparent 70%);animation:co-halo-b 21s ease-in-out infinite}
-.co-bd__halo.c{left:26%;top:14%;width:50%;height:60%;background:radial-gradient(circle at center, hsl(0 0% 100% / .28), transparent 66%);animation:co-halo-c 18s ease-in-out infinite}
+.co-bd__halo.b{right:-10%;bottom:-16%;background:radial-gradient(circle at center, color-mix(in srgb, var(--info) 42%, transparent), color-mix(in srgb, var(--info) 10%, transparent) 45%, transparent 70%);animation:co-halo-b 21s ease-in-out infinite}
+.co-bd__halo.c{left:26%;top:14%;width:50%;height:60%;background:radial-gradient(circle at center, color-mix(in srgb, #FFFFFF 28%, transparent), transparent 66%);animation:co-halo-c 18s ease-in-out infinite}
 .co-bd__vignette{position:absolute;inset:0;box-shadow:inset 0 0 150px 44px color-mix(in srgb, var(--bg) 74%, transparent)}
 .co-bd.is-intense .co-bd__img{opacity:.34}
 .co-bd.is-intense .co-bd__dots{opacity:.75}
@@ -29,17 +29,15 @@ const CSS = `
 /* LIGHT MODE: screen-blend halos vanish on a light bg → multiply colour-washes,
    softer dots, lower image opacity. (.dark uses the screen-blend rules above.) */
 html:not(.dark) .co-bd__halo{mix-blend-mode:multiply}
-html:not(.dark) .co-bd__halo.b{background:radial-gradient(circle at center, hsl(222 84% 70% / .42), hsl(222 84% 70% / .10) 45%, transparent 70%)}
-html:not(.dark) .co-bd__halo.c{background:radial-gradient(circle at center, hsl(30 82% 72% / .32), transparent 66%)}
+html:not(.dark) .co-bd__halo.b{background:radial-gradient(circle at center, color-mix(in srgb, var(--info) 42%, transparent), color-mix(in srgb, var(--info) 10%, transparent) 45%, transparent 70%)}
+html:not(.dark) .co-bd__halo.c{background:radial-gradient(circle at center, color-mix(in srgb, #FFC010 32%, transparent), transparent 66%)}
 html:not(.dark) .co-bd__dots{background-image:radial-gradient(circle, color-mix(in srgb, var(--fg) 22%, transparent) 1px, transparent 1.7px)}
 html:not(.dark) .co-bd.is-intense .co-bd__img{opacity:.20}
 html:not(.dark) .co-bd.is-soft .co-bd__img{opacity:.10}
 @keyframes co-halo-a{0%{transform:translate3d(-12%,-8%,0) scale(1)}50%{transform:translate3d(22%,16%,0) scale(1.32)}100%{transform:translate3d(-12%,-8%,0) scale(1)}}
 @keyframes co-halo-b{0%{transform:translate3d(26%,30%,0) scale(1.12)}50%{transform:translate3d(-10%,-12%,0) scale(.82)}100%{transform:translate3d(26%,30%,0) scale(1.12)}}
 @keyframes co-halo-c{0%{transform:translate3d(38%,-22%,0) scale(.9)}50%{transform:translate3d(8%,28%,0) scale(1.18)}100%{transform:translate3d(38%,-22%,0) scale(.9)}}
-@keyframes co-rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
-.co-rise{animation:co-rise .5s ease both}
-@media (prefers-reduced-motion: reduce){.co-bd__halo{animation:none}.co-rise{animation:none}}
+@media (prefers-reduced-motion: reduce){.co-bd__halo{animation:none}}
 `;
 
 export function ApplyBackdrop({ image, intense }: { image?: string; intense: boolean }) {

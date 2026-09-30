@@ -75,6 +75,10 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 The generated block above is rewritten by `next dev`; edit outside its markers.
 
+Every visual change (tokens, type, spacing, motion, primitives) follows the design contract below.
+
+@DESIGN.md
+
 **The root [`../AGENTS.md`](../AGENTS.md) applies in full here** — Data Contract,
 Source-of-Truth Boundary, Untrusted External Content, and the never-auto-submit
 rule are not relaxed by being behind a browser. This file adds only what is

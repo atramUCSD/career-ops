@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Loader2 } from "lucide-react";
 import { ApplyBackdrop } from "@/components/apply/apply-backdrop";
+import { Bar } from "@/components/ui/charts";
 import { instrumentSerif } from "@/lib/fonts";
 import { ATS_LABEL, ATS_SOURCES, type AtsSource } from "@/lib/explore";
 import { useExplore, type SourceState } from "./explore-provider";
@@ -11,20 +12,18 @@ const STYLE = `
 .co-disc{position:relative;z-index:1;display:flex;min-height:0;flex-direction:column;align-items:center;justify-content:flex-start;text-align:center;gap:1rem;padding:1.5rem 1rem 0.5rem}
 .co-disc__counter{font-variant-numeric:tabular-nums;line-height:1;font-size:clamp(4rem,13vw,8rem)}
 .co-src{display:flex;flex-wrap:wrap;justify-content:center;gap:.6rem}
-.co-src__chip{display:flex;align-items:center;gap:.5rem;border-radius:.8rem;border:1px solid var(--border,hsl(0 0% 50% / .2));padding:.5rem .8rem;min-width:9.5rem;background:color-mix(in srgb, var(--bg) 70%, transparent);transition:opacity .3s,border-color .3s}
+.co-src__chip{display:flex;align-items:center;gap:.5rem;border-radius:.75rem;border:1px solid var(--border);padding:.5rem .8rem;min-width:9.5rem;background:color-mix(in srgb, var(--bg) 70%, transparent);transition:opacity .3s,border-color .3s}
 .co-src__chip[data-state="queued"]{opacity:.4;border-style:dashed}
 .co-src__chip[data-state="active"]{border-color:color-mix(in srgb,var(--brand) 45%,transparent)}
-.co-src__orb{width:.55rem;height:.55rem;border-radius:50%;background:var(--brand);box-shadow:0 0 0 0 color-mix(in srgb,var(--brand) 50%,transparent);animation:co-orb 1.4s ease-out infinite}
-.co-src__bar{height:3px;border-radius:2px;background:var(--brand);transition:width .4s ease}
-.co-src__track{height:3px;border-radius:2px;background:color-mix(in srgb, var(--fg) 14%, transparent);overflow:hidden;width:3.5rem}
+.co-src__orb{position:relative;width:.55rem;height:.55rem;border-radius:50%;background:var(--brand)}
+.co-src__orb::after{content:"";position:absolute;inset:-.25rem;border-radius:50%;border:1px solid var(--brand);animation:co-orb 1.4s ease-out infinite}
 .co-disc__skel{display:grid;grid-template-columns:repeat(auto-fill,minmax(15rem,1fr));gap:.7rem;width:100%;max-width:46rem;margin-top:.5rem}
-.co-disc__skelcard{height:4.4rem;border-radius:.8rem;border:1px solid var(--border,hsl(0 0% 50% / .15));background:color-mix(in srgb, var(--bg) 60%, transparent);overflow:hidden;position:relative}
+.co-disc__skelcard{height:4.4rem;border-radius:.75rem;border:1px solid var(--border);background:color-mix(in srgb, var(--bg) 60%, transparent);overflow:hidden;position:relative}
 .co-disc__skelcard::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,color-mix(in srgb, var(--fg) 8%, transparent),transparent);transform:translateX(-100%);animation:co-shimmer 1.5s infinite}
-.co-ledger{display:inline-flex;align-items:center;gap:.5rem;border-radius:999px;border:1px solid hsl(160 64% 46% / .3);background:hsl(160 64% 46% / .1);color:hsl(160 60% 40%);padding:.35rem .85rem;font-size:12.5px;font-weight:600}
-html.dark .co-ledger{color:hsl(158 64% 62%)}
-@keyframes co-orb{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--brand) 50%,transparent)}70%{box-shadow:0 0 0 .5rem transparent}100%{box-shadow:0 0 0 0 transparent}}
+.co-ledger{display:inline-flex;align-items:center;gap:.5rem;border-radius:.375rem;border:1px solid color-mix(in srgb, var(--good) 30%, transparent);background:color-mix(in srgb, var(--good) 10%, transparent);color:var(--brand-text);padding:.35rem .85rem;font-size:.875rem;font-weight:600}
+@keyframes co-orb{0%{transform:scale(.6);opacity:.7}100%{transform:scale(2);opacity:0}}
 @keyframes co-shimmer{100%{transform:translateX(100%)}}
-@media (prefers-reduced-motion: reduce){.co-src__orb,.co-disc__skelcard::after{animation:none}}
+@media (prefers-reduced-motion: reduce){.co-src__orb::after,.co-disc__skelcard::after{animation:none}}
 `;
 
 export function useCountUp(target: number): number {
@@ -51,18 +50,16 @@ function SourceChip({ ats, s }: { ats: AtsSource; s?: SourceState }) {
   return (
     <div className="co-src__chip" data-state={state === "noisy" ? "active" : state}>
       {state === "active" ? (
-        <span className="co-src__orb" />
+        <span aria-hidden className="co-src__orb" />
       ) : state === "swept" || state === "noisy" ? (
-        <Check className="size-3.5 text-emerald-500" />
+        <Check aria-hidden className="size-3.5 text-brand-text" />
       ) : (
-        <span className="size-2.5 rounded-full border border-current opacity-40" />
+        <span aria-hidden className="size-2.5 rounded-full border border-current opacity-40" />
       )}
-      <span className="text-[13px] font-medium text-foreground">{ATS_LABEL[ats]}</span>
+      <span className="text-sm font-medium text-foreground">{ATS_LABEL[ats]}</span>
       <div className="ml-auto flex flex-col items-end gap-1">
-        {state === "noisy" && <span className="text-[10px] text-faint">~{s?.unreachable} skipped</span>}
-        <div className="co-src__track">
-          <div className="co-src__bar" style={{ width: `${pct}%` }} />
-        </div>
+        {state === "noisy" && <span className="text-2xs text-faint">~{s?.unreachable} skipped</span>}
+        <Bar pct={pct} size="sm" className="w-14" />
       </div>
     </div>
   );
@@ -80,7 +77,7 @@ export function DiscoveringState() {
         <style>{STYLE}</style>
 
         <div className="co-ledger">
-          <span className="size-1.5 rounded-full bg-emerald-500" />
+          <span aria-hidden className="size-1.5 rounded-full bg-good" />
           0 tokens · $0.00 {companies > 0 && <span className="opacity-70">· {companies.toLocaleString()} companies</span>}
         </div>
 
@@ -97,8 +94,8 @@ export function DiscoveringState() {
           ))}
         </div>
 
-        <p className="flex items-center gap-2 text-[13px] text-faint">
-          <Loader2 className="size-3.5 animate-spin" />
+        <p className="flex items-center gap-2 text-sm text-faint">
+          <Loader2 aria-hidden className="size-3.5 motion-safe:animate-spin" />
           {status || "Casting the net across the ATS network…"}
         </p>
       </div>

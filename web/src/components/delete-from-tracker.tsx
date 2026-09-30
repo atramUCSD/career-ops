@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Trash2, Loader2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 
 // disc#9: remove a bogus tracker row (e.g. a job marked Evaluated after the CLI
 // errored mid-run). Hard delete via the core write-gate (/api/tracker/delete →
@@ -62,38 +64,31 @@ export function DeleteFromTracker({ n }: { n: string }) {
 
   if (!open) {
     return (
-      <button
-        onClick={openConfirm}
-        className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-muted max-sm:min-h-[44px] transition-colors hover:border-red-400/50 hover:text-red-500"
-      >
-        <Trash2 className="size-3.5" /> Remove from tracker
-      </button>
+      <Button variant="danger-ghost" size="sm" onClick={openConfirm} className="border border-border hover:border-bad/50">
+        <Trash2 aria-hidden className="size-3.5" /> Remove from tracker
+      </Button>
     );
   }
 
   return (
-    <div className="rounded-lg border border-red-400/30 bg-red-500/[0.06] p-3 text-xs">
+    <Card inset tone="bad" role="group" aria-label={`Remove application #${n}`} className="text-xs">
       <p className="font-medium text-foreground">Permanently remove application #{n} from your tracker?</p>
       <p className="mt-1 text-muted">
         This can’t be undone.{orphan ? ` Its report file (${orphan}) is left on disk.` : ""}
       </p>
-      {err && <p className="mt-1.5 text-red-500">{err}</p>}
-      <div className="mt-2.5 flex gap-2">
-        <button
-          disabled={busy}
-          onClick={confirmDelete}
-          className="inline-flex items-center gap-1.5 rounded-md bg-red-500 px-2.5 py-1 font-medium max-sm:min-h-[44px] text-white transition-colors hover:bg-red-600 disabled:opacity-50"
-        >
-          {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />} Delete
-        </button>
-        <button
-          disabled={busy}
-          onClick={() => setOpen(false)}
-          className="rounded-md border border-border px-2.5 py-1 text-muted max-sm:min-h-[44px] transition-colors hover:text-foreground disabled:opacity-50"
-        >
+      {err && (
+        <p role="alert" className="mt-1.5 text-bad-text">
+          {err}
+        </p>
+      )}
+      <div className="mt-3 flex gap-2">
+        <Button variant="danger" size="sm" loading={busy} onClick={confirmDelete}>
+          {!busy && <Trash2 aria-hidden className="size-3.5" />} Delete
+        </Button>
+        <Button variant="secondary" size="sm" disabled={busy} onClick={() => setOpen(false)}>
           Cancel
-        </button>
+        </Button>
       </div>
-    </div>
+    </Card>
   );
 }

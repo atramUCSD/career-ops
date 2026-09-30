@@ -5,7 +5,10 @@ import { useRouter } from "next/navigation";
 import { Filter } from "lucide-react";
 import type { Funnel } from "@/lib/home/home-data";
 import { cn } from "@/lib/cn";
-import { ChipList, CountUp, Label, Panel, SaveBar, SegmentBar, Toggle, postJson, type ChipTone } from "./motion-bits";
+import { Card } from "@/components/ui/card";
+import { CountUp, SegmentBar, type Tone } from "@/components/ui/charts";
+import { Field, Input, Switch } from "@/components/ui/field";
+import { ChipList, SaveBar, postJson, type ChipTone } from "./motion-bits";
 
 type Draft = {
   title_filter: { positive: string[]; negative: string[]; seniority_boost: string[] };
@@ -42,14 +45,14 @@ function fromDoc(doc: Record<string, unknown>): Draft {
 }
 
 // The funnel's tones: where postings were dropped, then the ones that got through.
-const TONES: Record<string, { bar: string; dot: string }> = {
-  title: { bar: "bg-bad", dot: "bg-bad" },
-  location: { bar: "bg-warn", dot: "bg-warn" },
-  salary: { bar: "bg-info", dot: "bg-info" },
-  age: { bar: "bg-muted/60", dot: "bg-muted/60" },
-  known: { bar: "bg-border", dot: "bg-border" },
-  other: { bar: "bg-faint/50", dot: "bg-faint/50" },
-  new: { bar: "bg-brand", dot: "bg-brand" },
+const TONES: Record<string, { bar: Tone; dot: string }> = {
+  title: { bar: "bad", dot: "bg-bad" },
+  location: { bar: "warn", dot: "bg-warn" },
+  salary: { bar: "info", dot: "bg-info" },
+  age: { bar: "muted", dot: "bg-muted/60" },
+  known: { bar: "muted", dot: "bg-border" },
+  other: { bar: "muted", dot: "bg-faint/50" },
+  new: { bar: "brand", dot: "bg-brand" },
 };
 
 const LOCATION: { key: keyof Omit<Draft["location_filter"], "strict">; title: string; hint: string; tone: ChipTone }[] = [
@@ -96,32 +99,32 @@ export function FiltersPanel({ filters, funnel }: { filters: Record<string, unkn
   }
 
   const numberInput = (value: number | null, onChange: (v: number | null) => void, label: string, width = "w-28") => (
-    <input
+    <Input
       type="number"
       min={0}
       value={value ?? ""}
       aria-label={label}
       onChange={(e) => onChange(e.target.value === "" ? null : Math.max(0, Math.trunc(Number(e.target.value))))}
-      className={cn("rounded-md border border-border bg-background px-3 py-2 text-sm tabular-nums", width)}
+      className={cn("tabular-nums", width)}
     />
   );
 
   return (
-    <Panel icon={Filter} title="Scan filters" hint="portals.yml">
+    <Card icon={Filter} title="Scan filters" hint="portals.yml">
       {funnel && funnel.found > 0 && (
-        <div className="mb-6 rounded-xl border border-border bg-background/60 p-4">
+        <Card inset className="mb-6 bg-background/60">
           <div className="mb-3 flex items-baseline justify-between text-xs text-faint">
-            <span className="font-semibold uppercase tracking-[0.18em] text-muted">Last scan</span>
+            <span className="eyebrow font-semibold text-muted">Last scan</span>
             <span>
               <CountUp value={funnel.found} className="text-foreground" /> seen ·{" "}
               {new Date(funnel.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
             </span>
           </div>
-          <SegmentBar parts={funnel.segments.map((s) => ({ ...s, tone: TONES[s.key]?.bar ?? "bg-faint" }))} />
+          <SegmentBar parts={funnel.segments.map((s) => ({ ...s, tone: TONES[s.key]?.bar ?? "muted" }))} />
           <dl className="mt-3 grid grid-cols-3 gap-x-4 gap-y-2 sm:grid-cols-7">
             {funnel.segments.map((s) => (
               <div key={s.key}>
-                <dt className="flex items-center gap-1.5 text-[11px] text-faint">
+                <dt className="flex items-center gap-1.5 text-2xs text-faint">
                   <span aria-hidden className={cn("size-2 rounded-full", TONES[s.key]?.dot)} />
                   {s.key === "new" ? "Passed" : s.label}
                 </dt>
@@ -131,10 +134,10 @@ export function FiltersPanel({ filters, funnel }: { filters: Record<string, unkn
               </div>
             ))}
           </dl>
-        </div>
+        </Card>
       )}
 
-      <Label code="title_filter">Title keywords</Label>
+      <Field compact label="Title keywords" meta="title_filter">
       <div className="space-y-3">
         {(
           [
@@ -154,38 +157,36 @@ export function FiltersPanel({ filters, funnel }: { filters: Record<string, unkn
           </div>
         ))}
       </div>
+      </Field>
 
       <div className="mt-6 grid gap-5 sm:grid-cols-2">
-        <div>
-          <Label code="salary_filter">Salary</Label>
+        <Field compact label="Salary" meta="salary_filter" hint="Postings without a listed salary still pass.">
           <div className="flex flex-wrap items-center gap-2">
             {numberInput(draft.salary_filter.min, (v) => edit((d) => ({ ...d, salary_filter: { ...d.salary_filter, min: v } })), "Minimum salary")}
             <span className="text-faint">to</span>
             {numberInput(draft.salary_filter.max, (v) => edit((d) => ({ ...d, salary_filter: { ...d.salary_filter, max: v } })), "Maximum salary")}
-            <input
+            <Input
               value={draft.salary_filter.currency}
               maxLength={3}
               aria-label="Currency"
               onChange={(e) => edit((d) => ({ ...d, salary_filter: { ...d.salary_filter, currency: e.target.value.toUpperCase() } }))}
-              className="w-16 rounded-md border border-border bg-background px-2 py-2 text-sm uppercase"
+              className="w-16 px-2 uppercase"
             />
           </div>
-          <p className="mt-1.5 text-xs text-faint">Postings without a listed salary still pass.</p>
-        </div>
-        <div>
-          <Label code="max_posting_age_days">Max posting age</Label>
+        </Field>
+        <Field compact label="Max posting age" meta="max_posting_age_days">
           <div className="flex items-center gap-2">
             {numberInput(draft.max_posting_age_days, (v) => edit((d) => ({ ...d, max_posting_age_days: v })), "Maximum posting age in days", "w-20")}
             <span className="text-sm text-muted">days</span>
           </div>
-        </div>
+        </Field>
       </div>
 
       <div className="mt-6">
-        <Label code="location_filter">Location, in the order it is checked</Label>
+        <Field compact label="Location, in the order it is checked" meta="location_filter" hint="Terms match whole words, case-insensitive.">
         <ol className="divide-y divide-border rounded-xl border border-border">
           <li className="flex items-center gap-3 px-4 py-3">
-            <span className="grid size-5 shrink-0 place-items-center rounded-full bg-surface-hover text-[11px] font-semibold text-muted">1</span>
+            <span className="grid size-5 shrink-0 place-items-center rounded-full bg-surface-muted text-2xs font-semibold text-muted">1</span>
             <div className="flex-1">
               <div className="text-sm text-foreground">No location given</div>
               <div className="text-xs text-faint">
@@ -193,7 +194,7 @@ export function FiltersPanel({ filters, funnel }: { filters: Record<string, unkn
               </div>
             </div>
             <span className="text-xs text-muted">Strict</span>
-            <Toggle
+            <Switch
               checked={draft.location_filter.strict}
               onChange={(v) => edit((d) => ({ ...d, location_filter: { ...d.location_filter, strict: v } }))}
               label="Strict location matching"
@@ -201,7 +202,7 @@ export function FiltersPanel({ filters, funnel }: { filters: Record<string, unkn
           </li>
           {LOCATION.map((row, i) => (
             <li key={row.key} className="flex gap-3 px-4 py-3">
-              <span className="grid size-5 shrink-0 place-items-center rounded-full bg-surface-hover text-[11px] font-semibold text-muted">{i + 2}</span>
+              <span className="grid size-5 shrink-0 place-items-center rounded-full bg-surface-muted text-2xs font-semibold text-muted">{i + 2}</span>
               <div className="min-w-0 flex-1 space-y-1.5">
                 <div>
                   <div className="text-sm text-foreground">{row.title}</div>
@@ -217,7 +218,7 @@ export function FiltersPanel({ filters, funnel }: { filters: Record<string, unkn
             </li>
           ))}
         </ol>
-        <p className="mt-1.5 text-xs text-faint">Terms match whole words, case-insensitive.</p>
+        </Field>
       </div>
 
       <SaveBar
@@ -230,6 +231,6 @@ export function FiltersPanel({ filters, funnel }: { filters: Record<string, unkn
         onDiscard={() => setDraft(initial)}
         label="Save filters"
       />
-    </Panel>
+    </Card>
   );
 }

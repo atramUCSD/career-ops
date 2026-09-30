@@ -97,11 +97,13 @@ export default async function ReviewPage() {
   items.sort((x, y) => Number(y.flagged) - Number(x.flagged) || parseInt(y.n, 10) - parseInt(x.n, 10));
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-10">
-      <h1 className="font-display text-2xl tracking-tight text-landing">Review</h1>
-      <p className="mt-1 text-sm text-muted">
-        Prepared applications awaiting your sign-off. Approving marks one ready — submitting stays yours, by hand.
-      </p>
+    <div className="mx-auto max-w-3xl px-4 py-6 max-sm:pb-24 sm:px-6 sm:py-8">
+      <header className="mb-6">
+        <h1 className="font-display text-2xl tracking-tight text-landing">Review</h1>
+        <p className="mt-1 text-sm text-muted">
+          Prepared applications awaiting your sign-off. Approving marks one ready — submitting stays yours, by hand.
+        </p>
+      </header>
       <ReviewQueue items={items} />
     </div>
   );

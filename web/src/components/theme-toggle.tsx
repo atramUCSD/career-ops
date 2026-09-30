@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from "react";
 import { Moon, Sun } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { Button } from "@/components/ui/button";
 
 const KEY = "career-ops:theme";
 
@@ -40,23 +41,28 @@ export function ThemeToggle({ className, labels = true }: { className?: string; 
     <div
       role="group"
       aria-label="Color theme"
-      className={cn("inline-flex rounded-full border border-border bg-surface p-0.5", className)}
+      className={cn("inline-flex rounded-md border border-border bg-surface p-0.5", className)}
     >
       {OPTIONS.map(({ dark: value, label, Icon }) => (
-        <button
+        <Button
           key={label}
-          type="button"
+          variant="ghost"
+          size="sm"
           aria-pressed={dark === value}
           onClick={() => setTheme(value)}
           title={`${label} mode`}
           className={cn(
-            "inline-flex flex-1 items-center justify-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 max-sm:min-h-[44px] max-sm:min-w-[44px]",
-            dark === value ? "bg-brand-soft text-brand-text" : "text-muted hover:text-foreground",
+            "flex-1 max-sm:min-w-11",
+            // The highlight follows html.dark in CSS, not `dark`: the store is null until
+            // hydration, and THEME_SCRIPT has already set the class before first paint.
+            value
+              ? "text-muted dark:bg-brand-soft dark:text-brand-text dark:hover:bg-brand-soft dark:hover:text-brand-text"
+              : "bg-brand-soft text-brand-text hover:bg-brand-soft hover:text-brand-text dark:bg-transparent dark:text-muted dark:hover:bg-surface-hover dark:hover:text-foreground",
           )}
         >
           <Icon aria-hidden className="size-3.5" />
           <span className={labels ? undefined : "sr-only"}>{label}</span>
-        </button>
+        </Button>
       ))}
     </div>
   );

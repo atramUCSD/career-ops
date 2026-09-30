@@ -3,6 +3,8 @@
 import { useMemo, useState } from "react";
 import { ExternalLink, Plus, Check, Loader2, ShieldQuestion, Sparkles, Coins } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { instrumentSerif } from "@/lib/fonts";
 import { ATS_LABEL, type AtsSource, type DiscoveredOffer } from "@/lib/explore";
 import { useJobs } from "@/components/jobs/job-store";
@@ -21,7 +23,7 @@ function Logo({ company }: { company: string }) {
   const [failed, setFailed] = useState(false);
   const letter = (company || "?").trim().charAt(0).toUpperCase();
   if (failed || !company.trim()) {
-    return <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-brand-soft text-sm font-semibold text-brand">{letter}</div>;
+    return <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-brand-soft text-sm font-semibold text-brand">{letter}</div>;
   }
   return (
     // eslint-disable-next-line @next/next/no-img-element
@@ -30,7 +32,7 @@ function Logo({ company }: { company: string }) {
       alt=""
       loading="lazy"
       onError={() => setFailed(true)}
-      className="size-9 shrink-0 rounded-lg border border-border bg-surface object-contain p-1"
+      className="size-9 shrink-0 rounded-xl border border-border bg-surface object-contain p-1"
     />
   );
 }
@@ -63,12 +65,12 @@ export function DiscoveryCard({ offer, inPipeline, evaluatedN }: { offer: Discov
   };
 
   return (
-    <div className="co-rise group flex min-w-0 flex-col gap-2.5 rounded-xl border border-border bg-surface/40 p-3.5 text-left transition-all hover:-translate-y-0.5 hover:border-brand/30 hover:shadow-sm">
+    <Card as="article" inset className="co-rise group flex min-w-0 flex-col gap-2.5 transition-colors duration-150 ease-out hover:border-brand/40">
       <div className="flex items-start gap-3">
         <Logo company={offer.company} />
-        <a href={offer.url} target="_blank" rel="noopener noreferrer" className="block min-w-0 flex-1 max-sm:min-h-[44px]">
-          <h3 className={`${instrumentSerif.className} truncate text-[17px] leading-tight text-foreground transition-colors group-hover:text-brand`}>{offer.title}</h3>
-          <p className="mt-0.5 truncate text-[13px] text-muted">
+        <a href={offer.url} target="_blank" rel="noopener noreferrer" className="block min-w-0 flex-1 rounded-md focus-ring max-sm:min-h-11">
+          <h3 className={`${instrumentSerif.className} truncate text-lg leading-tight text-foreground transition-colors group-hover:text-brand`}>{offer.title}</h3>
+          <p className="mt-0.5 truncate text-sm text-muted">
             {offer.company}
             {offer.location && <span className="text-faint"> · {offer.location}</span>}
           </p>
@@ -79,34 +81,34 @@ export function DiscoveryCard({ offer, inPipeline, evaluatedN }: { offer: Discov
           rel="noopener noreferrer"
           title="Open the posting"
           aria-label="Open the posting"
-          className="-m-1 inline-flex shrink-0 items-center justify-center rounded p-1 text-faint transition-colors hover:text-foreground max-sm:min-h-[44px] max-sm:min-w-[44px]"
+          className={cn(buttonVariants({ variant: "ghost", size: "icon-sm" }), "-m-1 shrink-0 text-faint")}
         >
-          <ExternalLink className="size-4" />
+          <ExternalLink aria-hidden className="size-4" />
         </a>
       </div>
 
-      <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-        <span className="rounded border border-border px-1.5 py-0.5 font-medium text-muted">{ATS_LABEL[offer.ats as AtsSource] ?? offer.ats}</span>
+      <div className="flex flex-wrap items-center gap-1.5 text-2xs">
+        <span className="rounded-md border border-border px-1.5 py-0.5 font-medium text-muted">{ATS_LABEL[offer.ats as AtsSource] ?? offer.ats}</span>
         {fresh && <span className="text-faint">{fresh}</span>}
         {unverified && (
           <span
-            className="inline-flex items-center gap-1 rounded border border-amber-500/25 bg-amber-500/10 px-1.5 py-0.5 font-medium text-amber-600 dark:text-amber-300"
+            className="inline-flex items-center gap-1 rounded-md border border-warn/30 bg-warn-soft px-1.5 py-0.5 font-medium text-warn"
             title="Found by AI on the public web — we can't confirm it's still live without opening it. Evaluating runs a real browser check and sets the verdict."
           >
-            <ShieldQuestion className="size-3" /> unverified
+            <ShieldQuestion aria-hidden className="size-3" /> unverified
           </span>
         )}
         {offer.matchedKeyword && (
           <span className="text-faint" title="Keyword match — not yet scored. Evaluate to get an A–F fit score.">
-            · matched <span className="text-brand/80">{offer.matchedKeyword}</span>
+            · matched <span className="text-brand-text">{offer.matchedKeyword}</span>
           </span>
         )}
         {offer.fit && (
           <span
             className={cn(
-              "rounded border px-1 py-0.5 text-[11px] font-medium",
+              "rounded-md border px-1 py-0.5 text-2xs font-medium",
               offer.fit.band === "strong"
-                ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                ? "border-good/30 bg-good-soft text-brand-text"
                 : "text-faint",
             )}
             title="Free keyword-level estimate: posting title vs your profile's target roles (config/profile.yml). Not an evaluation — Evaluate still gives the real A–F fit score."
@@ -117,8 +119,8 @@ export function DiscoveryCard({ offer, inPipeline, evaluatedN }: { offer: Discov
       </div>
 
       {offer.why && (
-        <p className="flex items-start gap-1.5 text-[12px] leading-snug text-brand/80">
-          <Sparkles className="mt-0.5 size-3 shrink-0" />
+        <p className="flex items-start gap-1.5 text-xs leading-snug text-brand-text">
+          <Sparkles aria-hidden className="mt-0.5 size-3 shrink-0" />
           {offer.why}
         </p>
       )}
@@ -127,41 +129,42 @@ export function DiscoveryCard({ offer, inPipeline, evaluatedN }: { offer: Discov
         {evaluatedN || doneEval ? (
           <a
             href={evaluatedN ? `/pipeline/${evaluatedN}` : job ? `/jobs/${job.id}` : "/pipeline"}
-            className="inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-brand-soft px-2.5 py-2 text-xs font-medium text-brand max-sm:min-h-[44px]"
+            className={cn(buttonVariants({ variant: "soft" }), "w-full text-xs")}
           >
-            <Check className="size-3.5" /> Evaluated · view report
+            <Check aria-hidden className="size-3.5" /> Evaluated · view report
           </a>
         ) : working ? (
-          <div className="inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-brand/30 bg-brand-soft/60 px-2.5 py-2 text-xs font-medium text-brand">
-            <Loader2 className="size-3.5 animate-spin" />
+          <div role="status" className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-md border border-brand/30 bg-brand-soft/60 px-3 text-xs font-medium text-brand-text">
+            <Loader2 aria-hidden className="size-3.5 motion-safe:animate-spin" />
             {statusLabel}
-            <span className="text-brand/60">· in pipeline</span>
+            <span className="text-brand-text">· in pipeline</span>
           </div>
         ) : (
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              disabled={isAdded || isAdding}
+            <Button
+              variant="secondary"
+              loading={isAdding}
+              disabled={isAdded}
               onClick={() => addToPipeline([offer])}
               className={cn(
-                "inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-2 text-xs font-medium transition-colors max-sm:min-h-[44px]",
-                isAdded ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-surface-hover text-foreground hover:bg-brand-soft hover:text-brand",
+                "flex-1 text-xs",
+                isAdded ? "border-good/30 bg-good-soft text-brand-text disabled:opacity-100" : "hover:bg-brand-soft hover:text-brand-text",
               )}
             >
-              {isAdding ? <Loader2 className="size-3.5 animate-spin" /> : isAdded ? <Check className="size-3.5" /> : <Plus className="size-3.5" />}
+              {isAdding ? null : isAdded ? <Check aria-hidden className="size-3.5" /> : <Plus aria-hidden className="size-3.5" />}
               {isAdded ? "In pipeline" : "Add to pipeline"}
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="soft"
               onClick={evaluate}
               title={unverified ? "Runs a real evaluation — and verifies the posting is live. Uses tokens." : "Runs a real A–F evaluation. Uses tokens."}
-              className="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-brand/30 px-2.5 py-2 text-xs font-medium text-brand transition-colors hover:bg-brand-soft max-sm:min-h-[44px]"
+              className="flex-1 text-xs"
             >
-              Evaluate <Coins className="size-3.5 opacity-80" />
-            </button>
+              Evaluate <Coins aria-hidden className="size-3.5 opacity-80" />
+            </Button>
           </div>
         )}
       </div>
-    </div>
+    </Card>
   );
 }

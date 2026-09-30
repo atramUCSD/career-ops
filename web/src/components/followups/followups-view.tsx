@@ -3,8 +3,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { AnimatePresence, motion } from "motion/react";
 import { CalendarClock, ChevronDown, ChevronRight, Loader2, Pin, Search, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/field";
+import { rowItem } from "@/components/ui/motion";
 import { CompanyLogo } from "@/components/company-logo";
 import { LogDialog } from "@/components/followups/log-dialog";
 import { NextDateDialog } from "@/components/followups/next-date-dialog";
@@ -27,8 +32,9 @@ import { cn } from "@/lib/cn";
 // is the core's followup-cadence.mjs (via /api/followups?full=1) — this view
 // only filters, sorts, and records.
 
-const URGENCY_TABS = ["ALL", "OVERDUE", "URGENT", "WAITING", "COLD"] as const;
+const URGENCY_TABS = ["ALL", "URGENT", "OVERDUE", "WAITING", "COLD"] as const;
 type UrgencyTab = (typeof URGENCY_TABS)[number];
+const TAB_LABEL: Record<UrgencyTab, string> = { ALL: "All", URGENT: "Urgent", OVERDUE: "Overdue", WAITING: "Waiting", COLD: "Cold" };
 
 const COLUMNS = [
   { key: "company", label: "Company" },
@@ -180,7 +186,7 @@ export function FollowupsView() {
 
   const subtitle = !data ? (
     <span className="inline-flex items-center gap-1.5">
-      <Loader2 className="size-3.5 animate-spin" /> Computing cadence…
+      <Loader2 aria-hidden className="size-3.5 motion-safe:animate-spin" /> Computing cadence…
     </span>
   ) : !data.available || !meta ? (
     "Cadence unavailable"
@@ -193,19 +199,20 @@ export function FollowupsView() {
   );
 
   return (
-    <div className="mx-auto max-w-none px-6 py-8">
-      <div className="flex items-end justify-between gap-4">
+    <div className="mx-auto max-w-6xl px-4 py-6 max-sm:pb-24 sm:px-6 sm:py-8">
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="font-display text-2xl tracking-tight text-landing">Follow-up Tracker</h1>
           <p className="mt-1 text-sm text-muted">{subtitle}</p>
         </div>
-        <div className="relative w-56 max-w-[35vw]">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-faint" />
-          <input
+        <div className="relative w-full sm:w-56">
+          <Search aria-hidden className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-faint" />
+          <Input
+            aria-label="Search company or role"
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search company or role…"
-            className="w-full rounded-md border border-border bg-surface/60 py-2 pl-9 pr-3 text-sm outline-none transition-colors placeholder:text-faint focus:border-brand/50 focus-visible:ring-2 focus-visible:ring-brand/40"
+            className="pl-9"
           />
         </div>
       </div>
@@ -213,27 +220,41 @@ export function FollowupsView() {
       {meta && !filtering && <NarrativeCard meta={meta} entries={entries} />}
 
       {/* urgency filter */}
-      <div className="mt-6 flex flex-wrap gap-1 border-b border-border">
+      <div role="group" aria-label="Filter by urgency" className="flex flex-nowrap gap-1 overflow-x-auto border-b border-border">
         {URGENCY_TABS.map((t) => {
           const count = t === "ALL" ? entries.length : entries.filter((e) => e.urgency.toUpperCase() === t).length;
           return (
             <button
               key={t}
+              type="button"
+              aria-pressed={tab === t}
               onClick={() => setParams({ urgency: t === "ALL" ? null : t })}
               className={cn(
-                "-mb-px border-b-2 px-3 py-2 text-xs font-medium transition-colors",
+                "-mb-px inline-flex shrink-0 items-center justify-center gap-1 border-b-2 px-3 py-2 text-sm font-medium focus-ring-inset transition-colors duration-150 ease-out max-sm:min-h-11",
                 tab === t ? "border-brand text-foreground" : "border-transparent text-muted hover:text-foreground",
               )}
             >
-              {t} <span className="text-faint tabular-nums">{count}</span>
+              {TAB_LABEL[t]} <span className="text-faint tabular-nums">{data ? count : "—"}</span>
             </button>
           );
         })}
       </div>
 
-      {actionError && <p className="mt-3 text-xs text-red-500">{actionError}</p>}
+      {actionError && (
+        <p role="alert" className="mt-3 text-xs text-bad-text">
+          {actionError}
+        </p>
+      )}
 
-      {!data ? null : !data.available ? (
+      {!data ? (
+        <div aria-hidden className="mt-4 divide-y divide-border rounded-xl border border-border">
+          {[0, 1, 2, 3, 4].map((i) => (
+            <div key={i} className="flex h-12 items-center px-4">
+              <div className="h-3 w-full rounded-md bg-surface-muted motion-safe:animate-pulse" />
+            </div>
+          ))}
+        </div>
+      ) : !data.available ? (
         <EmptyPanel title="Cadence unavailable" body="The cadence engine (followup-cadence.mjs) returned nothing — check that the core scripts are present." />
       ) : filtered.length === 0 ? (
         filtering ? (
@@ -242,9 +263,9 @@ export function FollowupsView() {
           <EmptyPanel title="Nothing to chase" body="No active applications need a follow-up. Apply to roles (or update statuses) and the cadence starts tracking them." />
         )
       ) : (
-        <div className="mt-4 overflow-x-auto rounded-2xl border border-border">
+        <div className="mt-4 overflow-x-auto rounded-xl border border-border">
           <table className="w-full min-w-[880px] text-sm">
-            <thead className="bg-surface/60 text-left text-xs uppercase tracking-wide text-faint">
+            <thead className="bg-surface/60 text-left text-xs eyebrow text-faint">
               <tr>
                 <th className="w-8 px-2 py-2.5" aria-label="Expand" />
                 {COLUMNS.map((c) => {
@@ -253,7 +274,7 @@ export function FollowupsView() {
                     <th key={c.key} aria-sort={active ? (dir === 1 ? "ascending" : "descending") : "none"} className="px-2.5 py-2.5 font-medium">
                       <button
                         type="button"
-                        className="inline-flex cursor-pointer select-none items-center gap-1 uppercase tracking-wide hover:text-foreground"
+                        className="inline-flex cursor-pointer select-none items-center gap-1 rounded-md eyebrow focus-ring-inset transition-colors duration-150 ease-out hover:text-foreground"
                         onClick={() =>
                           // First click on Urgency descends (most pressing first —
                           // how ▼ reads); other columns start ascending.
@@ -272,17 +293,19 @@ export function FollowupsView() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {filtered.map((e) => (
-                <FollowupRow
-                  key={e.num}
-                  entry={e}
-                  expanded={expanded.has(e.num)}
-                  onToggle={() => toggleExpand(e.num)}
-                  onLog={() => setDialogFor(e)}
-                  onPin={() => setPinFor(e)}
-                  onRemove={removeLogged}
-                />
-              ))}
+              <AnimatePresence initial={false}>
+                {filtered.map((e) => (
+                  <FollowupRow
+                    key={e.num}
+                    entry={e}
+                    expanded={expanded.has(e.num)}
+                    onToggle={() => toggleExpand(e.num)}
+                    onLog={() => setDialogFor(e)}
+                    onPin={() => setPinFor(e)}
+                    onRemove={removeLogged}
+                  />
+                ))}
+              </AnimatePresence>
             </tbody>
           </table>
         </div>
@@ -316,14 +339,13 @@ function NarrativeCard({ meta, entries }: { meta: CadenceMetadata; entries: Cade
   }
 
   return (
-    <div
-      className={cn(
-        "mt-5 rounded-xl border border-border border-l-4 bg-surface/40 px-4 py-3 text-sm text-muted",
-        meta.overdue > 0 ? "border-l-red-500" : "border-l-amber-500",
-      )}
+    <Card
+      inset
+      tone={meta.urgent > 0 ? "bad" : "warn"}
+      className={cn("mb-6 border-l-4 text-sm text-foreground", meta.urgent > 0 ? "border-l-bad" : "border-l-warn")}
     >
       {parts.join(" — ")}
-    </div>
+    </Card>
   );
 }
 
@@ -346,21 +368,26 @@ function FollowupRow({
   const Chevron = expanded ? ChevronDown : ChevronRight;
   return (
     <>
-      <tr className="group transition-colors hover:bg-surface/40">
+      <motion.tr {...rowItem} className="group transition-colors duration-150 ease-out hover:bg-surface-hover">
         <td className="px-2 py-3">
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon-sm"
             onClick={onToggle}
             aria-expanded={expanded}
             aria-label={`${expanded ? "Hide" : "Show"} follow-up history for ${e.company}`}
-            className="rounded p-1 text-faint transition hover:text-foreground"
+            className="text-muted"
           >
-            <Chevron className="size-4" />
-          </button>
+            <Chevron aria-hidden className="size-4" />
+          </Button>
         </td>
         <td className="px-2.5 py-3 font-medium">
           {e.reportPath ? (
-            <Link href={`/pipeline/${e.num}`} className="flex items-center gap-2.5 transition-colors group-hover:text-brand">
+            <Link
+              href={`/pipeline/${e.num}`}
+              className="flex items-center gap-2.5 rounded-md focus-ring-inset transition-colors duration-150 ease-out group-hover:text-brand-text"
+            >
               <CompanyLogo name={e.company} size={20} />
               {e.company}
             </Link>
@@ -386,7 +413,7 @@ function FollowupRow({
           {e.daysUntilNext == null ? (
             <span className="text-faint">—</span>
           ) : (
-            <span className={cn(e.daysUntilNext < 0 && "font-medium text-red-600 dark:text-red-400")} title={e.nextFollowupDate ?? undefined}>
+            <span className={cn(e.daysUntilNext < 0 && "font-medium text-bad-text")} title={e.nextFollowupDate ?? undefined}>
               {relativeDays(e.daysUntilNext)}
             </span>
           )}
@@ -396,7 +423,7 @@ function FollowupRow({
               title={`Pinned to ${e.nextOverride} — cleared when you log a follow-up`}
               aria-label="Pinned manually"
             >
-              <Pin className="size-3 text-brand" />
+              <Pin aria-hidden className="size-3 text-brand-text" />
             </span>
           )}
         </td>
@@ -406,28 +433,35 @@ function FollowupRow({
         </td>
         <td className="whitespace-nowrap px-2.5 py-3">
           <span className="inline-flex items-center gap-0.5">
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
               onClick={onLog}
               title="Log a follow-up (date, channel, contact, notes)"
-              className="rounded-md px-2 py-1 text-xs font-medium text-muted transition-colors hover:bg-brand-soft hover:text-brand"
+              aria-label={`Log a follow-up for ${e.company}`}
+              className="text-muted hover:bg-brand-soft hover:text-brand-text"
             >
               Log
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="ghost"
+              size="icon-sm"
               onClick={onPin}
               title={e.nextOverride ? `Next date pinned to ${e.nextOverride} — change or clear` : "Pin a custom next follow-up date"}
-              className={cn(
-                "rounded-md p-1 transition-colors hover:bg-brand-soft hover:text-brand",
-                e.nextOverride ? "text-brand" : "text-faint",
-              )}
+              aria-label={
+                e.nextOverride
+                  ? `Change or clear the pinned date for ${e.company}`
+                  : `Pin a custom next follow-up date for ${e.company}`
+              }
+              className={cn("hover:bg-brand-soft hover:text-brand-text", e.nextOverride ? "text-brand-text" : "text-muted")}
             >
-              <CalendarClock className="size-3.5" />
-            </button>
+              <CalendarClock aria-hidden className="size-3.5" />
+            </Button>
           </span>
         </td>
-      </tr>
+      </motion.tr>
       {expanded && (
         <tr className="bg-surface/30">
           <td colSpan={COLUMNS.length + 2} className="px-4 py-3">
@@ -453,17 +487,19 @@ function HistoryPanel({ entry: e, onRemove }: { entry: CadenceEntry; onRemove: (
             <li key={`${f.num ?? "b"}-${f.date}-${i}`} className="group/item flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
               {/* Fixed-width leading slot keeps every entry's text aligned,
                   whether or not it is deletable (legacy bullets carry no num). */}
-              <span className="inline-flex w-5 shrink-0 justify-center self-center">
+              <span className="inline-flex w-7 shrink-0 justify-center self-center">
                 {f.num != null && (
-                  <button
+                  <Button
                     type="button"
+                    variant="danger-ghost"
+                    size="icon-sm"
                     onClick={() => onRemove(f.num!)}
                     title="Remove this logged follow-up (added by mistake?)"
                     aria-label={`Remove follow-up logged ${f.date}`}
-                    className="rounded p-0.5 text-faint opacity-0 transition group-hover/item:opacity-100 hover:text-red-500 focus-visible:opacity-100"
+                    className="opacity-0 group-hover/item:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
                   >
-                    <Trash2 className="size-3.5" />
-                  </button>
+                    <Trash2 aria-hidden className="size-3.5" />
+                  </Button>
                 )}
               </span>
               <span className="tabular-nums text-muted">{f.date}</span>
@@ -480,7 +516,7 @@ function HistoryPanel({ entry: e, onRemove }: { entry: CadenceEntry; onRemove: (
           {e.contacts.map((c, i) => (
             <span key={c.email}>
               {i > 0 && ", "}
-              <a href={`mailto:${c.email}`} className="text-muted underline decoration-dotted underline-offset-2 transition-colors hover:text-brand">
+              <a href={`mailto:${c.email}`} className="rounded-md text-muted underline decoration-dotted underline-offset-2 focus-ring-inset transition-colors duration-150 ease-out hover:text-brand-text">
                 {c.name ? `${c.name} <${c.email}>` : c.email}
               </a>
             </span>
@@ -493,9 +529,9 @@ function HistoryPanel({ entry: e, onRemove }: { entry: CadenceEntry; onRemove: (
 
 function EmptyPanel({ title, body }: { title: string; body: string }) {
   return (
-    <div className="mt-4 rounded-2xl border border-dashed border-border bg-surface/30 px-6 py-12 text-center">
-      <p className="font-display text-lg">{title}</p>
+    <Card className="mt-4 border-dashed px-6 py-12 text-center">
+      <h2 className="font-display text-lg text-foreground">{title}</h2>
       <p className="mx-auto mt-1 max-w-md text-sm text-muted">{body}</p>
-    </div>
+    </Card>
   );
 }

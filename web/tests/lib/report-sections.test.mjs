@@ -217,6 +217,14 @@ test("verdictReason reads the header lede above ---", () => {
   );
 });
 
+test("verdictReason never lends the Machine Summary heading as the lede", () => {
+  const summary = ["## Machine Summary", "", "```yaml", "score: 3.1", "```"];
+  const aboveRule = ["# Acme — Engineer", "", "**Score:** 3.1 / 5", "", ...summary, "", "---", "", "## A) Role Summary"];
+  assert.equal(verdictReason({ report: aboveRule.join("\n"), intro: "" }), "");
+  const noRule = ["# Acme — Engineer", "", "Embedded role, strong match.", "", ...summary];
+  assert.equal(verdictReason({ report: noRule.join("\n"), intro: "" }), "Embedded role, strong match.");
+});
+
 test("applyLineLabel: 4.0 is the apply line", () => {
   assert.equal(APPLY_LINE, 4.0);
   assert.equal(applyLineLabel(4.0), "Recommended");

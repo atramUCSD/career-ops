@@ -3,6 +3,8 @@
 import { useMemo, useState } from "react";
 import { Search, Plus } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/field";
 import type { DiscoveredOffer } from "@/lib/explore";
 import { CostBadge } from "@/components/cost/cost-badge";
 import { DiscoveryCard } from "./discovery-card";
@@ -32,52 +34,54 @@ export function ResultsList({ offers }: { offers: EnrichedOffer[] }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <div>
-          <p className="text-sm text-foreground">
+          <h2 className="text-sm text-foreground">
             <span className="font-semibold">{offers.length}</span> {isAi ? `candidate${offers.length === 1 ? "" : "s"}` : `fresh role${offers.length === 1 ? "" : "s"}`}
             <CostBadge kind={isAi ? "spend" : "free-network"} size="xs" className="ml-2 align-middle" />
-          </p>
-          <p className="text-[12px] text-faint">
+          </h2>
+          <p className="text-xs text-faint">
             {isAi
               ? "found by AI on the open web · unverified until you evaluate"
               : `${companiesScanned > 0 ? `${companiesScanned.toLocaleString()} companies scanned · ` : ""}0 tokens spent${partial ? " · some boards were unreachable (normal for public directories)" : ""}`}
           </p>
         </div>
 
-        <div className="ml-auto flex items-center gap-2">
-          <div className="flex items-center gap-1.5 rounded-lg border border-border bg-surface/40 px-2.5 py-1.5">
-            <Search className="size-3.5 text-faint" />
-            <input
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <div className="relative">
+            <Search aria-hidden className="pointer-events-none absolute top-1/2 left-2 z-[1] size-3.5 -translate-y-1/2 text-faint" />
+            <Input
+              size="sm"
+              aria-label="Filter results"
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Filter results…"
-              className="w-32 bg-transparent text-[13px] outline-none placeholder:text-faint"
+              className="w-40 pl-7 max-sm:h-11"
             />
           </div>
-          <div className="inline-flex rounded-lg border border-border bg-surface/40 p-0.5 text-xs">
+          <div role="group" aria-label="Sort results" className="inline-flex rounded-xl border border-border bg-surface p-0.5 text-xs">
             {(["fresh", "company"] as const).map((s) => (
               <button
                 key={s}
                 type="button"
+                aria-pressed={sort === s}
                 onClick={() => setSort(s)}
-                className={cn("rounded-md px-2.5 py-1 font-medium capitalize transition-colors", sort === s ? "bg-brand-soft text-brand" : "text-muted hover:text-foreground")}
+                className={cn(
+                  "rounded-md px-2.5 py-1 font-medium capitalize focus-ring transition-colors duration-150 ease-out max-sm:min-h-11",
+                  sort === s ? "bg-brand-soft text-brand-text" : "text-muted hover:text-foreground",
+                )}
               >
                 {s}
               </button>
             ))}
           </div>
           {addable.length > 1 && (
-            <button
-              type="button"
-              onClick={() => addToPipeline(addable)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface/40 px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-brand-soft hover:text-brand"
-            >
-              <Plus className="size-3.5" /> Add all {addable.length}
-            </button>
+            <Button variant="secondary" size="sm" onClick={() => addToPipeline(addable)}>
+              <Plus aria-hidden className="size-3.5" /> Add all {addable.length}
+            </Button>
           )}
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {view.map((o) => (
           <DiscoveryCard key={o.url} offer={o} inPipeline={o.inPipeline} evaluatedN={o.evaluatedN} />
         ))}

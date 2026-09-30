@@ -43,7 +43,7 @@ export function CompanyLogo({
 
   return (
     <span
-      className={cn("relative inline-flex shrink-0 items-center justify-center overflow-hidden ring-1 ring-black/5 dark:ring-white/10", className)}
+      className={cn("relative inline-flex shrink-0 items-center justify-center overflow-hidden ring-1 ring-border", className)}
       style={{ width: size, height: size, borderRadius: radius }}
       aria-hidden="true"
     >

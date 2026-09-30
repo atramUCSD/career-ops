@@ -9,9 +9,9 @@ export default function ApplyPage() {
     <div className="relative min-h-screen">
       {/* full-viewport blurred form wallpaper (behind everything) */}
       <ApplyBackdropMount />
-      <div className="relative z-10 mx-auto max-w-3xl px-6 py-8">
+      <div className="relative z-10 mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-8 max-sm:pb-24">
         <div className="flex items-center gap-3">
-          <Send className="size-6 text-brand" />
+          <Send aria-hidden className="size-6 text-brand" />
           <h1 className="font-display text-2xl tracking-tight text-landing">Apply</h1>
         </div>
         <p className="mt-1.5 max-w-xl text-sm text-muted">

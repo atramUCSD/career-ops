@@ -5,6 +5,7 @@ import Link from "next/link";
 import { FileDown, Loader2, FileText, RotateCcw } from "lucide-react";
 import { useJobs } from "@/components/jobs/job-store";
 import { CostBadge } from "@/components/cost/cost-badge";
+import { Button, buttonVariants } from "@/components/ui/button";
 
 // Fires the real career-ops `pdf` mode (worker kind "pdf") to generate an
 // ATS-optimized CV tailored to THIS offer → output/cv-… + marks the tracker.
@@ -21,8 +22,8 @@ export function GeneratePdfButton({ n, company, pdfReady }: { n: string; company
 
   if (job?.status === "running")
     return (
-      <Link href={`/jobs/${job.id}`} className="inline-flex items-center justify-center gap-1.5 rounded-full border border-brand/40 bg-brand-soft px-3 py-1 text-xs font-medium text-brand max-sm:min-h-[44px]">
-        <Loader2 className="size-3.5 animate-spin" /> Generating CV…
+      <Link href={`/jobs/${job.id}`} className={buttonVariants({ variant: "soft", size: "sm" })}>
+        <Loader2 aria-hidden className="size-3.5 motion-safe:animate-spin" /> Generating CV…
       </Link>
     );
 
@@ -34,17 +35,20 @@ export function GeneratePdfButton({ n, company, pdfReady }: { n: string; company
           href={`/api/cv-pdf?n=${encodeURIComponent(n)}&company=${encodeURIComponent(company)}`}
           target="_blank"
           rel="noreferrer"
-          className="inline-flex items-center justify-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-700 transition-colors hover:bg-emerald-500/15 dark:text-emerald-400 max-sm:min-h-[44px]"
+          className={buttonVariants({ variant: "soft", size: "sm" })}
         >
-          <FileText className="size-3.5" /> View tailored CV
+          <FileText aria-hidden className="size-3.5" /> View tailored CV
         </a>
-        <button
+        <Button
+          variant="ghost"
+          size="icon-sm"
           onClick={generate}
           title="Regenerate the tailored CV"
-          className="inline-flex items-center justify-center rounded-full p-1 text-faint transition-colors hover:text-brand max-sm:min-h-[44px] max-sm:min-w-[44px]"
+          aria-label="Regenerate the tailored CV"
+          className="text-muted hover:text-brand"
         >
-          <RotateCcw className="size-3" />
-        </button>
+          <RotateCcw aria-hidden className="size-3.5" />
+        </Button>
       </span>
     );
 
@@ -53,13 +57,15 @@ export function GeneratePdfButton({ n, company, pdfReady }: { n: string; company
   // surprise — the community's #1 pain (mirrors Explore's token-honesty).
   return (
     <span className="inline-flex items-center gap-1.5">
-      <button
+      <Button
+        variant="secondary"
+        size="sm"
         onClick={generate}
-        className="inline-flex items-center justify-center gap-1.5 rounded-full border border-border px-3 py-1 text-xs font-medium text-muted transition-colors hover:border-brand/40 hover:text-brand max-sm:min-h-[44px]"
+        className="text-muted hover:border-brand/40 hover:text-brand"
         title="Generate an ATS-optimized CV tailored to this role"
       >
-        <FileDown className="size-3.5" /> Generate tailored CV (PDF)
-      </button>
+        <FileDown aria-hidden className="size-3.5" /> Generate tailored CV (PDF)
+      </Button>
       <CostBadge kind="spend" size="xs" />
     </span>
   );

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { MotionConfig } from "motion/react";
+import { MotionConfig, motion } from "motion/react";
 import { cn } from "@/lib/cn";
 import { CoMark } from "@/components/co-mark";
 import { AssistantConsole } from "@/components/assistant-console";
@@ -18,6 +18,7 @@ import { BetaBanner } from "@/components/beta/beta-banner";
 import { WorkerPills } from "@/components/jobs/worker-pills";
 import { UsageMeter } from "@/components/usage-meter";
 import { ProfilePicker } from "@/components/profile-picker";
+import { layoutMove } from "@/components/ui/motion";
 import { instrumentSerif } from "@/lib/fonts";
 import { NAV_ITEMS, isActivePath } from "@/lib/nav-items";
 
@@ -33,7 +34,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <MobileNav />
       <div className="flex min-h-screen">
         <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col overflow-y-auto border-r border-border bg-surface/30 p-4 md:flex">
-          <Link href="/" className="mb-8 flex items-center gap-2.5 px-1">
+          <Link href="/" className="mb-8 flex items-center gap-2.5 rounded-md px-1 focus-ring-inset">
             <CoMark size={32} />
             <span className={`${instrumentSerif.className} relative -top-px text-2xl font-normal tracking-tight text-landing`}>
               career-ops
@@ -46,17 +47,25 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <Link
                   key={href}
                   href={href}
+                  aria-current={active ? "page" : undefined}
                   className={cn(
-                    "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
-                    active
-                      ? "bg-brand-soft text-brand-text"
-                      : "text-muted hover:bg-surface-hover hover:text-foreground",
+                    "relative flex items-center gap-3 rounded-md px-3 py-2 text-sm focus-ring-inset transition-colors duration-150 ease-out",
+                    active ? "text-brand-text" : "text-muted hover:bg-surface-hover hover:text-foreground",
                   )}
                 >
-                  <Icon className="size-4" />
-                  {label}
+                  {/* One indicator shared by every item, so it slides to the new route instead of blinking. */}
+                  {active && (
+                    <motion.span
+                      layoutId="nav-active"
+                      aria-hidden
+                      className="absolute inset-0 rounded-md bg-brand-soft"
+                      transition={layoutMove}
+                    />
+                  )}
+                  <Icon className="relative size-4" />
+                  <span className="relative">{label}</span>
                   {chip && (
-                    <span className="ml-auto rounded-full border border-brand/30 bg-brand-soft px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-brand-text">
+                    <span className="eyebrow relative ml-auto rounded-md border border-brand/30 bg-brand-soft px-1.5 py-0.5 text-2xs font-bold text-brand-text">
                       {chip}
                     </span>
                   )}
@@ -71,10 +80,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <ProfilePicker />
             <UsageMeter />
             <ThemeToggle className="w-full" />
+            <BetaBanner rail />
             <p className={`${instrumentSerif.className} px-1 text-sm text-faint`}>local-first · v0</p>
           </div>
         </aside>
-        <main className="flex-1 overflow-x-hidden">{children}</main>
+        <main className="flex-1 overflow-x-hidden md:pb-16">{children}</main>
         <AssistantConsole />
         <BackToTop />
         <FirstScoreView />

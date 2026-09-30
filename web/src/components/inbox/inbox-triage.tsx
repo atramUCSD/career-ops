@@ -2,7 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { AnimatePresence, motion } from "motion/react";
 import { Undo2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { listItem } from "@/components/ui/motion";
 import { useJobs } from "@/components/jobs/job-store";
 import type { InboxJob } from "@/lib/career-ops";
 import type { AtsSource } from "@/lib/explore";
@@ -331,7 +335,7 @@ export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
   if (inbox.length === 0) return null;
 
   return (
-    <div className={cn("mx-auto mt-4 max-w-3xl", shortlist.length > 0 && "pb-28 sm:pb-24")}>
+    <div className={cn("mt-4 max-w-3xl", shortlist.length > 0 && "pb-28 sm:pb-24")}>
       <FacetChips
         within={within}
         setWithin={setWithin}
@@ -353,62 +357,65 @@ export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
 
       {/* batch header: fresh slice by default, or the full filtered set */}
       <div className="mt-4 flex items-baseline justify-between gap-3">
-        <p className="text-sm font-medium text-foreground">
+        <p className="eyebrow text-xs font-semibold text-muted">
           {capped ? "Fresh — worth a look" : anyFacet ? `${filtered.length} match${filtered.length === 1 ? "" : "es"}` : "All roles"}
         </p>
         {hiddenCount > 0 && (
-          <button type="button" onClick={restoreHidden} className="text-xs text-faint transition-colors hover:text-foreground">
+          <Button variant="ghost" size="sm" onClick={restoreHidden} className="text-faint">
             {hiddenCount} hidden · restore
-          </button>
+          </Button>
         )}
       </div>
 
       {/* multi-select action bar */}
       {selected.size > 0 && (
-        <div className="mt-2 flex items-center gap-3 rounded-lg border border-brand/30 bg-brand-soft px-3 py-2 text-sm">
-          <span className="font-medium text-brand tabular-nums">{selected.size} selected</span>
-          <button type="button" onClick={saveSelected} className="rounded-md bg-brand px-2.5 py-1 text-xs font-medium text-brand-foreground max-sm:min-h-[44px]">
+        <div className="mt-2 flex items-center gap-2 rounded-xl border border-brand/30 bg-brand-soft px-3 py-2 text-sm">
+          <span className="font-medium text-brand-text tabular-nums">{selected.size} selected</span>
+          <Button size="sm" onClick={saveSelected}>
             Save to shortlist
-          </button>
-          <button type="button" onClick={() => setSelected(new Set())} className="text-xs text-muted hover:text-foreground max-sm:min-h-[44px]">
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())} className="text-muted">
             Clear
-          </button>
+          </Button>
         </div>
       )}
 
       {visible.length > 0 ? (
-        <ul className="mt-3 divide-y divide-border overflow-hidden rounded-2xl border border-border bg-surface/40">
-          {visible.map((e) => (
-            <TriageRow
-              key={e.job.url}
-              job={e.job}
-              source={e.source}
-              age={e.age}
-              scored={scoreByUrl.get(e.job.url)}
-              selected={selected.has(e.job.url)}
-              shortlisted={isShortlisted(e.job.url)}
-              onToggleSelect={() => toggleSelect(e.job.url)}
-              onSave={() => save(e.job)}
-              onSkip={() => skip(e.job)}
-            />
-          ))}
+        // relative: popLayout pins an exiting row absolutely inside this list.
+        <ul className="relative mt-3 divide-y divide-border overflow-hidden rounded-xl border border-border bg-surface/40">
+          <AnimatePresence initial={false} mode="popLayout">
+            {visible.map((e) => (
+              <TriageRow
+                key={e.job.url}
+                job={e.job}
+                source={e.source}
+                age={e.age}
+                scored={scoreByUrl.get(e.job.url)}
+                selected={selected.has(e.job.url)}
+                shortlisted={isShortlisted(e.job.url)}
+                onToggleSelect={() => toggleSelect(e.job.url)}
+                onSave={() => save(e.job)}
+                onSkip={() => skip(e.job)}
+              />
+            ))}
+          </AnimatePresence>
         </ul>
       ) : (
-        <div className="mt-3 rounded-2xl border border-dashed border-border bg-surface/30 px-6 py-10 text-center">
+        <Card inset className="mt-3 border-dashed bg-surface/30 px-6 py-10 text-center">
           <p className="font-display text-lg">No matches</p>
           <p className="mx-auto mt-1 max-w-sm text-sm text-muted">Loosen the filters to see more of your inbox.</p>
-        </div>
+        </Card>
       )}
 
       {/* "See all N" — only when the fresh batch is capping a larger list */}
       {capped && ordered.length > BATCH && (
-        <button
-          type="button"
+        <Button
+          variant="secondary"
           onClick={() => setShowAll(true)}
-          className="mt-3 inline-flex w-full items-center justify-center gap-1 rounded-xl border border-border bg-surface/40 py-2.5 text-sm font-medium text-muted transition-colors hover:border-brand/40 hover:text-brand max-sm:min-h-[44px]"
+          className="mt-3 w-full bg-surface/40 text-muted hover:border-brand/40 hover:bg-surface/40 hover:text-brand"
         >
           See all {ordered.length} in inbox →
-        </button>
+        </Button>
       )}
 
       {/* empty-shortlist guidance (only once there's nothing saved) */}
@@ -417,16 +424,23 @@ export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
       )}
 
       {/* undo toast (sits above the tray) */}
-      {undo && (
-        <div className={cn("fixed inset-x-0 z-40 flex justify-center px-4", shortlist.length > 0 ? "bottom-24 sm:bottom-24" : "bottom-6")}>
-          <div className="inline-flex items-center gap-3 rounded-full border border-border bg-surface px-4 py-2 text-sm shadow-lg">
-            <span className="text-muted">{undo.label}</span>
-            <button type="button" onClick={() => { undo.fn(); setUndo(null); }} className="inline-flex items-center gap-1 font-medium text-brand max-sm:min-h-[44px]">
-              <Undo2 className="size-3.5" /> Undo
-            </button>
-          </div>
-        </div>
-      )}
+      <AnimatePresence initial={false}>
+        {undo && (
+          <motion.div
+            key="undo"
+            {...listItem}
+            role="status"
+            className={cn("fixed inset-x-0 z-40 flex justify-center px-4", shortlist.length > 0 ? "bottom-24 sm:bottom-24" : "bottom-6")}
+          >
+            <div className="inline-flex items-center gap-2 rounded-xl border border-border bg-surface py-1.5 pl-4 pr-1.5 text-sm shadow-overlay">
+              <span className="text-muted">{undo.label}</span>
+              <Button variant="ghost" size="sm" onClick={() => { undo.fn(); setUndo(null); }} className="text-brand hover:text-brand">
+                <Undo2 aria-hidden className="size-3.5" /> Undo
+              </Button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <ShortlistTray
         items={shortlist}

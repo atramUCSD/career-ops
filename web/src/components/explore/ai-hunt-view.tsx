@@ -16,7 +16,7 @@ const STYLE = `
 .co-aiorb{position:relative;display:grid;place-items:center;width:4rem;height:4rem}
 .co-aiorb__glow{position:absolute;inset:0;border-radius:50%;background:color-mix(in srgb,var(--brand) 28%,transparent);filter:blur(18px);animation:co-aiorb-pulse 2.4s ease-in-out infinite}
 .co-aiorb__ring{position:absolute;inset:0;border-radius:50%;border:2px solid color-mix(in srgb,var(--brand) 25%,transparent);border-top-color:var(--brand);animation:co-aiorb-spin 1.1s linear infinite}
-.co-ailedger{display:inline-flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:.45rem;border-radius:999px;border:1px solid color-mix(in srgb,var(--brand) 30%,transparent);background:color-mix(in srgb,var(--brand) 10%,transparent);color:var(--brand-text);padding:.4rem .9rem;font-size:12.5px;font-weight:600}
+.co-ailedger{display:inline-flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:.45rem;border-radius:.375rem;border:1px solid color-mix(in srgb,var(--brand) 30%,transparent);background:color-mix(in srgb,var(--brand) 10%,transparent);color:var(--brand-text);padding:.4rem .9rem;font-size:.875rem;font-weight:600}
 @keyframes co-aiorb-spin{to{transform:rotate(360deg)}}
 @keyframes co-aiorb-pulse{0%,100%{opacity:.6;transform:scale(.92)}50%{opacity:1;transform:scale(1.08)}}
 @media(prefers-reduced-motion:reduce){.co-aiorb__ring,.co-aiorb__glow{animation:none}}
@@ -33,7 +33,7 @@ export function AiHuntView({ cliName }: { cliName?: string }) {
       <div className="co-aihunt">
         <style>{STYLE}</style>
 
-        <span className="co-aiorb">
+        <span aria-hidden className="co-aiorb">
           <span className="co-aiorb__glow" />
           <span className="co-aiorb__ring" />
           <Sparkles className="size-6 text-brand" />
@@ -49,7 +49,7 @@ export function AiHuntView({ cliName }: { cliName?: string }) {
         </div>
 
         <div className="co-ailedger">
-          <Sparkles className="size-3.5" />
+          <Sparkles aria-hidden className="size-3.5" />
           {cliName || "your CLI"} · searching the open web
           {aiCost.searches > 0 && <span className="opacity-75">· {aiCost.searches} searches</span>}
           {matchCount > 0 && <span className="opacity-75">· {matchCount} found</span>}

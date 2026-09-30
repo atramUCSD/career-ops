@@ -5,7 +5,10 @@ import { useRouter } from "next/navigation";
 import { AlertTriangle, Check, Plus, RefreshCw, Route, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import type { HomeData } from "@/lib/home/home-data";
-import { Bar, ChipList, CountUp, Panel, SaveBar, postJson } from "./motion-bits";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Bar, CountUp } from "@/components/ui/charts";
+import { ChipList, SaveBar, postJson } from "./motion-bits";
 
 type Lanes = Exclude<HomeData["lanes"], null | { error: string }>;
 
@@ -56,12 +59,12 @@ export function LanesPanel({ lanes, positives }: { lanes: Lanes; positives: stri
   }
 
   return (
-    <Panel icon={Route} title="Lanes" hint="config/lanes.yml" className="scroll-mt-6">
+    <Card icon={Route} title="Lanes" hint="config/lanes.yml" className="scroll-mt-6">
       {(missing.length > 0 || blocked.length > 0) && (
-        <div role="alert" className="mb-5 rounded-xl border border-warn/40 bg-warn-soft px-4 py-3 text-sm">
-          <div className="flex items-start gap-2.5">
-            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warn" />
-            <div className="flex-1 space-y-1.5">
+        <Card inset tone="warn" role="alert" className="mb-5 text-sm">
+          <div className="flex flex-wrap items-start gap-2.5">
+            <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0 text-warn" />
+            <div className="min-w-0 flex-1 basis-56 space-y-1.5">
               {missing.length > 0 && (
                 <p className="text-foreground">
                   {missing.length === 1 ? "One lane keyword is" : `${missing.length} lane keywords are`} not in the title filter, so scans
@@ -76,28 +79,23 @@ export function LanesPanel({ lanes, positives }: { lanes: Lanes; positives: stri
               {fixError && <p className="text-xs text-bad-text">{fixError}</p>}
             </div>
             {missing.length > 0 && (
-              <button
-                type="button"
-                onClick={addToTitleFilter}
-                disabled={fixing}
-                className="inline-flex shrink-0 items-center gap-1 rounded-md bg-surface px-2.5 py-1 text-xs font-medium text-foreground ring-1 ring-border hover:ring-warn/60 disabled:opacity-50"
-              >
-                <Plus className="size-3" /> {fixing ? "Adding…" : "Add to title filter"}
-              </button>
+              <Button type="button" variant="secondary" size="sm" onClick={addToTitleFilter} disabled={fixing} className="shrink-0">
+                <Plus aria-hidden className="size-3" /> {fixing ? "Adding…" : "Add to title filter"}
+              </Button>
             )}
           </div>
-        </div>
+        </Card>
       )}
 
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         {lanes.list.map((lane) => {
           const drift = Object.keys(lane.drifted).length;
           return (
-            <article key={lane.id} className="rounded-xl border border-border bg-background/60 p-4">
+            <Card as="article" inset key={lane.id} className="bg-background/60">
               <header className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
                   <h3 className="truncate font-medium text-foreground">{lane.archetype}</h3>
-                  <code className="font-mono text-[11px] text-faint">{lane.id}</code>
+                  <code className="font-mono text-2xs text-faint">{lane.id}</code>
                 </div>
                 {drift ? <Badge tone="warn">{`${drift} drifted`}</Badge> : <Badge tone="good">In sync</Badge>}
               </header>
@@ -141,33 +139,28 @@ export function LanesPanel({ lanes, positives }: { lanes: Lanes; positives: stri
                     <CountUp value={lane.pending} /> pending
                   </span>
                 </div>
-                <Bar pct={(lane.pending / max) * 100} className="bg-brand/70" />
+                <Bar pct={(lane.pending / max) * 100} />
               </footer>
-            </article>
+            </Card>
           );
         })}
       </div>
 
-      <h3 className="mt-6 mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">Archetypes registered for evaluation</h3>
+      <h3 className="eyebrow mt-6 mb-2 text-2xs font-semibold text-muted">Archetypes registered for evaluation</h3>
       <ul className="grid gap-x-6 gap-y-1.5 text-sm sm:grid-cols-2">
         {lanes.sites.map((s) => (
           <li key={s.site} className="flex items-start gap-2">
-            {s.ok ? <Check aria-label="In sync" className="mt-0.5 size-4 shrink-0 text-good" /> : <X aria-label="Out of sync" className="mt-0.5 size-4 shrink-0 text-warn" />}
+            {s.ok ? <Check aria-label="In sync" className="mt-0.5 size-4 shrink-0 text-brand-text" /> : <X aria-label="Out of sync" className="mt-0.5 size-4 shrink-0 text-warn" />}
             <span className="min-w-0">
-              <code className="font-mono text-[13px]">{s.site}</code>
+              <code className="font-mono text-sm">{s.site}</code>
               {!s.ok && s.note && <span className="block text-xs text-muted">{s.note}</span>}
             </span>
           </li>
         ))}
       </ul>
-      <button
-        type="button"
-        onClick={() => recheck(() => router.refresh())}
-        disabled={rechecking}
-        className="mt-3 inline-flex items-center gap-1 text-xs text-muted hover:text-foreground"
-      >
-        <RefreshCw className={rechecking ? "size-3 animate-spin" : "size-3"} /> Re-check
-      </button>
+      <Button type="button" variant="ghost" size="sm" onClick={() => recheck(() => router.refresh())} disabled={rechecking} className="mt-3 -ml-2 text-muted">
+        <RefreshCw aria-hidden className={rechecking ? "size-3 motion-safe:animate-spin" : "size-3"} /> Re-check
+      </Button>
 
       <SaveBar
         note="Writes title_keywords only. Comments in lanes.yml are kept."
@@ -179,6 +172,6 @@ export function LanesPanel({ lanes, positives }: { lanes: Lanes; positives: stri
         onDiscard={() => setDraft(initial)}
         label="Save lanes"
       />
-    </Panel>
+    </Card>
   );
 }

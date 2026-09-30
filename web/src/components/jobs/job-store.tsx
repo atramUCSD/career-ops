@@ -59,7 +59,10 @@ function parseVerdict(text: string): JobResult {
 export function JobsProvider({ children }: { children: React.ReactNode }) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const seq = useRef(0);
-  const loaded = useRef(false);
+  // State, not a ref: the persist effect must not run in the same commit as the
+  // restore, or it writes the initial [] over the saved history (and StrictMode's
+  // remount then reads that [] back).
+  const [loaded, setLoaded] = useState(false);
 
   // restore history
   useEffect(() => {
@@ -73,18 +76,18 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
     } catch {
       /* ignore */
     }
-    loaded.current = true;
+    setLoaded(true);
   }, []);
 
   // persist
   useEffect(() => {
-    if (!loaded.current) return;
+    if (!loaded) return;
     try {
       localStorage.setItem(JOBS_KEY, JSON.stringify(jobs.slice(0, 40)));
     } catch {
       /* quota */
     }
-  }, [jobs]);
+  }, [jobs, loaded]);
 
   const patch = useCallback((id: string, fn: (j: Job) => Job) => {
     setJobs((js) => js.map((j) => (j.id === id ? fn(j) : j)));

@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Gauge } from "lucide-react";
-import { motion } from "motion/react";
-import { cn } from "@/lib/cn";
+import { Bar, type Tone } from "@/components/ui/charts";
 
 type Usage = { window5h: { tokens: number }; window7d: { tokens: number } };
 
@@ -16,10 +15,10 @@ function fmt(n: number): string {
   if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
   return `${n}`;
 }
-function tone(pct: number): string {
-  if (pct >= 85) return "bg-bad";
-  if (pct >= 60) return "bg-warn";
-  return "bg-good";
+function tone(pct: number): Tone {
+  if (pct >= 85) return "bad";
+  if (pct >= 60) return "warn";
+  return "good";
 }
 
 export function UsageMeter() {
@@ -66,28 +65,21 @@ export function UsageMeter() {
 
   return (
     <div className="border-t border-border pt-3">
-      <div className="mb-1.5 flex items-center gap-1.5 px-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-faint">
-        <Gauge className="size-3" /> Usage
+      <div className="eyebrow mb-1.5 flex items-center gap-1.5 px-1 text-2xs font-semibold text-muted">
+        <Gauge aria-hidden className="size-3" /> Usage
       </div>
       <div className="space-y-2 px-1">
         {rows.map((r) => {
           const pct = Math.min(100, Math.round((r.tokens / r.budget) * 100));
           return (
             <div key={r.label} title={`${r.tokens.toLocaleString()} tokens in the last ${r.label}`}>
-              <div className="flex items-center justify-between text-[10px] text-faint">
+              <div className="flex items-center justify-between text-2xs text-faint">
                 <span>{r.label}</span>
                 <span className="tabular-nums">
                   {fmt(r.tokens)} · {pct}%
                 </span>
               </div>
-              <div className="mt-0.5 h-1 w-full overflow-hidden rounded-full bg-surface-hover">
-                <motion.div
-                  className={cn("h-full origin-left rounded-full transition-colors", tone(pct))}
-                  initial={{ scaleX: 0 }}
-                  animate={{ scaleX: Math.max(pct, 2) / 100 }}
-                  transition={{ duration: 0.6, ease: "easeOut" }}
-                />
-              </div>
+              <Bar pct={Math.max(pct, 2)} tone={tone(pct)} size="sm" className="mt-0.5" />
             </div>
           );
         })}

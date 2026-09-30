@@ -11,12 +11,13 @@ import type { AiTraceChunk } from "@/lib/explore-ai";
 // strip markdown, and re-split into clean SENTENCES — healing the fragments. Newest
 // emphasized; auto-scrolls; co-located effect CSS (Tailwind v4 HMR gotcha).
 const STYLE = `
-.co-reason__dot{width:.5rem;height:.5rem;border-radius:50%;background:var(--brand);box-shadow:0 0 0 0 color-mix(in srgb,var(--brand) 50%,transparent);animation:co-reason-pulse 1.5s ease-out infinite}
+.co-reason__dot{position:relative;width:.5rem;height:.5rem;border-radius:50%;background:var(--brand)}
+.co-reason__dot::after{content:"";position:absolute;inset:-.2rem;border-radius:50%;border:1px solid var(--brand);animation:co-reason-pulse 1.5s ease-out infinite}
 .co-reason__body{-webkit-mask-image:linear-gradient(180deg,transparent,#000 16%);mask-image:linear-gradient(180deg,transparent,#000 16%)}
 .co-reason__line{animation:co-reason-in .35s ease both}
-@keyframes co-reason-pulse{70%{box-shadow:0 0 0 .4rem transparent}100%{box-shadow:0 0 0 0 transparent}}
+@keyframes co-reason-pulse{0%{transform:scale(.6);opacity:.7}100%{transform:scale(1.8);opacity:0}}
 @keyframes co-reason-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
-@media(prefers-reduced-motion:reduce){.co-reason__dot,.co-reason__line{animation:none}}
+@media(prefers-reduced-motion:reduce){.co-reason__dot::after,.co-reason__line{animation:none}}
 `;
 
 // Render **bold** spans inline without a full markdown engine.
@@ -56,18 +57,18 @@ export function AiHuntTrace({ trace }: { trace: AiTraceChunk[] }) {
   if (sentences.length === 0) return null;
 
   return (
-    <div className="w-full max-w-2xl rounded-2xl border border-border/70 bg-surface/80 text-left shadow-xl shadow-black/10 backdrop-blur-md">
+    <div className="w-full max-w-2xl rounded-2xl border border-border/70 bg-surface/80 text-left shadow-overlay backdrop-blur-md">
       <style>{STYLE}</style>
       <div className="flex items-center gap-2 border-b border-border/60 px-4 py-2.5">
-        <span className="co-reason__dot" />
-        <span className="text-[12px] font-medium text-foreground">Reasoning live</span>
-        <Sparkles className="ml-auto size-3.5 text-brand/70" />
+        <span aria-hidden className="co-reason__dot" />
+        <span className="text-xs font-medium text-foreground">Reasoning live</span>
+        <Sparkles aria-hidden className="ml-auto size-3.5 text-brand-text" />
       </div>
       <div ref={bodyRef} className="co-reason__body flex max-h-52 flex-col gap-2 overflow-y-auto px-4 py-3">
         {sentences.map((s, i) => (
           <p
             key={`${sentences.length}-${i}`}
-            className={cn("co-reason__line text-[13.5px] leading-relaxed", i === sentences.length - 1 ? "text-foreground" : "text-muted")}
+            className={cn("co-reason__line text-sm leading-relaxed", i === sentences.length - 1 ? "text-foreground" : "text-muted")}
           >
             {renderInline(s)}
           </p>

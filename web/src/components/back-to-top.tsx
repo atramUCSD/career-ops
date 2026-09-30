@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { ArrowUp } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { Button } from "@/components/ui/button";
 import { shouldShowBackToTop, scrollBehaviorFor } from "@/lib/scroll-to-top.mjs";
 
 // Floating control that returns the window to the top of long pages. Rendered
@@ -29,22 +30,22 @@ export function BackToTop() {
   };
 
   return (
-    <button
+    <Button
       type="button"
+      variant="secondary"
+      size="icon"
       onClick={toTop}
       aria-label="Back to top"
       aria-hidden={!visible}
       tabIndex={visible ? 0 : -1}
       className={cn(
-        "fixed bottom-20 right-5 z-40 flex size-11 items-center justify-center rounded-full",
-        "border border-border bg-surface/90 text-muted shadow-lg backdrop-blur",
-        "transition-[opacity,transform,color,background-color] duration-200",
-        "hover:bg-surface-hover hover:text-foreground",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50",
-        visible ? "opacity-100 translate-y-0" : "pointer-events-none translate-y-2 opacity-0",
+        "fixed bottom-20 right-5 z-40 size-11 bg-surface/90 text-muted shadow-raised backdrop-blur hover:text-foreground",
+        // Tailwind 4 translate-* sets the `translate` property, not `transform`.
+        "transition-[opacity,translate,color,background-color,border-color,scale] duration-200",
+        visible ? "opacity-100 translate-y-0" : "pointer-events-none opacity-0 motion-safe:translate-y-2",
       )}
     >
       <ArrowUp className="size-5" aria-hidden />
-    </button>
+    </Button>
   );
 }

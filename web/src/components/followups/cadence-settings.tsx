@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { Check, Loader2 } from "lucide-react";
 import { PROFILE_CADENCE_KEYS, type ProfileCadenceKey } from "@/lib/followups";
-import { cn } from "@/lib/cn";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/field";
 
 // Follow-up cadence knobs → config/profile.yml (followup_cadence). Server-
 // persisted (unlike the localStorage engine prefs above) because the core
@@ -84,67 +86,56 @@ export function CadenceSettings() {
   };
 
   return (
-    <div>
-      <label className="mt-8 mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-muted">
-        Follow-up cadence
-      </label>
-      <div className="rounded-xl border border-border bg-surface/50 p-4">
+    <section>
+      <h2 className="mt-8 mb-3 eyebrow text-xs font-semibold text-muted">Follow-up cadence</h2>
+      <Card inset>
         <p className="text-xs leading-relaxed text-faint">
           When the <span className="text-muted">Follow-ups</span> tracker nudges you. Saved to{" "}
           <span className="font-mono text-muted">config/profile.yml</span> — the CLI uses the same values.
         </p>
         {loadError ? (
           <div className="mt-3 text-sm text-muted">
-            <p className="text-bad-text">
+            <p role="alert" className="text-bad-text">
               Couldn&apos;t read your current cadence settings — not showing defaults, to avoid overwriting real values in{" "}
               <span className="font-mono">config/profile.yml</span>.
             </p>
-            <button
-              type="button"
-              onClick={load}
-              className="mt-2 rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-medium transition-colors hover:bg-surface-hover"
-            >
+            <Button type="button" variant="secondary" size="sm" onClick={load} className="mt-2">
               Retry
-            </button>
+            </Button>
           </div>
         ) : values === null ? (
           <div className="mt-3 flex items-center gap-2 text-sm text-muted">
-            <Loader2 className="size-4 animate-spin" /> Loading…
+            <Loader2 aria-hidden className="size-4 motion-safe:animate-spin" /> Loading…
           </div>
         ) : (
           <>
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
               {FIELDS.map((f) => (
-                <label key={f.key} className="block">
-                  <span className="block text-sm font-medium text-foreground">{f.label}</span>
-                  <span className="mt-0.5 block text-xs text-faint">{f.hint}</span>
-                  <input
-                    type="number"
-                    min={0}
-                    step={1}
-                    value={values[f.key]}
-                    onChange={(e) => setValues((v) => (v ? { ...v, [f.key]: e.target.value } : v))}
-                    className="mt-1.5 w-24 rounded-md border border-border bg-surface/60 px-3 py-1.5 text-sm tabular-nums outline-none transition-colors focus:border-brand/50 focus-visible:ring-2 focus-visible:ring-brand/40"
-                  />
-                </label>
+                <Input
+                  key={f.key}
+                  label={f.label}
+                  hint={f.hint}
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={values[f.key]}
+                  onChange={(e) => setValues((v) => (v ? { ...v, [f.key]: e.target.value } : v))}
+                  className="w-24 tabular-nums"
+                />
               ))}
             </div>
-            {error && <p className="mt-3 text-xs text-bad-text">{error}</p>}
-            <button
-              type="button"
-              onClick={save}
-              disabled={saving}
-              className={cn(
-                "mt-4 inline-flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-medium transition-colors hover:bg-surface-hover",
-                "disabled:pointer-events-none disabled:opacity-60",
-              )}
-            >
-              {saving ? <Loader2 className="size-3.5 animate-spin" /> : saved ? <Check className="size-3.5 text-good" /> : null}
+            {error && (
+              <p role="alert" className="mt-3 text-xs text-bad-text">
+                {error}
+              </p>
+            )}
+            <Button type="button" variant="secondary" size="sm" onClick={save} loading={saving} className="mt-4">
+              {saved && <Check aria-hidden className="size-3.5 text-brand-text" />}
               {saved ? "Saved" : "Save cadence"}
-            </button>
+            </Button>
           </>
         )}
-      </div>
-    </div>
+      </Card>
+    </section>
   );
 }

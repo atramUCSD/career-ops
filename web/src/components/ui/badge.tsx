@@ -15,7 +15,7 @@ export function Badge({
     warn: "bg-warn-soft text-warn",
     bad: "bg-bad-soft text-bad-text",
     info: "bg-info-soft text-info-text",
-    muted: "bg-surface-hover text-muted",
+    muted: "bg-surface-muted text-muted",
   } as const;
   return (
     <span

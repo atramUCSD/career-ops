@@ -3,6 +3,9 @@
 import { useState } from "react";
 import { X, Ban, Clock, MapPin, ChevronDown, SlidersHorizontal } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Field } from "@/components/ui/field";
 import { ATS_LABEL, ATS_SOURCES, cleanChips, type AtsSource, type ExploreFilters } from "@/lib/explore";
 
 const RECENCY = [
@@ -14,14 +17,14 @@ const RECENCY = [
 ];
 
 const STYLE = `
-.co-fb__chip{display:inline-flex;align-items:center;gap:.3rem;border-radius:999px;padding:.2rem .5rem .2rem .6rem;font-size:12.5px;line-height:1.2;border:1px solid transparent}
-.co-fb__chip button{display:inline-flex;opacity:.6;transition:opacity .15s}
+.co-fb__chip{display:inline-flex;align-items:center;gap:.375rem;border-radius:999px;padding:.125rem .5rem;font-size:.875rem;line-height:1.2;border:1px solid transparent}
+.co-fb__chip button{display:inline-flex;align-items:center;opacity:.6;transition:opacity .15s}
 .co-fb__chip button:hover{opacity:1}
 .co-fb__chip.inc{color:var(--brand-text);background:color-mix(in srgb,var(--brand) 11%,transparent);border-color:color-mix(in srgb,var(--brand) 26%,transparent)}
-.co-fb__field{display:flex;flex-wrap:wrap;gap:.4rem;align-items:center;min-height:2.6rem;padding:.45rem .55rem;border-radius:.7rem}
-.co-fb__field input{flex:1;min-width:7rem;background:transparent;border:none;outline:none;font-size:13.5px;color:inherit}
-.co-fb__field input::placeholder{color:var(--co-faint,hsl(0 0% 60%))}
-@media (max-width:639px){.co-fb__chip button{min-width:44px;min-height:44px;justify-content:center}.co-fb__chip{min-height:44px}.co-fb__field{min-height:44px}.co-fb__field input{min-height:32px}}
+.co-fb__field{display:flex;flex-wrap:wrap;gap:.375rem;align-items:center;min-height:2.25rem;padding:.25rem .375rem;border-radius:.375rem}
+.co-fb__field input{flex:1;min-width:7rem;background:transparent;border:none;outline:none;font-size:.875rem;color:inherit}
+.co-fb__field input::placeholder{color:var(--faint)}
+@media (max-width:639px){.co-fb__chip button{align-items:center;justify-content:center;min-width:32px;min-height:32px;margin:-.5rem -.5rem -.5rem -.25rem}.co-fb__field{min-height:44px;row-gap:.75rem}.co-fb__field input{min-height:32px}}
 `;
 
 function KeywordField({
@@ -34,7 +37,7 @@ function KeywordField({
   values: string[];
   tone: "inc" | "exc";
   placeholder: string;
-  ariaLabel?: string;
+  ariaLabel: string;
   onChange: (v: string[]) => void;
 }) {
   const [draft, setDraft] = useState("");
@@ -48,13 +51,13 @@ function KeywordField({
     setDraft("");
   };
   return (
-    <div className={cn("co-fb__field border border-border bg-surface/40 focus-within:border-brand/40 transition-colors")}>
+    <div className="co-fb__field border border-control-border bg-surface field-focus-within">
       {values.map((v) => (
-        <span key={v} className={cn("co-fb__chip", tone === "inc" ? "inc" : "border-border bg-surface-hover text-muted")}>
-          {tone === "exc" && <Ban className="size-3 opacity-70" />}
+        <span key={v} className={cn("co-fb__chip", tone === "inc" ? "inc" : "border-border bg-surface-muted text-muted")}>
+          {tone === "exc" && <Ban aria-hidden className="size-3 opacity-70" />}
           {v}
-          <button type="button" aria-label={`Remove ${v}`} onClick={() => onChange(values.filter((x) => x !== v))}>
-            <X className="size-3" />
+          <button type="button" aria-label={`Remove ${v}`} onClick={() => onChange(values.filter((x) => x !== v))} className="rounded-full focus-ring">
+            <X aria-hidden className="size-3" />
           </button>
         </span>
       ))}
@@ -91,15 +94,6 @@ function KeywordField({
   );
 }
 
-function Label({ children, hint }: { children: React.ReactNode; hint?: string }) {
-  return (
-    <div className="mb-1.5 flex items-baseline justify-between gap-4">
-      <span className="text-[13px] font-medium text-foreground">{children}</span>
-      {hint && <span className="ml-4 text-right text-[11px] text-faint">{hint}</span>}
-    </div>
-  );
-}
-
 export function FilterBuilder({
   filters,
   onChange,
@@ -121,25 +115,25 @@ export function FilterBuilder({
     <div className="space-y-4">
       <style>{STYLE}</style>
 
-      <div>
-        <Label hint={filters.positive.length === 0 ? "empty = every fresh posting" : undefined}>Roles to find</Label>
-        <KeywordField values={filters.positive} tone="inc" placeholder="AI platform, ML infrastructure, staff engineer…" onChange={(v) => set({ positive: v })} />
+      <Field label="Roles to find" hint={filters.positive.length === 0 ? "empty = every fresh posting" : undefined}>
+        <KeywordField values={filters.positive} tone="inc" placeholder="AI platform, ML infrastructure, staff engineer…" ariaLabel="Roles to find" onChange={(v) => set({ positive: v })} />
         {seededFrom.length > 0 && filters.positive.length > 0 && (
-          <p className="mt-1 text-[11px] text-faint">Seeded from your {seededFrom.join(" + ")} — edit freely.</p>
+          <p className="mt-1.5 text-xs text-faint">Seeded from your {seededFrom.join(" + ")} — edit freely.</p>
         )}
-      </div>
+      </Field>
 
-      <div>
-        <Label>Exclude</Label>
-        <KeywordField values={filters.negative} tone="exc" placeholder="manager, sales, contract…" onChange={(v) => set({ negative: v })} />
-      </div>
+      <Field label="Exclude">
+        <KeywordField values={filters.negative} tone="exc" placeholder="manager, sales, contract…" ariaLabel="Exclude" onChange={(v) => set({ negative: v })} />
+      </Field>
 
-      <div>
-        <Label hint="matches any city, region, country, or Remote">
+      <Field
+        label={
           <span className="inline-flex items-center gap-1.5">
-            <MapPin className="size-3.5 text-muted" /> City or location
+            <MapPin aria-hidden className="size-3.5 text-muted" /> City or location
           </span>
-        </Label>
+        }
+        hint="matches any city, region, country, or Remote"
+      >
         <KeywordField
           values={filters.allow}
           tone="inc"
@@ -147,94 +141,98 @@ export function FilterBuilder({
           ariaLabel="City or location"
           onChange={(v) => set({ allow: v })}
         />
-      </div>
+      </Field>
 
-      <div className="flex flex-wrap items-end gap-x-8 gap-y-4">
-        <div className="min-w-[18rem]">
-          <Label hint="postings published in this window">
-            <span className="inline-flex items-center gap-1.5">
-              <Clock className="size-3.5 text-muted" /> Posted within
-            </span>
-          </Label>
-          <div className="inline-flex rounded-lg border border-border bg-surface/40 p-0.5">
-            {RECENCY.map((r) => (
-              <button
-                key={r.days}
-                type="button"
-                onClick={() => set({ sinceDays: r.days })}
-                className={cn(
-                  "rounded-md px-2.5 py-1 text-xs font-medium transition-colors max-sm:min-h-[44px]",
-                  filters.sinceDays === r.days ? "bg-brand-soft text-brand" : "text-muted hover:text-foreground",
-                )}
-              >
-                {r.label}
-              </button>
-            ))}
-          </div>
+      <div className="flex flex-wrap items-start gap-x-8 gap-y-4">
+        <div className="min-w-[18rem] max-sm:min-w-0">
+          <Field
+            label={
+              <span className="inline-flex items-center gap-1.5">
+                <Clock aria-hidden className="size-3.5 text-muted" /> Posted within
+              </span>
+            }
+            hint="postings published in this window"
+          >
+            <div role="group" aria-label="Posted within" className="inline-flex rounded-xl border border-border bg-surface p-0.5">
+              {RECENCY.map((r) => (
+                <button
+                  key={r.days}
+                  type="button"
+                  aria-pressed={filters.sinceDays === r.days}
+                  onClick={() => set({ sinceDays: r.days })}
+                  className={cn(
+                    "rounded-md h-7 px-2 text-xs font-medium focus-ring transition-colors duration-150 ease-out max-sm:min-h-11",
+                    filters.sinceDays === r.days ? "bg-brand-soft text-brand-text" : "text-muted hover:text-foreground",
+                  )}
+                >
+                  {r.label}
+                </button>
+              ))}
+            </div>
+          </Field>
         </div>
 
-        <div>
-          <Label hint={filters.ats.length === 0 ? "pick at least one" : undefined}>Sources</Label>
-          <div className="flex flex-wrap gap-1.5">
+        <Field label="Sources" hint={filters.ats.length === 0 ? "pick at least one" : undefined}>
+          <div role="group" aria-label="Sources" className="flex flex-wrap gap-1.5">
             {ATS_SOURCES.map((a) => {
               const on = filters.ats.includes(a);
               return (
-                <button
+                <Button
                   key={a}
                   type="button"
+                  size="sm"
+                  variant={on ? "soft" : "secondary"}
+                  aria-pressed={on}
                   onClick={() => toggleAts(a)}
-                  className={cn(
-                    "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors max-sm:min-h-[44px]",
-                    on ? "border-brand/40 bg-brand-soft text-brand" : "border-border text-muted hover:text-foreground",
-                  )}
+                  className={cn(!on && "text-muted hover:text-foreground")}
                 >
                   {ATS_LABEL[a]}
-                </button>
+                </Button>
               );
             })}
           </div>
-        </div>
+        </Field>
       </div>
 
-      <button
+      <Button
         type="button"
+        variant="ghost"
+        size="sm"
+        aria-expanded={advanced}
         onClick={() => setAdvanced((v) => !v)}
-        className="inline-flex items-center gap-1.5 text-[12px] text-muted hover:text-foreground transition-colors max-sm:min-h-[44px]"
+        className="-ml-2 text-muted"
       >
-        <SlidersHorizontal className="size-3.5" />
+        <SlidersHorizontal aria-hidden className="size-3.5" />
         More location controls &amp; scan depth
-        <ChevronDown className={cn("size-3.5 transition-transform", advanced && "rotate-180")} />
-      </button>
+        <ChevronDown aria-hidden className={cn("size-3.5 motion-safe:transition-transform motion-safe:duration-200 motion-safe:ease-out", advanced && "rotate-180")} />
+      </Button>
 
       {advanced && (
-        <div className="space-y-3 rounded-xl border border-border bg-surface/30 p-3">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <Label hint="rescues a multi-location posting">Always include</Label>
-              <KeywordField values={filters.alwaysAllow} tone="inc" placeholder="Toronto…" onChange={(v) => set({ alwaysAllow: v })} />
-            </div>
-            <div>
-              <Label hint="unless Always include also matches">Exclude locations</Label>
-              <KeywordField values={filters.block} tone="exc" placeholder="India…" onChange={(v) => set({ block: v })} />
-            </div>
+        <Card inset className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Always include" hint="rescues a multi-location posting">
+              <KeywordField values={filters.alwaysAllow} tone="inc" placeholder="Toronto…" ariaLabel="Always include" onChange={(v) => set({ alwaysAllow: v })} />
+            </Field>
+            <Field label="Exclude locations" hint="unless Always include also matches">
+              <KeywordField values={filters.block} tone="exc" placeholder="India…" ariaLabel="Exclude locations" onChange={(v) => set({ block: v })} />
+            </Field>
           </div>
-          <div>
-            <Label hint="hard reject — overrides Always include">Never include</Label>
-            <KeywordField values={filters.blockHard} tone="exc" placeholder="USA, Brazil…" onChange={(v) => set({ blockHard: v })} />
-          </div>
-          <div>
-            <Label hint={`${filters.limitPerAts} companies / source`}>Scan depth</Label>
+          <Field label="Never include" hint="hard reject — overrides Always include">
+            <KeywordField values={filters.blockHard} tone="exc" placeholder="USA, Brazil…" ariaLabel="Never include" onChange={(v) => set({ blockHard: v })} />
+          </Field>
+          <Field label="Scan depth" hint={`${filters.limitPerAts} companies / source`}>
             <input
               type="range"
+              aria-label="Scan depth"
               min={50}
               max={500}
               step={50}
               value={filters.limitPerAts}
               onChange={(e) => set({ limitPerAts: Number(e.target.value) })}
-              className="w-full accent-brand"
+              className="w-full rounded-md accent-brand focus-ring"
             />
-          </div>
-        </div>
+          </Field>
+        </Card>
       )}
     </div>
   );

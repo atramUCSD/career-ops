@@ -2,28 +2,40 @@
 
 import { Loader2, Wand2, Asterisk, Paperclip, Sparkles, ArrowUpRight, ShieldCheck, RotateCcw, FileCheck2, AlertTriangle, Terminal, Check, ScanLine, PenLine, CheckCircle2, Info, ExternalLink, MousePointerClick, ArrowLeft, ClipboardCheck } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { AnimatePresence, motion } from "motion/react";
 import type { ApplyIssue, DriveStep } from "@/lib/apply/issue";
 import { useApply } from "@/components/apply/apply-provider";
 import { needsLeaveConfirmation, resolveReturnPath } from "@/lib/apply/exit.mjs";
 import type { ApplyField } from "@/lib/apply/extract";
 import { cn } from "@/lib/cn";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Field, Input, Select, Textarea } from "@/components/ui/field";
+import { listItem } from "@/components/ui/motion";
 import { Fragment, useEffect, useRef, useState } from "react";
 
 // Co-located UI animations (HMR-proof vs Tailwind v4's stale globals.css):
 // field cascade-in, per-field "just drafted" flash, skeleton shimmer, hero orb.
 const STYLE = `
 @keyframes co-rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
-.co-rise{animation:co-rise .55s cubic-bezier(.22,1,.36,1) both}
-@keyframes co-flash{0%{box-shadow:0 0 0 0 transparent}22%{box-shadow:0 0 0 3px color-mix(in srgb,var(--brand) 38%,transparent)}100%{box-shadow:0 0 0 0 transparent}}
-.co-flash{animation:co-flash 1.15s ease both;border-radius:.6rem}
-@keyframes co-shim{0%{background-position:-200% 0}100%{background-position:200% 0}}
-.co-skel{background:linear-gradient(90deg, color-mix(in srgb,var(--fg) 5%, transparent) 25%, color-mix(in srgb,var(--fg) 12%, transparent) 37%, color-mix(in srgb,var(--fg) 5%, transparent) 63%);background-size:200% 100%;animation:co-shim 1.6s linear infinite;border-radius:.5rem}
+.co-rise{animation:co-rise .55s var(--ease-out) both}
+.co-flash{position:relative;border-radius:.375rem}
+.co-flash::after{content:"";position:absolute;inset:-3px;border-radius:inherit;pointer-events:none;border:2px solid color-mix(in srgb,var(--brand) 55%,transparent);opacity:0;animation:co-flash-ring 1.15s ease both}
+@keyframes co-flash-ring{0%{opacity:0;transform:scale(.96)}22%{opacity:1;transform:scale(1)}100%{opacity:0;transform:scale(1.02)}}
+@keyframes co-shim{to{transform:translateX(100%)}}
+.co-skel{position:relative;overflow:hidden;background:color-mix(in srgb,var(--fg) 5%, transparent);border-radius:.375rem}
+@media (prefers-reduced-motion: no-preference){.co-skel::after{content:"";position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--fg) 7%,transparent),transparent);animation:co-shim 1.6s linear infinite}}
 @keyframes co-orb{0%,100%{transform:scale(1);opacity:.55}50%{transform:scale(1.35);opacity:.9}}
 .co-orb{animation:co-orb 2.4s ease-in-out infinite}
 @keyframes co-spin{to{transform:rotate(360deg)}}
 .co-ring{animation:co-spin 3s linear infinite}
-@media (prefers-reduced-motion: reduce){.co-rise,.co-flash,.co-skel,.co-orb,.co-ring{animation:none}}
+@media (prefers-reduced-motion: reduce){.co-rise,.co-flash::after,.co-skel,.co-orb,.co-ring{animation:none}}
 `;
+
+// Inline errors enter and leave with the shared block preset; the parent must be `relative` for popLayout.
+function InlineError({ children }: { children: React.ReactNode }) {
+  return <AnimatePresence initial={false} mode="popLayout">{children}</AnimatePresence>;
+}
 
 // The form-proxy UI: the real employer form is opened headlessly on the user's
 // machine and re-rendered here in plain language, pre-filled from their CV. The
@@ -35,37 +47,39 @@ export function ApplyView() {
 
   if (a.status === "idle" || a.status === "error") {
     return (
-      <div>
-        <div className="flex max-w-2xl items-center gap-2 rounded-full border border-border bg-surface/70 py-1.5 pl-4 pr-1.5 shadow-sm transition focus-within:border-brand/50 focus-within:shadow-md">
+      <div className="relative">
+        <div className="flex max-w-2xl items-center gap-2 rounded-full border border-control-border bg-surface/70 py-1.5 pl-4 pr-1.5 transition-colors duration-150 ease-out field-focus-within">
           <input
+            aria-label="Application form URL"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && a.open(input.trim())}
             placeholder="Paste an application form URL (Ashby, Lever, Greenhouse…)"
             className="min-w-0 flex-1 bg-transparent py-1.5 text-sm outline-none placeholder:text-faint"
           />
-          <button
-            onClick={() => a.open(input.trim())}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-brand px-4 py-1.5 text-sm font-medium text-brand-foreground transition-colors hover:bg-brand-200"
-          >
-            <Wand2 className="size-4" /> Read form
-          </button>
+          <Button onClick={() => a.open(input.trim())} className="shrink-0 rounded-full px-4">
+            <Wand2 aria-hidden className="size-4" /> Read form
+          </Button>
         </div>
-        {a.error && (
-          <div className="mt-4 max-w-2xl rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3.5">
-            <div className="flex items-start gap-2.5">
-              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500" />
-              <div className="min-w-0">
-                <p className="text-sm text-amber-800 dark:text-amber-300">{a.error}</p>
-                {a.url && /^https?:\/\//.test(a.url) && (
-                  <a href={a.url} target="_blank" rel="noreferrer" className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-brand hover:underline">
-                    Open the form directly <ExternalLink className="size-3" />
-                  </a>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
+        <InlineError>
+          {a.error && (
+            <motion.div key="error" {...listItem} className="mt-4 max-w-2xl">
+              <Card inset tone="warn" role="alert">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0 text-warn" />
+                  <div className="min-w-0">
+                    <p className="text-sm text-warn">{a.error}</p>
+                    {a.url && /^https?:\/\//.test(a.url) && (
+                      <a href={a.url} target="_blank" rel="noreferrer" className="mt-2 inline-flex items-center gap-1 rounded-md text-xs font-medium text-brand-text focus-ring hover:underline">
+                        Open the form directly <ExternalLink aria-hidden className="size-3" />
+                      </a>
+                    )}
+                  </div>
+                </div>
+              </Card>
+            </motion.div>
+          )}
+        </InlineError>
         {/* A session that failed still has a row and an origin behind it, so the
             way back and the way to record it must survive the failure. */}
         {a.status === "error" && <ApplyExitBar />}
@@ -82,7 +96,7 @@ export function ApplyView() {
   const phase = busy ? 0 : prefilling ? 1 : 2;
 
   return (
-    <div className="mx-auto max-w-2xl">
+    <div className="relative mx-auto max-w-2xl">
       <style>{STYLE}</style>
 
       {/* journey: Read → Draft → Review */}
@@ -90,10 +104,10 @@ export function ApplyView() {
 
       {!busy && (
         <div className="co-rise mb-4 flex items-baseline justify-between gap-3">
-          <h2 className="font-display text-xl text-landing drop-shadow-sm">{a.title || "Application"}</h2>
-          <button onClick={a.reset} className="inline-flex items-center gap-1 text-xs text-faint transition-colors hover:text-foreground">
-            <RotateCcw className="size-3" /> new
-          </button>
+          <h2 className="font-display text-xl text-landing">{a.title || "Application"}</h2>
+          <Button variant="ghost" size="sm" onClick={a.reset} aria-label="Start a new application" className="text-muted">
+            <RotateCcw aria-hidden className="size-3" /> new
+          </Button>
         </div>
       )}
 
@@ -108,19 +122,24 @@ export function ApplyView() {
       {/* driving: watch the agent reach the form live (it navigates, never submits) */}
       {driving && <DrivePanel steps={a.driveSteps} />}
 
-      {a.error && (
-        <p className="co-rise mb-3 flex items-start gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 backdrop-blur-sm dark:text-amber-400">
-          <AlertTriangle className="mt-0.5 size-4 shrink-0" /> {a.error}
-        </p>
-      )}
+      <InlineError>
+        {a.error && (
+          <motion.div key="error" {...listItem} className="mb-3">
+            {/* bg-warn/10, not -soft: keeps the glass over the backdrop */}
+            <Card inset tone="warn" role="alert" className="flex items-start gap-1.5 bg-warn/10 text-sm text-warn backdrop-blur-sm">
+              <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0" /> {a.error}
+            </Card>
+          </motion.div>
+        )}
+      </InlineError>
 
       {!busy && (
         <div className="co-rise">
           <ApplyIssues issues={a.issues} />
           {/* drafting banner while the planner writes the answers */}
           {prefilling && (
-            <div className="mb-4 flex items-center gap-3 rounded-xl border border-brand/30 bg-brand-soft/60 px-4 py-3 backdrop-blur-sm">
-              <span className="relative grid size-8 shrink-0 place-items-center">
+            <div role="status" className="mb-4 flex items-center gap-3 rounded-xl border border-brand/30 bg-brand-soft/60 p-4 backdrop-blur-sm">
+              <span aria-hidden className="relative grid size-8 shrink-0 place-items-center">
                 <span className="co-orb absolute inset-0 rounded-full bg-brand/40 blur-[6px]" />
                 <Sparkles className="size-4 text-brand" />
               </span>
@@ -128,33 +147,29 @@ export function ApplyView() {
                 <div className="text-sm font-medium text-foreground">Drafting your answers…</div>
                 <RotatingStatus />
               </div>
-              <Loader2 className="ml-auto size-4 shrink-0 animate-spin text-brand" />
+              <Loader2 aria-hidden className="ml-auto size-4 shrink-0 text-brand motion-safe:animate-spin" />
             </div>
           )}
 
           <div className="mb-4 flex flex-wrap items-center gap-2">
-            <button
-              onClick={a.prefill}
-              disabled={prefilling || filling}
-              className="inline-flex items-center gap-1.5 rounded-full border border-brand/40 bg-brand-soft px-3.5 py-1.5 text-sm font-medium text-brand transition-colors hover:bg-brand/15 disabled:opacity-50"
-            >
-              {prefilling ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+            <Button variant="soft" onClick={a.prefill} loading={prefilling} disabled={filling}>
+              {!prefilling && <Sparkles aria-hidden className="size-4" />}
               {prefilling ? "Drafting from your CV…" : "Pre-fill from my CV"}
-            </button>
+            </Button>
             <span className="text-xs text-muted">…or ask the corner assistant to write/revise any answer.</span>
           </div>
 
           {(prefilling || a.prefillLog.length > 0) && (
-            <details className="mb-4 rounded-lg border border-border bg-surface/60 backdrop-blur-sm" open={false}>
-              <summary className="flex cursor-pointer select-none items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-muted">
-                <Terminal className="size-3.5" /> Pre-fill diagnostics
-                {prefilling && <Loader2 className="size-3 animate-spin text-brand" />}
+            <details className="mb-4 rounded-xl border border-border bg-surface/60 backdrop-blur-sm" open={false}>
+              <summary className="flex cursor-pointer select-none items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-medium text-muted focus-ring max-sm:min-h-11">
+                <Terminal aria-hidden className="size-3.5" /> Pre-fill diagnostics
+                {prefilling && <Loader2 aria-hidden className="size-3 text-brand motion-safe:animate-spin" />}
                 <span className="ml-auto text-faint">{a.prefillLog.length} steps</span>
               </summary>
               <div className="max-h-52 overflow-y-auto border-t border-border px-3 py-2">
-                <ol className="space-y-0.5 font-mono text-[11px] leading-relaxed text-muted">
+                <ol className="space-y-0.5 font-mono text-2xs leading-relaxed text-muted">
                   {a.prefillLog.map((l, i) => (
-                    <li key={i} className={l.startsWith("✗") ? "text-amber-600 dark:text-amber-400" : ""}>
+                    <li key={i} className={l.startsWith("✗") ? "text-warn" : ""}>
                       {l}
                     </li>
                   ))}
@@ -166,7 +181,7 @@ export function ApplyView() {
 
           {/* the questions — float on the blurred form image, cascade in, each
               flashes brand-orange the instant its drafted answer lands */}
-          <div className="space-y-1 rounded-2xl border border-border/70 bg-surface/80 p-2 shadow-2xl shadow-black/10 backdrop-blur-md sm:p-3">
+          <Card elevated className="space-y-1 border-border/70 bg-surface/80 p-2 backdrop-blur-md sm:p-3">
             {a.fields.map((f, i) => (
               <div key={f.id} className="co-rise rounded-xl px-3 py-2.5" style={{ animationDelay: `${Math.min(i * 45, 700)}ms` }}>
                 <FieldRow
@@ -179,27 +194,24 @@ export function ApplyView() {
                 />
               </div>
             ))}
-          </div>
+          </Card>
 
           <div className="mt-5 flex flex-wrap items-center gap-3">
-            <button
-              onClick={a.fill}
-              disabled={filling || prefilling}
-              className="inline-flex items-center gap-2 rounded-full bg-brand px-5 py-2.5 text-sm font-medium text-brand-foreground shadow-lg shadow-brand/25 transition-all hover:bg-brand-200 hover:shadow-brand/40 disabled:opacity-50"
-            >
-              {filling ? <Loader2 className="size-4 animate-spin" /> : <ArrowUpRight className="size-4" />}
+            <Button size="lg" onClick={a.fill} loading={filling} disabled={prefilling}>
+              {!filling && <ArrowUpRight aria-hidden className="size-4" />}
               {filling ? "Filling the real form…" : "Fill the real form & review"}
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="secondary"
+              size="lg"
               onClick={a.agentFill}
               disabled={filling || prefilling}
               title="Let the AI drive the real form and fill it field-by-field (for tricky / multi-step forms). It never submits."
-              className="inline-flex items-center gap-1.5 rounded-full border border-border px-4 py-2.5 text-sm font-medium text-muted transition-colors hover:border-brand/40 hover:text-brand disabled:opacity-50"
             >
-              <MousePointerClick className="size-4" /> Let the AI fill it
-            </button>
+              <MousePointerClick aria-hidden className="size-4" /> Let the AI fill it
+            </Button>
             <p className="inline-flex items-center gap-1.5 text-xs text-muted">
-              <ShieldCheck className="size-3.5 text-emerald-500" /> Never submits — you click Submit yourself.
+              <ShieldCheck aria-hidden className="size-3.5 text-brand-text" /> Never submits — you click Submit yourself.
             </p>
           </div>
 
@@ -207,31 +219,31 @@ export function ApplyView() {
           {filling && a.driveSteps.length > 0 && <div className="mt-6"><DrivePanel steps={a.driveSteps} filling /></div>}
 
           {(filling || done) && a.steps.length > 0 && (
-            <div className="co-rise mt-6">
-              <div className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-faint">Behind the scenes</div>
+            <section className="co-rise mt-6" aria-labelledby="apply-behind">
+              <h3 id="apply-behind" className="eyebrow mb-3 text-xs font-semibold text-muted">Behind the scenes</h3>
               <div className="flex gap-2 overflow-x-auto pb-2">
                 {a.steps.map((s, i) => (
                   <figure key={i} className="shrink-0">
                     {s.thumb ? (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={s.thumb} alt="" className="h-24 w-36 rounded-md border border-border object-cover" />
+                      <img src={s.thumb} alt="" className="h-24 w-36 rounded-xl border border-border object-cover" />
                     ) : (
-                      <div className="flex h-24 w-36 items-center justify-center rounded-md border border-dashed border-border text-faint">…</div>
+                      <div className="flex h-24 w-36 items-center justify-center rounded-xl border border-dashed border-border text-faint">…</div>
                     )}
-                    <figcaption className={cn("mt-1 w-36 truncate text-[10px]", s.ok ? "text-faint" : "text-amber-500")}>{s.label || "field"}</figcaption>
+                    <figcaption className={cn("mt-1 w-36 truncate text-2xs", s.ok ? "text-faint" : "text-warn")}>{s.label || "field"}</figcaption>
                   </figure>
                 ))}
               </div>
-            </div>
+            </section>
           )}
           {done && (
-            <div className="co-rise mt-4 flex items-start gap-2.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm backdrop-blur-sm">
-              <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-emerald-500" />
+            <Card inset tone="good" role="status" className="co-rise mt-4 flex items-start gap-2.5 bg-good/10 text-sm backdrop-blur-sm">
+              <CheckCircle2 aria-hidden className="mt-0.5 size-5 shrink-0 text-brand-text" />
               <div>
-                <span className="font-medium text-emerald-700 dark:text-emerald-400">The real form is now in front, pre-filled.</span>{" "}
+                <span className="font-medium text-brand-text">The real form is now in front, pre-filled.</span>{" "}
                 <span className="text-muted">Review it and click Submit yourself — career-ops never submits for you.</span>
               </div>
-            </div>
+            </Card>
           )}
         </div>
       )}
@@ -314,50 +326,42 @@ function ApplyExitBar() {
 
   if (confirming) {
     return (
-      <div className="co-rise mt-8 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 backdrop-blur-sm">
-        <p className="text-sm font-medium text-foreground">Leave this application?</p>
+      <Card inset tone="warn" role="group" aria-labelledby="apply-leave" className="co-rise mt-8 bg-warn/10 backdrop-blur-sm">
+        <p id="apply-leave" className="text-sm font-medium text-foreground">Leave this application?</p>
         <p className="mt-1 text-xs text-muted">Your drafted answers live only on this page. Going back discards them and closes the form.</p>
         <div className="mt-3 flex flex-wrap gap-2">
-          <button
-            onClick={leave}
-            className="inline-flex items-center gap-1.5 rounded-md bg-amber-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-amber-600 max-sm:min-h-[44px]"
-          >
-            <ArrowLeft className="size-3.5" /> Leave and discard
-          </button>
-          <button
-            onClick={() => setConfirming(false)}
-            className="rounded-md border border-border px-3 py-1.5 text-xs text-muted transition-colors hover:text-foreground max-sm:min-h-[44px]"
-          >
+          <Button variant="warn" size="sm" onClick={leave}>
+            <ArrowLeft aria-hidden className="size-3.5" /> Leave and discard
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => setConfirming(false)}>
             Stay here
-          </button>
+          </Button>
         </div>
-      </div>
+      </Card>
     );
   }
 
   return (
-    <div className="mt-8 border-t border-border/70 pt-5">
+    <div className="relative mt-8 border-t border-border/70 pt-5">
       <div className="flex flex-wrap items-center gap-3">
-        <button
-          onClick={() => (needsLeaveConfirmation({ status: a.status, answers: a.answers }) ? setConfirming(true) : leave())}
-          className="inline-flex items-center gap-1.5 rounded-full border border-border px-4 py-2 text-sm font-medium text-muted transition-colors hover:border-brand/40 hover:text-brand max-sm:min-h-[44px]"
-        >
-          <ArrowLeft className="size-4" /> Back
-        </button>
+        <Button variant="secondary" onClick={() => (needsLeaveConfirmation({ status: a.status, answers: a.answers }) ? setConfirming(true) : leave())}>
+          <ArrowLeft aria-hidden className="size-4" /> Back
+        </Button>
         {a.n && (
-          <button
-            onClick={markApplied}
-            disabled={marking}
-            title={`Set tracker row #${a.n} to Applied and go back`}
-            className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm font-medium text-emerald-700 transition-colors hover:bg-emerald-500/20 disabled:opacity-50 dark:text-emerald-400 max-sm:min-h-[44px]"
-          >
-            {marking ? <Loader2 className="size-4 animate-spin" /> : <ClipboardCheck className="size-4" />}
+          <Button variant="soft" onClick={markApplied} loading={marking} title={`Set tracker row #${a.n} to Applied and go back`}>
+            {!marking && <ClipboardCheck aria-hidden className="size-4" />}
             {marking ? "Updating your tracker…" : "Mark applied"}
-          </button>
+          </Button>
         )}
         {a.n && <span className="text-xs text-muted">Click this once you have submitted the real form yourself.</span>}
       </div>
-      {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
+      <InlineError>
+        {error && (
+          <motion.p key="error" {...listItem} role="alert" className="mt-2 text-xs text-bad-text">
+            {error}
+          </motion.p>
+        )}
+      </InlineError>
     </div>
   );
 }
@@ -368,8 +372,8 @@ function DrivePanel({ steps, filling }: { steps: DriveStep[]; filling?: boolean 
   const last = steps[steps.length - 1];
   return (
     <div className="co-rise">
-      <div className="flex flex-col items-center gap-3 py-7 text-center">
-        <span className="relative grid size-14 place-items-center">
+      <div role="status" className="flex flex-col items-center gap-3 py-7 text-center">
+        <span aria-hidden className="relative grid size-14 place-items-center">
           <span className="co-orb absolute inset-0 rounded-full bg-brand/30 blur-lg" />
           <span className="co-ring absolute inset-0 rounded-full border-2 border-brand/30 border-t-brand" />
           <MousePointerClick className="size-6 text-brand" />
@@ -379,18 +383,18 @@ function DrivePanel({ steps, filling }: { steps: DriveStep[]; filling?: boolean 
       </div>
       {last?.thumb ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={last.thumb} alt="" className="w-full rounded-xl border border-border shadow-xl shadow-black/10" />
+        <img src={last.thumb} alt="Latest view of the real form" className="w-full rounded-xl border border-border" />
       ) : (
-        <div className="co-skel h-56 w-full rounded-xl" />
+        <div aria-hidden className="co-skel h-56 w-full rounded-xl" />
       )}
       {steps.length > 0 && (
         <ol className="mt-3 space-y-1.5 rounded-xl border border-border/70 bg-surface/70 p-3 backdrop-blur-sm">
           {steps.map((s, i) => (
             <li key={i} className={cn("flex items-center gap-2 text-xs", i === steps.length - 1 ? "text-foreground" : "text-muted")}>
-              <span className="grid size-5 shrink-0 place-items-center rounded-full bg-brand-soft text-[10px] font-semibold text-brand">{s.turn}</span>
+              <span className="grid size-5 shrink-0 place-items-center rounded-full bg-brand-soft text-2xs font-semibold text-brand-text">{s.turn}</span>
               <span className="shrink-0 font-medium">{DRIVE_VERB[s.action] ?? s.action}</span>
               <span className="truncate text-faint">{s.detail}</span>
-              {s.note && <span className="shrink-0 text-amber-500">· {s.note}</span>}
+              {s.note && <span className="shrink-0 text-warn">· {s.note}</span>}
             </li>
           ))}
         </ol>
@@ -407,22 +411,22 @@ function ApplyIssues({ issues }: { issues: ApplyIssue[] }) {
   return (
     <div className="mb-4 space-y-2">
       {warns.length > 0 && (
-        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 backdrop-blur-sm">
-          <div className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-amber-700 dark:text-amber-400">
-            <AlertTriangle className="size-4" /> A few things to check
-          </div>
-          <ul className="space-y-1 text-xs text-amber-800/90 dark:text-amber-300/90">
+        <Card inset tone="warn" as="section" aria-labelledby="apply-issues" className="bg-warn/10 backdrop-blur-sm">
+          <h3 id="apply-issues" className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-warn">
+            <AlertTriangle aria-hidden className="size-4" /> A few things to check
+          </h3>
+          <ul className="space-y-1 text-xs text-warn">
             {warns.map((i, k) => (
               <li key={k} className="flex gap-1.5">
-                <span className="mt-px text-amber-500">•</span> {i.message}
+                <span aria-hidden className="mt-px">•</span> {i.message}
               </li>
             ))}
           </ul>
-        </div>
+        </Card>
       )}
       {infos.map((i, k) => (
         <div key={k} className="flex items-center gap-1.5 text-xs text-muted">
-          <Info className="size-3.5 shrink-0 text-faint" /> {i.message}
+          <Info aria-hidden className="size-3.5 shrink-0 text-faint" /> {i.message}
         </div>
       ))}
     </div>
@@ -443,23 +447,30 @@ function PhaseRail({ phase }: { phase: number }) {
         const state = i < phase ? "done" : i === phase ? "active" : "todo";
         return (
           <Fragment key={i}>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2" aria-current={state === "active" ? "step" : undefined}>
               <span
+                aria-hidden
                 className={cn(
-                  "relative grid size-6 place-items-center rounded-full border transition-colors",
+                  "relative grid size-6 place-items-center rounded-full border transition-colors duration-150 ease-out",
                   state === "done" && "border-brand bg-brand text-brand-foreground",
                   state === "active" && "border-brand text-brand",
                   state === "todo" && "border-border text-faint",
                 )}
               >
                 {state === "done" ? <Check className="size-3.5" /> : <Icon className="size-3.5" />}
-                {state === "active" && <span className="absolute inset-0 -z-10 animate-ping rounded-full bg-brand/30" />}
+                {state === "active" && <span className="absolute inset-0 -z-10 rounded-full bg-brand/30 motion-safe:animate-ping" />}
               </span>
-              <span className={cn("hidden text-xs font-medium sm:inline", i <= phase ? "text-foreground" : "text-faint")}>{s.label}</span>
+              {/* the label stays for screen readers where it is hidden on narrow screens */}
+              <span className={cn("text-xs font-medium max-sm:sr-only", i <= phase ? "text-foreground" : "text-faint")}>{s.label}</span>
             </div>
             {i < steps.length - 1 && (
-              <span className="relative h-px flex-1 overflow-hidden rounded bg-border">
-                <span className={cn("absolute inset-y-0 left-0 bg-brand transition-all duration-700", i < phase ? "w-full" : "w-0")} />
+              <span aria-hidden className="relative h-px flex-1 overflow-hidden rounded-full bg-border">
+                <span
+                  className={cn(
+                    "absolute inset-0 origin-left bg-brand motion-safe:transition-transform motion-safe:duration-300 motion-safe:ease-out",
+                    i < phase ? "scale-x-100" : "scale-x-0",
+                  )}
+                />
               </span>
             )}
           </Fragment>
@@ -493,8 +504,8 @@ function RotatingStatus() {
 
 function ProcessingHero({ title, subtitle }: { title: string; subtitle: string }) {
   return (
-    <div className="co-rise flex flex-col items-center gap-3 py-14 text-center">
-      <span className="relative grid size-16 place-items-center">
+    <div role="status" className="co-rise flex flex-col items-center gap-3 py-14 text-center">
+      <span aria-hidden className="relative grid size-16 place-items-center">
         <span className="co-orb absolute inset-0 rounded-full bg-brand/30 blur-lg" />
         <span className="co-ring absolute inset-0 rounded-full border-2 border-brand/30 border-t-brand" />
         <Sparkles className="size-7 text-brand" />
@@ -507,7 +518,7 @@ function ProcessingHero({ title, subtitle }: { title: string; subtitle: string }
 
 function FieldSkeleton() {
   return (
-    <div className="co-rise space-y-3 rounded-2xl border border-border/70 bg-surface/70 p-5 backdrop-blur-md" style={{ animationDelay: "120ms" }}>
+    <div aria-hidden className="co-rise space-y-3 rounded-2xl border border-border/70 bg-surface/70 p-5 backdrop-blur-md" style={{ animationDelay: "120ms" }}>
       {[64, 80, 48, 72, 56].map((w, i) => (
         <div key={i} className="space-y-2">
           <div className="co-skel h-3" style={{ width: `${w}px` }} />
@@ -547,49 +558,61 @@ function FieldRow({
     prev.current = value;
   }, [value]);
 
-  const base = cn(
-    "w-full rounded-lg border bg-surface/60 px-3 py-2 text-sm outline-none transition focus:border-brand/60 focus:ring-2 focus:ring-brand/20",
-    needs ? "border-amber-500/50" : "border-border",
+  // Glass over the backdrop; a field the user must answer keeps the warn edge.
+  const control = cn("bg-surface/60", needs && "border-warn/50");
+  const label = (
+    <span className="inline-flex items-center gap-1">
+      {f.label || <span className="text-faint">Untitled field</span>}
+      {f.required && (
+        <>
+          <Asterisk aria-hidden className="size-3 text-brand" />
+          <span className="sr-only">(required)</span>
+        </>
+      )}
+      {needs && <span className="ml-1 rounded-md bg-warn/15 px-1.5 py-0.5 text-2xs font-semibold text-warn">you confirm</span>}
+    </span>
   );
+  const placeholder = needs ? "You fill this one." : "…";
   // While the planner is drafting, an empty answer shimmers like it's being
   // written; it flashes into the real value the instant the draft lands.
   const writing = drafting && !value && f.type !== "file";
   return (
     <div className={flash ? "co-flash" : ""} style={flash ? { animationDelay: `${Math.min(index * 70, 900)}ms` } : undefined}>
-      <label className="mb-1.5 flex items-center gap-1 text-sm font-medium">
-        {f.label || <span className="text-faint">Untitled field</span>}
-        {f.required && <Asterisk className="size-3 text-brand" />}
-        {needs && <span className="ml-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400">you confirm</span>}
-      </label>
       {writing ? (
-        <div className={cn("co-skel", f.type === "textarea" ? "h-[68px]" : "h-9")} />
+        <Field label={label}>
+          <div aria-hidden className={cn("co-skel", f.type === "textarea" ? "h-20" : "h-9")} />
+        </Field>
       ) : f.type === "textarea" ? (
-        <textarea rows={3} maxLength={f.maxLength} value={value} onChange={(e) => onChange(e.target.value)} placeholder={needs ? "You fill this one." : "…"} className={cn(base, "resize-none")} />
+        <Textarea label={label} rows={3} maxLength={f.maxLength} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className={cn(control, "resize-none")} />
       ) : (f.type === "select" || f.type === "radio") && f.options && f.options.length > 0 ? (
-        <select value={value} onChange={(e) => onChange(e.target.value)} className={base}>
+        <Select label={label} value={value} onChange={(e) => onChange(e.target.value)} className={control}>
           <option value="">Choose…</option>
           {f.options.map((o, i) => (
             <option key={i} value={o}>
               {o}
             </option>
           ))}
-        </select>
+        </Select>
       ) : f.type === "checkbox" ? (
-        <label className="flex items-center gap-2 text-sm text-muted">
-          <input type="checkbox" checked={value === "true" || value === "yes"} onChange={(e) => onChange(e.target.checked ? "true" : "")} className="size-4 accent-brand" /> {f.label || "Yes"}
-        </label>
+        <Field label={label}>
+          <label className="flex items-center gap-2 text-sm text-muted max-sm:min-h-11">
+            <input type="checkbox" checked={value === "true" || value === "yes"} onChange={(e) => onChange(e.target.checked ? "true" : "")} className="size-4 accent-brand focus-ring" /> {f.label || "Yes"}
+          </label>
+        </Field>
       ) : f.type === "file" ? (
-        /resume|résumé|\bcv\b|curriculum|currículum|lebenslauf/i.test(f.label || "") ? (
-          <div className="flex items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-400">
-            <FileCheck2 className="size-4 shrink-0" /> Your tailored CV (PDF) will be attached automatically — you can swap it on the real form.
-          </div>
-        ) : (
-          <div className="flex items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-sm text-muted">
-            <Paperclip className="size-4 shrink-0" /> Attach this file yourself on the real form at the handoff.
-          </div>
-        )
+        <Field label={label}>
+          {/resume|résumé|\bcv\b|curriculum|currículum|lebenslauf/i.test(f.label || "") ? (
+            <Card inset tone="good" className="flex items-center gap-2 px-3 py-2 text-sm text-brand-text">
+              <FileCheck2 aria-hidden className="size-4 shrink-0" /> Your tailored CV (PDF) will be attached automatically — you can swap it on the real form.
+            </Card>
+          ) : (
+            <div className="flex items-center gap-2 rounded-xl border border-dashed border-border px-3 py-2 text-sm text-muted">
+              <Paperclip aria-hidden className="size-4 shrink-0" /> Attach this file yourself on the real form at the handoff.
+            </div>
+          )}
+        </Field>
       ) : (
-        <input type={["email", "tel", "url", "number", "date"].includes(f.type) ? f.type : "text"} maxLength={f.maxLength} value={value} onChange={(e) => onChange(e.target.value)} placeholder={needs ? "You fill this one." : "…"} className={base} />
+        <Input label={label} type={["email", "tel", "url", "number", "date"].includes(f.type) ? f.type : "text"} maxLength={f.maxLength} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className={control} />
       )}
     </div>
   );

@@ -7,7 +7,10 @@ import { Check, CircleDashed, ListChecks, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { hasCli } from "@/components/onboarding-banner";
 import type { Checklist, Failed, Schedule } from "@/lib/home/home-data";
-import { Bar, Panel } from "./motion-bits";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { cn } from "@/lib/cn";
+import { Bar } from "@/components/ui/charts";
 
 const HEALTH: Record<Schedule["health"], { tone: "good" | "warn" | "bad" | "info"; label: string }> = {
   healthy: { tone: "good", label: "Healthy" },
@@ -43,42 +46,44 @@ export function SetupPanel({
   const health = schedule ? HEALTH[schedule.health] : null;
 
   return (
-    <Panel
+    <Card
       icon={ListChecks}
       title="Setup"
       aside={ok && <Badge tone={checklist.ready === checklist.total ? "good" : "warn"}>{`${checklist.ready} of ${checklist.total} ready`}</Badge>}
     >
       {ok ? (
         <>
-          <Bar pct={(checklist.ready / checklist.total) * 100} className={checklist.ready === checklist.total ? "bg-good" : "bg-brand"} />
+          <Bar pct={(checklist.ready / checklist.total) * 100} tone={checklist.ready === checklist.total ? "good" : "brand"} />
           <ul className="mt-4 divide-y divide-border">
             {checklist.items.map((item) => (
               <li key={item.id} className="flex items-start gap-3 py-2.5">
                 {item.ready ? (
-                  <Check aria-label="Ready" className="mt-0.5 size-4 shrink-0 text-good" />
+                  <Check aria-label="Ready" className="mt-0.5 size-4 shrink-0 text-brand-text" />
                 ) : (
                   <CircleDashed aria-label="Needs attention" className="mt-0.5 size-4 shrink-0 text-warn" />
                 )}
                 <div className="min-w-0 flex-1">
-                  <code className="font-mono text-[13px] text-foreground">{item.label}</code>
+                  <code className="font-mono text-sm text-foreground">{item.label}</code>
                   <p className="text-xs text-muted">{item.detail}</p>
                 </div>
                 {item.action === "personalize" &&
                   (cli ? (
-                    <button
+                    <Button
                       type="button"
+                      variant="soft"
+                      size="sm"
                       onClick={() => window.dispatchEvent(new CustomEvent("co-assistant", { detail: { message: PERSONALIZE } }))}
-                      className="shrink-0 rounded-md bg-brand-soft px-2.5 py-1 text-xs font-medium text-brand-text"
+                      className="shrink-0"
                     >
                       Personalize
-                    </button>
+                    </Button>
                   ) : (
-                    <Link href="/config" className="shrink-0 rounded-md bg-brand-soft px-2.5 py-1 text-xs font-medium text-brand-text">
+                    <Link href="/config" className={cn(buttonVariants({ variant: "soft", size: "sm" }), "shrink-0")}>
                       Connect a CLI
                     </Link>
                   ))}
                 {item.action === "lanes" && (
-                  <a href="#lanes" className="shrink-0 rounded-md border border-border px-2.5 py-1 text-xs text-foreground">
+                  <a href="#lanes" className={cn(buttonVariants({ variant: "secondary", size: "sm" }), "shrink-0")}>
                     Review
                   </a>
                 )}
@@ -92,11 +97,11 @@ export function SetupPanel({
         </p>
       )}
 
-      <h3 className="mt-6 mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted">Automation</h3>
+      <h3 className="eyebrow mt-6 mb-2 text-2xs font-semibold text-muted">Automation</h3>
       <ul className="divide-y divide-border rounded-xl border border-border text-sm">
         <li className="flex items-center gap-3 px-4 py-2.5">
           <div className="flex-1">
-            <code className="font-mono text-[13px]">career-ops-alert</code>
+            <code className="font-mono text-sm">career-ops-alert</code>
             <p className="text-xs text-faint">{schedule?.times.length ? `Scan and digest at ${schedule.times.join(" and ")}` : "Scheduled scan and digest"}</p>
           </div>
           {health ? <Badge tone={health.tone}>{health.label}</Badge> : <Badge tone="muted">Not found</Badge>}
@@ -111,10 +116,16 @@ export function SetupPanel({
       </ul>
       <p className="mt-3 text-xs text-faint">
         Checked {time || "just now"} ·{" "}
-        <button type="button" onClick={() => start(() => router.refresh())} disabled={pending} className="inline-flex items-center gap-1 text-foreground hover:text-brand-text">
-          <RefreshCw className={pending ? "size-3 animate-spin" : "size-3"} /> Re-check
+        {/* Inline in the sentence, so a text link rather than a Button box. */}
+        <button
+          type="button"
+          onClick={() => start(() => router.refresh())}
+          disabled={pending}
+          className="inline-flex items-center gap-1 rounded-md text-foreground transition-colors duration-150 ease-out hover:text-brand-text focus-ring max-sm:min-h-11"
+        >
+          <RefreshCw aria-hidden className={pending ? "size-3 motion-safe:animate-spin" : "size-3"} /> Re-check
         </button>
       </p>
-    </Panel>
+    </Card>
   );
 }

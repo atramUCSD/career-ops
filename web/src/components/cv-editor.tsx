@@ -3,8 +3,10 @@
 import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Check, Loader2 } from "lucide-react";
-import { cn } from "@/lib/cn";
+import { Check } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/field";
 
 export function CvEditor() {
   const [content, setContent] = useState("");
@@ -44,8 +46,8 @@ export function CvEditor() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-8">
-      <div className="flex items-end justify-between gap-4">
+    <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8 max-sm:pb-24">
+      <div className="mb-6 flex items-end justify-between gap-4">
         <div>
           <h1 className="font-display text-2xl tracking-tight text-landing">CV editor</h1>
           <p className="mt-1 text-sm text-muted">
@@ -53,27 +55,32 @@ export function CvEditor() {
             {!exists && loaded && <span className="ml-1 text-faint">No cv.md yet — start typing to create it.</span>}
           </p>
         </div>
-        <button
+        <Button
           type="button"
+          variant={dirty ? "primary" : "secondary"}
           onClick={save}
-          disabled={saving || !dirty}
-          className={cn(
-            "inline-flex items-center justify-center gap-2 rounded-full px-5 py-2 text-sm font-medium transition-colors max-sm:min-h-[44px]",
-            dirty
-              ? "bg-brand text-brand-foreground hover:bg-brand-200"
-              : "border border-border bg-surface text-muted",
-          )}
+          loading={saving}
+          disabled={!dirty}
         >
-          {saving ? <Loader2 className="size-4 animate-spin" /> : saved ? <Check className="size-4" /> : null}
+          {saved && !saving && <Check aria-hidden className="size-4" />}
           {saved ? "Saved" : "Save"}
-        </button>
+        </Button>
       </div>
 
       {!loaded ? (
-        <div className="mt-6 text-sm text-muted">Loading…</div>
+        // Same grid and pane heights as the loaded state, so the page does not jump when /api/cv resolves.
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div aria-busy className="min-h-[60vh] lg:h-[70vh] rounded-2xl border border-border bg-surface/50 p-5 text-sm text-muted">
+            Loading…
+          </div>
+          <div aria-busy className="min-h-[60vh] lg:h-[70vh] rounded-2xl border border-border bg-surface/50" />
+        </div>
       ) : (
-        <div className="mt-6 grid gap-4 lg:grid-cols-2">
-          <textarea
+        <div className="grid gap-4 lg:grid-cols-2">
+          {/* Editor pane keeps the preview's surface radius and padding so the pair reads as one split view. */}
+          <Textarea
+            aria-label="cv.md source"
+            mono
             value={content}
             onChange={(e) => {
               setContent(e.target.value);
@@ -81,15 +88,20 @@ export function CvEditor() {
             }}
             spellCheck={false}
             placeholder="# Your Name&#10;&#10;## Summary&#10;..."
-            className="min-h-[60vh] w-full resize-none rounded-2xl border border-border bg-surface/50 p-4 font-mono text-sm leading-relaxed outline-none transition-colors placeholder:text-faint focus:border-brand/40"
+            className="min-h-[60vh] lg:h-[70vh] resize-none rounded-2xl bg-surface/50 p-5 leading-relaxed"
           />
-          <article className="report-prose min-h-[60vh] overflow-auto rounded-2xl border border-border bg-surface/30 p-5">
+          <Card
+            as="article"
+            tabIndex={0}
+            aria-label="cv.md preview"
+            className="report-prose min-h-[60vh] lg:h-[70vh] overflow-auto bg-surface/50 focus-ring"
+          >
             {content.trim() ? (
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
             ) : (
               <p className="text-muted">Preview appears here.</p>
             )}
-          </article>
+          </Card>
         </div>
       )}
     </div>

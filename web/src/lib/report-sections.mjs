@@ -168,6 +168,9 @@ export function firstProseParagraph(md) {
 /**
  * Score-why paragraph for the verdict card. Prefers a real Verdict block, then
  * the body intro, then the header lede (oferta.md puts the one-liner above ---).
+ * The lede also stops at the first ## heading: a report whose Machine Summary
+ * fence sits above the rule, or that has no rule, would otherwise lend its
+ * "Machine Summary" heading as the reason.
  * @param {{ report?: string, intro?: string, verdictContent?: string }} opts
  * @returns {string}
  */
@@ -176,7 +179,7 @@ export function verdictReason(opts) {
   if (fromVerdict) return fromVerdict;
   const fromIntro = firstProseParagraph(opts?.intro ?? "");
   if (fromIntro) return fromIntro;
-  const header = String(opts?.report ?? "").split(/^---\s*$/m)[0] ?? "";
+  const header = String(opts?.report ?? "").split(/^(?:---\s*|##.*)$/m)[0] ?? "";
   const stripped = header
     .replace(/^#\s+.*$/m, "")
     .replace(/^\s*\*\*[^*]+:\*\*.*$/gm, "")

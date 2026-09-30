@@ -6,7 +6,9 @@ import { SlidersHorizontal } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { CadenceSettings } from "@/components/followups/cadence-settings";
 import { cn } from "@/lib/cn";
-import { ChipList, Label, Panel, SaveBar, postJson } from "./motion-bits";
+import { Card } from "@/components/ui/card";
+import { Field, Input } from "@/components/ui/field";
+import { ChipList, SaveBar, postJson } from "./motion-bits";
 
 const TIERS = [
   { id: "economy", label: "Economy", hint: "cheapest and fastest, good for scanning lots of offers quickly" },
@@ -73,23 +75,18 @@ export function PreferencesPanel({ prefs }: { prefs: Record<string, unknown> | n
   }
 
   const text = (k: "targetRange" | "walkAway" | "currency" | "language", label: string, width: string, placeholder = "") => (
-    <input
-      value={draft[k]}
-      aria-label={label}
-      placeholder={placeholder}
-      onChange={(e) => set(k, e.target.value)}
-      className={cn("rounded-md border border-border bg-background px-3 py-2 text-sm", width)}
-    />
+    <Input value={draft[k]} aria-label={label} placeholder={placeholder} onChange={(e) => set(k, e.target.value)} className={width} />
   );
 
   return (
-    <Panel icon={SlidersHorizontal} title="Preferences" hint="config/profile.yml">
-      <Label code="target_roles.primary">Target roles</Label>
-      <ChipList label="Target roles" values={draft.roles} onChange={(v) => set("roles", v)} />
+    <Card icon={SlidersHorizontal} title="Preferences" hint="config/profile.yml">
+      <Field compact label="Target roles" meta="target_roles.primary">
+        <ChipList label="Target roles" values={draft.roles} onChange={(v) => set("roles", v)} />
+      </Field>
 
       {archetypes.length > 0 && (
         <div className="mt-5">
-          <Label code="target_roles.archetypes">Archetypes</Label>
+          <Field compact label="Archetypes" meta="target_roles.archetypes" hint="Edited by hand or with the assistant; scoring reads them from modes/_profile.md too.">
           <ul className="divide-y divide-border rounded-xl border border-border text-sm">
             {archetypes.map((a, i) => (
               <li key={`${str(a.name)}-${i}`} className="flex items-center gap-3 px-4 py-2">
@@ -99,13 +96,12 @@ export function PreferencesPanel({ prefs }: { prefs: Record<string, unknown> | n
               </li>
             ))}
           </ul>
-          <p className="mt-1.5 text-xs text-faint">Edited by hand or with the assistant; scoring reads them from modes/_profile.md too.</p>
+          </Field>
         </div>
       )}
 
       <div className="mt-5 grid gap-5 sm:grid-cols-2">
-        <div>
-          <Label code="compensation">Compensation</Label>
+        <Field compact label="Compensation" meta="compensation">
           <div className="flex flex-wrap items-center gap-2">
             {text("targetRange", "Target range", "w-36", "e.g. 140000-170000")}
             {text("currency", "Currency", "w-16", "USD")}
@@ -114,24 +110,23 @@ export function PreferencesPanel({ prefs }: { prefs: Record<string, unknown> | n
             <span className="text-xs text-muted">Walk away below</span>
             {text("walkAway", "Walk-away minimum", "w-32")}
           </div>
-        </div>
+        </Field>
         <div className="space-y-4">
-          <div>
-            <Label code="location">Based in</Label>
+          <Field compact label="Based in" meta="location">
             <p className="text-sm text-foreground">{basedIn || <span className="text-faint">Not set</span>}</p>
             {str(loc.timezone) && <p className="text-xs text-faint">{str(loc.timezone)}</p>}
             {visa && <p className="text-xs text-muted">{visa}</p>}
-          </div>
-          <div>
-            <Label code="language.output">Writes in</Label>
+          </Field>
+          <Field compact label="Writes in" meta="language.output">
             {text("language", "Output language code", "w-24", "en")}
-          </div>
+          </Field>
         </div>
       </div>
 
       <div className="mt-5">
-        <Label code="spend_tier">Model spend</Label>
-        <div role="radiogroup" aria-label="Model spend" className="inline-flex rounded-lg border border-border bg-background p-0.5">
+        <Field compact label="Model spend" meta="spend_tier" hint={TIERS.find((t) => t.id === draft.spendTier)?.hint}>
+        {/* A segmented radio group: Button has no pressed-segment variant. */}
+        <div role="radiogroup" aria-label="Model spend" className="inline-flex rounded-md border border-control-border bg-background p-0.5">
           {TIERS.map((t) => (
             <button
               key={t.id}
@@ -140,7 +135,7 @@ export function PreferencesPanel({ prefs }: { prefs: Record<string, unknown> | n
               aria-checked={draft.spendTier === t.id}
               onClick={() => set("spendTier", t.id)}
               className={cn(
-                "rounded-md px-3 py-1.5 text-sm transition-colors max-sm:min-h-[44px]",
+                "rounded-md px-3 py-1.5 text-sm focus-ring transition-colors duration-150 ease-out max-sm:min-h-11",
                 draft.spendTier === t.id ? "bg-brand text-brand-foreground" : "text-muted hover:text-foreground",
               )}
             >
@@ -148,7 +143,7 @@ export function PreferencesPanel({ prefs }: { prefs: Record<string, unknown> | n
             </button>
           ))}
         </div>
-        <p className="mt-1.5 text-xs text-faint">{TIERS.find((t) => t.id === draft.spendTier)?.hint}</p>
+        </Field>
       </div>
 
       <SaveBar
@@ -163,6 +158,6 @@ export function PreferencesPanel({ prefs }: { prefs: Record<string, unknown> | n
       />
 
       <CadenceSettings />
-    </Panel>
+    </Card>
   );
 }

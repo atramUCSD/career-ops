@@ -1,11 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { motion } from "motion/react";
 import { Bookmark, BookmarkCheck, Loader2, X } from "lucide-react";
 import type { InboxJob } from "@/lib/career-ops";
 import type { AtsSource } from "@/lib/explore";
 import { ATS_LABEL } from "@/lib/explore";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { listItem } from "@/components/ui/motion";
 import { CompanyLogo } from "@/components/company-logo";
 import { cn } from "@/lib/cn";
 
@@ -23,7 +26,9 @@ function agoLabel(age: number | null): string | null {
 // One raw posting in the triage list. Shows ONLY cheap, free signals + an honest
 // "not scored" (CRUDA) — never a fake match%. Once its shortlist eval finishes it
 // flips to EVALUADA (a real A–F badge). Save→shortlist / Skip→hidden are free + undoable.
+// `ref` reaches the motion.li so AnimatePresence popLayout can measure an exiting row.
 export function TriageRow({
+  ref,
   job,
   source,
   age,
@@ -34,6 +39,7 @@ export function TriageRow({
   onSave,
   onSkip,
 }: {
+  ref?: React.Ref<HTMLLIElement>;
   job: InboxJob;
   source: AtsSource | null;
   age: number | null;
@@ -48,32 +54,37 @@ export function TriageRow({
   const evaluated = !!scored && (scored.running || scored.score != null);
 
   return (
-    <li
+    <motion.li
+      ref={ref}
+      {...listItem}
+      // motion owns inline opacity, so the evaluated dim rides the animate target.
+      animate={{ ...listItem.animate, opacity: evaluated ? 0.95 : 1 }}
       className={cn(
-        "flex items-center gap-2.5 px-3 py-2.5 transition-colors sm:gap-3 sm:px-4",
+        "flex items-center gap-2.5 px-3 py-2.5 transition-colors duration-150 ease-out sm:gap-3 sm:px-4",
         selected ? "bg-brand-soft/50" : "hover:bg-surface-hover",
-        evaluated && "opacity-95",
       )}
     >
       {/* multi-select — power-user batch to shortlist */}
-      <input
-        type="checkbox"
-        checked={selected}
-        onChange={onToggleSelect}
-        aria-label={`Select ${job.company} ${job.role}`}
-        className="size-4 shrink-0 accent-brand max-sm:min-h-[44px] max-sm:min-w-[24px]"
-      />
+      <label className="-m-2 grid shrink-0 place-items-center p-2 max-sm:min-h-11 max-sm:min-w-11">
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={onToggleSelect}
+          aria-label={`Select ${job.company} ${job.role}`}
+          className="size-4 accent-brand focus-ring"
+        />
+      </label>
 
       <CompanyLogo name={job.company} size={20} />
 
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm">
-          <span className="font-medium text-foreground">{job.company}</span>
-          <span className="text-muted"> · {job.role}</span>
+        <p className="truncate text-sm max-sm:flex max-sm:flex-col">
+          <span className="truncate font-medium text-foreground">{job.company}</span>
+          <span className="truncate text-muted"><span className="max-sm:hidden"> · </span>{job.role}</span>
         </p>
-        <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-faint">
+        <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-2xs text-faint">
           {job.location && <span className="truncate">{job.location}</span>}
-          {source && <span className="rounded bg-surface-hover px-1 py-px font-medium text-muted">{ATS_LABEL[source]}</span>}
+          {source && <span className="rounded-md bg-surface-muted px-1 py-px font-medium text-muted">{ATS_LABEL[source]}</span>}
           {ago && <span>{ago}</span>}
           {/* 🔴 CRUDA: honest "not scored" — no fabricated match%. */}
           {!evaluated && <span className="italic text-muted">not scored</span>}
@@ -82,10 +93,14 @@ export function TriageRow({
 
       {/* EVALUADA state (right-aligned, visually distinct from raw rows) */}
       {evaluated ? (
-        <Link href={`/jobs/${scored!.jobId}`} className="flex shrink-0 items-center gap-1.5 text-xs">
+        <Link
+          href={`/jobs/${scored!.jobId}`}
+          aria-label={scored!.running ? `Scoring ${job.company}` : `${job.company} scored ${scored!.score}/5`}
+          className="flex shrink-0 items-center gap-1.5 rounded-md text-xs focus-ring max-sm:min-h-11"
+        >
           {scored!.running ? (
             <>
-              <Loader2 className="size-3.5 animate-spin text-brand" />
+              <Loader2 aria-hidden className="size-3.5 text-brand motion-safe:animate-spin" />
               <span className="text-brand max-sm:hidden">Scoring…</span>
             </>
           ) : (
@@ -94,29 +109,33 @@ export function TriageRow({
         </Link>
       ) : (
         <div className="flex shrink-0 items-center gap-1">
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={onSave}
             title={shortlisted ? "In your shortlist" : "Save to shortlist"}
+            aria-label={`Save ${job.company} to shortlist`}
             aria-pressed={shortlisted}
             className={cn(
-              "inline-flex items-center justify-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors max-sm:min-h-[44px] max-sm:min-w-[44px]",
-              shortlisted ? "text-brand" : "text-muted hover:bg-surface-hover hover:text-brand",
+              "gap-1 max-sm:min-w-11",
+              shortlisted ? "text-brand hover:bg-transparent hover:text-brand" : "text-muted hover:text-brand",
             )}
           >
-            {shortlisted ? <BookmarkCheck className="size-4" /> : <Bookmark className="size-4" />}
+            {shortlisted ? <BookmarkCheck aria-hidden className="size-4" /> : <Bookmark aria-hidden className="size-4" />}
             <span className="max-sm:hidden">{shortlisted ? "Saved" : "Save"}</span>
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
             onClick={onSkip}
             title="Skip — hide from the inbox"
-            className="inline-flex items-center justify-center rounded-md p-1 text-faint transition-colors hover:bg-surface-hover hover:text-foreground max-sm:min-h-[44px] max-sm:min-w-[44px]"
+            aria-label={`Skip ${job.company}`}
+            className="text-faint"
           >
-            <X className="size-4" />
-          </button>
+            <X aria-hidden className="size-4" />
+          </Button>
         </div>
       )}
-    </li>
+    </motion.li>
   );
 }

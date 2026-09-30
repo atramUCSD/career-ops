@@ -3,16 +3,20 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Bell, CircleHelp, Eye, Sparkles, X } from "lucide-react";
-import { instrumentSerif } from "@/lib/fonts";
+import { ArrowRight, Bell, CircleHelp, Eye, Sparkles } from "lucide-react";
+import { motion } from "motion/react";
+import { DURATION, EASE_OUT } from "@/components/ui/motion";
 import { HeroGlow } from "@/components/hero-glow";
+import { Card } from "@/components/ui/card";
+import { Dialog } from "@/components/ui/dialog";
 import { StatCard } from "@/components/ui/stat-card";
+import { cn } from "@/lib/cn";
 import type { Application } from "@/lib/career-ops";
 import type { HomeData } from "@/lib/home/home-data";
 import { QuickEvaluate } from "@/components/quick-evaluate";
 import { scoreNum } from "@/lib/format";
 import { pickAwaitingDecision } from "@/lib/home/awaiting.mjs";
-import { CountUp } from "./motion-bits";
+import { CountUp } from "@/components/ui/charts";
 import { ProfileCards } from "./profile-cards";
 import { DigestPanel, when, type AlertsView } from "./digest-panel";
 import { SetupPanel } from "./setup-panel";
@@ -21,6 +25,10 @@ import { LanesPanel } from "./lanes-panel";
 import { PreferencesPanel } from "./preferences-panel";
 
 type Preview = { subject: string; html: string; to: string; quiet: boolean; counts: { fresh: number }; lastRun: string | null };
+
+// The three hero actions keep their pill shape (DESIGN.md section 5 exception).
+const HERO_LINK =
+  "inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-medium focus-ring transition-colors duration-150 ease-out max-sm:min-h-11";
 
 const failed = (v: unknown): v is { error: string } => !!v && typeof v === "object" && "error" in v;
 
@@ -34,10 +42,12 @@ export function TodayDashboard({ applications, inBetween, home }: { applications
   const [freshCount, setFreshCount] = useState(0);
   const [preview, setPreview] = useState<Preview | { error: string } | null>(null);
   const [showPreview, setShowPreview] = useState(false);
+  // Counts start at 0: hide the headline until the first follow-ups/whats-new pair settles so its text never swaps.
+  const [loaded, setLoaded] = useState(false);
   const dateLabel = useMemo(() => new Date().toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" }), []);
 
   const refetch = useCallback(() => {
-    fetch("/api/followups")
+    const followups = fetch("/api/followups")
       .then((r) => r.json())
       .then((d) => {
         // /api/followups already filters to urgent/overdue: both are due now (#86).
@@ -45,13 +55,14 @@ export function TodayDashboard({ applications, inBetween, home }: { applications
         setOverdue(d.metadata?.overdue ?? 0);
       })
       .catch(() => {});
-    fetch("/api/whats-new")
+    const whatsNew = fetch("/api/whats-new")
       .then((r) => r.json())
       .then((d) => {
         const count = Number(d.count);
         setFreshCount(Number.isFinite(count) ? Math.max(0, Math.trunc(count)) : Array.isArray(d.offers) ? d.offers.length : 0);
       })
       .catch(() => {});
+    Promise.allSettled([followups, whatsNew]).then(() => setLoaded(true));
     // Composing the digest reads the whole pipeline (~1s), so it loads after the page.
     fetch("/api/alerts")
       .then((r) => r.json())
@@ -82,16 +93,22 @@ export function TodayDashboard({ applications, inBetween, home }: { applications
   }, [home.filters]);
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-10 max-sm:pb-24">
+    <div className="mx-auto max-w-6xl space-y-8 px-4 py-6 max-sm:pb-24 sm:px-6 sm:py-8">
+      <div className="space-y-6">
       <section className="dot-bg relative overflow-hidden rounded-2xl border border-border bg-surface/40 px-7 py-10 md:px-10 md:py-12">
         <HeroGlow />
         {/* Readability scrim between the animated glow (z-0) and the copy (z-10). */}
         <div aria-hidden className="pointer-events-none absolute inset-0 z-[1] bg-surface/55 backdrop-blur-[2px] dark:bg-background/45" />
         <div className="relative z-10">
-          <p className="font-mono text-xs uppercase tracking-[0.2em] text-muted">
+          <p className="eyebrow font-mono text-xs text-muted">
             <span className="text-faint">//</span> today · <span className="tabular-nums">{dateLabel}</span>
           </p>
-          <h1 className={`${instrumentSerif.className} mt-3 text-4xl leading-[1.05] text-landing md:text-5xl`}>
+          <h1 aria-busy={!loaded} className="mt-3 font-display text-4xl leading-[1.05] text-landing md:text-5xl">
+            {!loaded ? (
+              // Holds the headline's slot so a slow whats-new read shows as loading, not as a hole.
+              <span aria-hidden className="block h-[1.05em] w-2/3 max-w-md rounded-md bg-surface-muted motion-safe:animate-pulse" />
+            ) : (
+            <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: DURATION.base, ease: EASE_OUT }}>
             {allClear ? (
               <>You&apos;re all caught up.</>
             ) : (
@@ -113,8 +130,10 @@ export function TodayDashboard({ applications, inBetween, home }: { applications
                 )}
               </>
             )}
+            </motion.span>
+            )}
           </h1>
-          <p className="mt-4 max-w-2xl text-sm text-muted">
+          <p className="mt-4 min-h-10 max-w-2xl text-sm text-muted">
             {alerts?.enabled && alerts.to && next ? (
               <>
                 The next digest goes to <span className="text-foreground">{alerts.to}</span> {next}.
@@ -133,19 +152,15 @@ export function TodayDashboard({ applications, inBetween, home }: { applications
             )}
           </p>
           <div className="mt-6 flex flex-wrap gap-2.5">
-            <Link href="/explore" className="inline-flex items-center gap-2 rounded-full bg-brand px-5 py-2.5 text-sm font-medium text-brand-foreground transition hover:bg-brand-200 max-sm:min-h-[44px]">
-              Find new roles <ArrowRight className="size-4" />
+            <Link href="/explore" className={cn(HERO_LINK, "bg-brand text-brand-foreground hover:bg-brand-200")}>
+              Find new roles <ArrowRight aria-hidden className="size-4" />
             </Link>
-            <Link href="/pipeline" className="inline-flex items-center gap-2 rounded-full border border-border px-5 py-2.5 text-sm font-medium text-foreground transition hover:border-brand/40 hover:text-brand max-sm:min-h-[44px]">
+            <Link href="/pipeline" className={cn(HERO_LINK, "border border-border text-foreground hover:border-brand/40 hover:text-brand-text")}>
               Open pipeline
             </Link>
             {alerts && (
-              <button
-                type="button"
-                onClick={() => setShowPreview(true)}
-                className="inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-medium text-muted transition hover:text-foreground max-sm:min-h-[44px]"
-              >
-                <Eye className="size-4" /> Preview digest
+              <button type="button" onClick={() => setShowPreview(true)} className={cn(HERO_LINK, "px-4 text-muted hover:text-foreground")}>
+                <Eye aria-hidden className="size-4" /> Preview digest
               </button>
             )}
           </div>
@@ -153,14 +168,13 @@ export function TodayDashboard({ applications, inBetween, home }: { applications
         </div>
       </section>
 
-      <div className="mt-6 grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-3">
         <StatCard
           href="/followups"
           icon={Bell}
-          value={<CountUp value={due} />}
+          value={loaded ? <CountUp value={due} /> : "–"}
           label="Follow-ups due"
           hint={overdue ? `${overdue} overdue` : "A nudge beats silence"}
-          featured
         />
         <StatCard href="/pipeline" icon={CircleHelp} value={<CountUp value={awaiting.length} />} label="Awaiting your decision" hint="Scored: apply or skip" corner="bl" />
         <StatCard
@@ -172,10 +186,11 @@ export function TodayDashboard({ applications, inBetween, home }: { applications
           corner="tr"
         />
       </div>
+      </div>
 
       <ProfileCards profiles={home.profiles} active={home.active} />
 
-      <div className="mt-6 grid items-start gap-6 lg:grid-cols-[3fr_2fr]">
+      <div className="grid items-start gap-4 lg:grid-cols-[3fr_2fr]">
         {alerts ? (
           <DigestPanel
             key={JSON.stringify(alerts)}
@@ -190,16 +205,14 @@ export function TodayDashboard({ applications, inBetween, home }: { applications
         <SetupPanel checklist={home.checklist} schedule={home.schedule} gmailMissing={home.gmailMissing} checkedAt={home.checkedAt} />
       </div>
 
-      <div className="mt-6">
-        {failed(home.filters) ? (
-          <Broken title="Scan filters" error={home.filters.error} />
-        ) : (
-          <FiltersPanel key={JSON.stringify(home.filters)} filters={home.filters} funnel={home.funnel} />
-        )}
-      </div>
+      {failed(home.filters) ? (
+        <Broken title="Scan filters" error={home.filters.error} />
+      ) : (
+        <FiltersPanel key={JSON.stringify(home.filters)} filters={home.filters} funnel={home.funnel} />
+      )}
 
       {home.lanes && (
-        <div id="lanes" className="mt-6 scroll-mt-6">
+        <div id="lanes" className="scroll-mt-6">
           {failed(home.lanes) ? (
             <Broken title="Lanes" error={home.lanes.error} />
           ) : (
@@ -208,10 +221,9 @@ export function TodayDashboard({ applications, inBetween, home }: { applications
         </div>
       )}
 
-      <div className="mt-6">
-        {failed(home.prefs) ? <Broken title="Preferences" error={home.prefs.error} /> : <PreferencesPanel key={JSON.stringify(home.prefs)} prefs={home.prefs} />}
-      </div>
+      {failed(home.prefs) ? <Broken title="Preferences" error={home.prefs.error} /> : <PreferencesPanel key={JSON.stringify(home.prefs)} prefs={home.prefs} />}
 
+      {/* Mounted only while open so the digest iframe (remote images and all) loads on demand, as before. */}
       {showPreview && <PreviewDialog preview={preview} onClose={() => setShowPreview(false)} />}
     </div>
   );
@@ -220,59 +232,46 @@ export function TodayDashboard({ applications, inBetween, home }: { applications
 /** A file that exists but does not parse: say which and why rather than showing defaults over it. */
 function Broken({ title, error }: { title: string; error: string }) {
   return (
-    <section role="alert" className="rounded-2xl border border-bad/40 bg-bad-soft p-6">
-      <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-bad-text">{title}</h2>
+    <Card as="section" tone="bad" role="alert">
+      <h2 className="eyebrow text-sm font-semibold text-bad-text">{title}</h2>
       <p className="mt-2 text-sm text-foreground">{error}</p>
       <p className="mt-1 text-xs text-muted">Fix the file by hand; nothing here writes over it while it is broken.</p>
-    </section>
+    </Card>
   );
 }
 
 function PreviewDialog({ preview, onClose }: { preview: Preview | { error: string } | null; onClose: () => void }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const ok = preview && !failed(preview) ? preview : null;
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={onClose}>
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Digest preview"
-        onClick={(e) => e.stopPropagation()}
-        className="flex h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl"
-      >
-        <header className="flex items-start gap-3 border-b border-border px-5 py-3">
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium text-foreground">{preview && !failed(preview) ? preview.subject : "Digest preview"}</p>
-            {preview && !failed(preview) && (
-              <p className="truncate text-xs text-faint">
-                To {preview.to || "no one yet"}
-                {preview.quiet && " · would be skipped: nothing new"}
-              </p>
-            )}
-          </div>
-          <button type="button" autoFocus onClick={onClose} aria-label="Close preview" className="rounded p-1 text-muted hover:text-foreground">
-            <X className="size-4" />
-          </button>
-        </header>
-        {!preview ? (
-          <p className="p-6 text-sm text-muted">Composing…</p>
-        ) : failed(preview) ? (
-          <p role="alert" className="p-6 text-sm text-bad-text">
-            {preview.error}
-          </p>
-        ) : (
-          // No allow-scripts: the digest embeds posting titles from job boards.
-          <iframe
-            title="Digest preview"
-            sandbox="allow-popups allow-popups-to-escape-sandbox"
-            srcDoc={`<base target="_blank">${preview.html}`}
-            className="min-h-0 flex-1 bg-white"
-          />
-        )}
-      </div>
-    </div>
+    <Dialog
+      open
+      onClose={onClose}
+      size="xl"
+      title={<span className="block truncate">{ok ? ok.subject : "Digest preview"}</span>}
+      description={
+        ok ? (
+          <span className="block truncate">
+            To {ok.to || "no one yet"}
+            {ok.quiet && " · would be skipped: nothing new"}
+          </span>
+        ) : undefined
+      }
+    >
+      {!preview ? (
+        <p className="text-sm text-muted">Composing…</p>
+      ) : failed(preview) ? (
+        <p role="alert" className="text-sm text-bad-text">
+          {preview.error}
+        </p>
+      ) : (
+        // No allow-scripts: the digest embeds posting titles from job boards.
+        <iframe
+          title="Digest preview"
+          sandbox="allow-popups allow-popups-to-escape-sandbox"
+          srcDoc={`<base target="_blank">${preview.html}`}
+          className="block size-full rounded-xl border border-border bg-white"
+        />
+      )}
+    </Dialog>
   );
 }
