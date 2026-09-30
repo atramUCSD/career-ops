@@ -2768,6 +2768,15 @@ job_boards:
   #   cat_id: 68
   #   enabled: true
 
+  # ── CalOpps (California public agencies) ─────────────────────────────
+  # Cities, counties and special districts posting directly; ~575 postings.
+  # robots.txt Crawl-delay is 10s, so a full sweep (~23 pages) takes ~4 min.
+  # No posted date in the listing: max_posting_age_days does not apply.
+
+  # - name: CalOpps
+  #   provider: calopps
+  #   enabled: true
+
   # ── Getro — VC portfolio "talent network" boards ───────────────────
   # One board aggregates jobs across a fund's portfolio companies (each job
   # belongs to the portfolio company, not the fund). `careers_url` is
