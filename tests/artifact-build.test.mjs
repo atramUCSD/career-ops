@@ -173,6 +173,12 @@ const html = renderHtml(model);
   ? pass('scraped text is escaped inside the embedded JSON')
   : fail('a job field escaped the JSON blob unescaped');
 
+// The artifact host refuses a page whose source holds a raw U+FFFD, which a
+// lossy upstream decode leaves in scraped titles.
+!renderHtml({ ...model, rows: [{ ...model.rows[0], t: 'UX designer � Fulltime' }] }).includes('�')
+  ? pass('a scraped U+FFFD is escaped, not emitted raw')
+  : fail('raw U+FFFD reached the page source');
+
 html.includes('<title>Corridor Pipeline</title>') && html.includes('prefers-color-scheme: dark')
   ? pass('title and the dark-theme block are present')
   : fail('title or theme block missing');

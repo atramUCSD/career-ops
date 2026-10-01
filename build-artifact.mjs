@@ -560,7 +560,7 @@ function keywordCount(kw, rows) {
   return rows.some(r => r.all.includes(kw));
 }
 
-const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])).replace(/�/g, '&#xFFFD;');
 
 // ---- server-rendered charts -----------------------------------------------
 // The geometry lives in web/src/lib/chart-geometry.mjs (shared with the web
@@ -853,7 +853,9 @@ ${recs ? `<ul class="chartnote">${recs}</ul>` : ''}
 }
 
 export function renderHtml(model) {
-  const data = JSON.stringify(model).replace(/</g, '\\u003c');
+  // Scraped titles sometimes carry U+FFFD from a lossy decode upstream, and the
+  // artifact host refuses a raw one in page source; keep it as an escape.
+  const data = JSON.stringify(model).replace(/</g, '\\u003c').replace(/�/g, '\\ufffd');
   // The artifact host supplies its own document skeleton, but the same file is
   // also opened straight off disk, where a browser with no charset declaration
   // guesses windows-1252 and turns every em dash and middot into mojibake.
