@@ -62,6 +62,27 @@ export function segmentFor(location) {
   return 'Other / unknown';
 }
 
+const GOV_TEXT = /\b(public sector|federal|government|govt|state of|county of|city of|department of|dod|defen[cs]e|national security|intelligence community|mission systems?|cleared|clearance|ts\/sci|top secret|public trust|military|army|navy|air force|space force|marine corps|nasa)\b/i;
+// ponytail: hand list of defense and federal-services employers; extend when a
+// cleared shop shows up unflagged.
+const GOV_EMPLOYERS = /\b(anduril|palantir|leidos|saic|booz allen|gdit|general dynamics|northrop|lockheed|raytheon|rtx|l3harris|bae systems|caci|mantech|peraton|parsons|kbr|shield ai|general atomics|cubic|sierra nevada|scale ai|mitre|aerospace corporation|g2 ops)\b/i;
+const GOV_BOARDS = /^(calopps|usajobs)/i;
+
+/**
+ * Why a posting reads as government, public-sector, defense or cleared work,
+ * or null. The description's own clearance line wins; title, employer and
+ * board are the fallback for the majority whose description was never read.
+ */
+export function publicSectorReason(row, facts) {
+  if (facts?.clearance === 'ts_sci') return 'TS/SCI in description';
+  if (facts?.clearance === 'secret') return 'Secret clearance in description';
+  if (facts?.sector === 'gov') return 'government employer per description';
+  if (GOV_BOARDS.test(row.portal || '')) return 'public-agency board';
+  if (GOV_TEXT.test(row.t || '')) return 'title';
+  if (GOV_TEXT.test(row.c || '') || GOV_EMPLOYERS.test(row.c || '')) return 'employer';
+  return null;
+}
+
 /**
  * Freshness bands derived from portals.yml rather than hardcoded. The old
  * artifact's 14/45/120/365 bands contradicted `max_posting_age_days: 45` —
@@ -427,6 +448,8 @@ export function buildModel({ root = ROOT, now = new Date(), profileRoot = null, 
     // The facts the drawer shows. Only rows whose description was actually
     // read carry one, so "no f" is exactly the unread set the chip counts.
     const fx = jdFacts.get(r.u);
+    const gov = publicSectorReason(r, fx?.ok === '1' ? fx : null);
+    if (gov) r.gov = gov;
     if (fx && fx.ok === '1') {
       r.f = {};
       for (const k of ['yoe', 'degree', 'clearance', 'comp_low', 'comp_high', 'remote', 'hats', 'frameworks']) {
@@ -1346,6 +1369,7 @@ function render(){
     (!state.seg  || r.seg === state.seg) &&
     (!state.cbband || r.cbBand === state.cbband) &&
     (!state.unread || !r.f) &&
+    (!state.gov || r.gov) &&
     (state.showBlocked || state.cbband === 'blocked' || r.cbBand !== 'blocked') &&
     (!state.band || (state.band === 'unknown' ? r.age === null : r.band === state.band)) &&
     (!state.co   || r.c.toLowerCase() === state.co) &&
@@ -1372,7 +1396,7 @@ function render(){
       <span class="cbband">\${esc(bandLabel(r.cbBand))}</span></button></td>
     <td>\${r.score!==null?\`<span class="score">\${r.score.toFixed(1)}</span><br>\`:''}<span class="st">\${esc(r.status)}</span></td>
     <td class="role"><a href="\${esc(r.u)}" rel="noopener"><span class="co">\${esc(r.c)}</span> — \${esc(r.t)}</a>
-      <div class="loc">\${esc(r.l) || '<i>no location published</i>'}</div></td>
+      <div class="loc">\${esc(r.l) || '<i>no location published</i>'}\${r.gov ? \` · <span title="Flagged gov / public sector / cleared">gov: \${esc(r.gov)}</span>\` : ''}</div></td>
     <td><span class="lanetag">\${r.lane}</span><div style="margin-top:5px">\${(r.all.length?r.all:['—']).map(k=>\`<span class="kw">\${esc(k)}</span>\`).join('')}</div></td>
     <td><span class="age">\${r.age===null?'unknown':r.age+' d'}</span>
       <div class="agebar"><i style="width:\${ageBar(r.age)}%;background:\${bandColor(r.band)}"></i></div>
@@ -1399,6 +1423,8 @@ function toggler(containerId, key, attr){
   });
 }
 el('cov').innerHTML = [
+  ['gov', 'Gov / public sector / cleared', rows.filter(r=>r.gov).length,
+    'clearance named in the description, or a government, defense or public-agency title, employer or board'],
   ['unread', 'Description unread', rows.filter(r=>!r.f).length, 'title-only scoring: the posting could not be fetched'],
   ['blocked', 'Blocked rows', rows.filter(r=>r.cbBand==='blocked').length,
     'hidden by default — ' + M.jd.gates.map(g=>g.n+' '+g.reason).join(' · ')],
@@ -1408,7 +1434,8 @@ el('cov').innerHTML = [
 el('cov').addEventListener('click', e => {
   const b = e.target.closest('[data-cov]');
   if (!b) return;
-  const k = b.getAttribute('data-cov') === 'unread' ? 'unread' : 'showBlocked';
+  const id = b.getAttribute('data-cov');
+  const k = id === 'blocked' ? 'showBlocked' : id;
   state[k] = !state[k];
   b.setAttribute('aria-pressed', String(state[k]));
   limit = PAGE; render();

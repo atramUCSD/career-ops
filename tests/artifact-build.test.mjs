@@ -8,7 +8,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { pass, fail } from './helpers.mjs';
-import { buildModel, renderHtml, segmentFor, freshnessBands, bandFor, keywordYield } from '../build-artifact.mjs';
+import { buildModel, renderHtml, segmentFor, publicSectorReason, freshnessBands, bandFor, keywordYield } from '../build-artifact.mjs';
 
 console.log('\nartifact — generated pipeline page');
 
@@ -172,6 +172,21 @@ const html = renderHtml(model);
 !/Beta <script>/.test(html) && html.includes('Beta \\u003cscript>')
   ? pass('scraped text is escaped inside the embedded JSON')
   : fail('a job field escaped the JSON blob unescaped');
+
+{
+  const cases = [
+    [{ t: 'Frontend Engineer', c: 'Acme' }, { clearance: 'ts_sci' }, 'TS/SCI in description'],
+    [{ t: 'Frontend Engineer', c: 'Acme' }, { clearance: 'none' }, null],
+    [{ t: 'Deployment Strategist - Public Sector', c: 'Salesforce' }, null, 'title'],
+    [{ t: 'Software Engineer', c: 'Anduril Industries' }, null, 'employer'],
+    [{ t: 'Analyst', c: 'County of San Diego', portal: 'calopps' }, null, 'public-agency board'],
+    [{ t: 'Defensive Driving Instructor', c: 'Acme' }, null, null],
+  ];
+  const bad = cases.filter(([row, fx, want]) => publicSectorReason(row, fx) !== want);
+  bad.length === 0
+    ? pass('publicSectorReason flags clearance, gov titles, employers and boards')
+    : fail(`publicSectorReason wrong for: ${JSON.stringify(bad)}`);
+}
 
 // The artifact host refuses a page whose source holds a raw U+FFFD, which a
 // lossy upstream decode leaves in scraped titles.
