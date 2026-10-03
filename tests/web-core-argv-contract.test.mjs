@@ -87,6 +87,17 @@ const CALL_SITES = [
     probe: 'flags-only',
   },
   {
+    source: 'web/src/app/api/alerts/route.ts',
+    script: 'notify-email.mjs',
+    // Not probed: notify-email.mjs has no validateFlags(), so no argv can be
+    // rejected, and either real run has a side effect (--test sends mail, --seed
+    // writes alert state under --root). Listed for the enumeration and so the
+    // route's flag literals stay covered; add a probe if the script ever
+    // starts validating flags.
+    args: ['--test', '--seed', '--root'],
+    probe: 'none',
+  },
+  {
     source: 'web/src/lib/core/pipeline.ts',
     script: null,
     args: [],

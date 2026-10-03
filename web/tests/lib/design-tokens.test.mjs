@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isNestedCheckout } from "../../../lib/mjs-files.mjs";
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src");
 
@@ -44,7 +45,8 @@ const ALLOW = [
 function walk(dir) {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const p = join(dir, e.name);
-    return e.isDirectory() ? walk(p) : [p];
+    if (e.isDirectory()) return isNestedCheckout(p) ? [] : walk(p);
+    return [p];
   });
 }
 

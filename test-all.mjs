@@ -215,7 +215,11 @@ async function runDiscovered(filter = null) {
     // counters. Importing them is what loses the result, so this cannot be
     // fixed in finish(); it has to happen where the suite is invoked.
     if (/from ['"]node:test['"]/.test(src)) {
-      const out = run(NODE, ['--test', f]);
+      // A node:test file is a whole suite, not one script, so run()'s 30s
+      // per-command default is the wrong budget. batch-runner-backoff spawns
+      // bash per case and takes ~47s on Windows; at 30s it was SIGTERM'd and
+      // reported as "failed (exit ?)" while passing under a direct --test.
+      const out = run(NODE, ['--test', f], { timeout: 180_000 });
       if (out === null) {
         const detail = lastRunFailure();
         fail(`${rel} — node:test suite failed (exit ${detail?.status ?? '?'})`);
