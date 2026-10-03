@@ -38,6 +38,7 @@ import { buildModel } from './build-artifact.mjs';
 import { BANDS } from './callback-score.mjs';
 import { sendRaw } from './gmail-send.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
+import { flagValue, hasFlag, validateFlags } from './lib/cli-flags.mjs';
 
 // The scheduled path (scripts/alert.cmd under Task Scheduler) runs with a
 // minimal environment and sources nothing, so without this the three GMAIL_*
@@ -265,17 +266,32 @@ export function composeRun({ root = ROOT, now = new Date(), cfg = null, model = 
   };
 }
 
+// A mistyped flag here is not harmless: `--dryrun` used to fall through to a
+// real send that also advanced the alert state.
+const KNOWN_FLAGS = ['--dry-run', '--test', '--seed', '--to', '--root', '--help', '-h'];
+const VALUE_FLAGS = ['--to', '--root'];
+
+const USAGE = `Usage:
+  node notify-email.mjs --seed        # mark the current pipeline known, send nothing
+  node notify-email.mjs --dry-run     # compose only; writes output/alert-preview.eml
+  node notify-email.mjs --test        # send now, even if nothing changed; state untouched
+  node notify-email.mjs               # compose and send
+  node notify-email.mjs --to a@b.com  # override the configured recipient
+  node notify-email.mjs --root profiles/<name>  # alert for another user layer
+  node notify-email.mjs --help|-h     # print this usage block and exit`;
+
 async function main(argv) {
-  const dry = argv.includes('--dry-run');
-  const test = argv.includes('--test');
-  const seed = argv.includes('--seed');
-  const toIdx = argv.indexOf('--to');
+  validateFlags(argv, KNOWN_FLAGS, USAGE, { valueFlags: VALUE_FLAGS, requireOperand: true });
+  const dry = hasFlag(argv, '--dry-run');
+  const test = hasFlag(argv, '--test');
+  const seed = hasFlag(argv, '--seed');
+  const to = flagValue(argv, '--to');
   // Same flag as build-artifact.mjs: config, state, pipeline and attachment all
   // move to that user layer, so a profile gets its own recipient and its own diff.
-  const rootIdx = argv.indexOf('--root');
-  const root = rootIdx >= 0 ? resolve(argv[rootIdx + 1]) : ROOT;
+  const rootArg = flagValue(argv, '--root');
+  const root = rootArg ? resolve(rootArg) : ROOT;
   const cfg = loadConfig(root);
-  if (toIdx >= 0) cfg.to = argv[toIdx + 1];
+  if (to) cfg.to = to;
   // Off silences the scheduled run only. A test, a dry run or a seed is a
   // person asking for that one thing now.
   if (cfg.enabled === false && !test && !dry && !seed) {
