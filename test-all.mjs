@@ -2109,6 +2109,11 @@ const exactAllowedFiles = new Set([
   // the entries above; the pre-existing pipeline.go/progress.go entries stay
   // in the broad allowedFiles list above since they predate this PR.
   'dashboard/internal/ui/screens/stats.go',
+  // Upstream's CI bot (#4448): the messages name the maintainer as the person
+  // who decides fork-run approvals, which is attribution, not a user's data.
+  '.github/scripts/ci-approve.mjs', '.github/scripts/direction-gate.mjs',
+  '.github/scripts/gfi-handoff.mjs', '.github/scripts/triage.bundle.mjs',
+  '.github/workflows/direction-gate.yml', '.github/workflows/gfi-handoff.yml',
 ]);
 
 // Build pathspec for git grep — only scan tracked files matching these
