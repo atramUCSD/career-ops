@@ -180,6 +180,8 @@ const html = renderHtml(model);
     [{ t: 'Deployment Strategist - Public Sector', c: 'Salesforce' }, null, 'title'],
     [{ t: 'Software Engineer', c: 'Anduril Industries' }, null, 'employer'],
     [{ t: 'Analyst', c: 'County of San Diego', portal: 'calopps' }, null, 'public-agency board'],
+    [{ t: 'Web Developer', c: 'Department of Social Services', portal: 'calcareers-api' }, null, 'public-agency board'],
+    [{ t: 'Frontend Engineer', c: 'Acme', portal: 'clearancejobs-api' }, null, 'public-agency board'],
     [{ t: 'Defensive Driving Instructor', c: 'Acme' }, null, null],
   ];
   const bad = cases.filter(([row, fx, want]) => publicSectorReason(row, fx) !== want);

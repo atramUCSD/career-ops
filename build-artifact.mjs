@@ -66,7 +66,7 @@ const GOV_TEXT = /\b(public sector|federal|government|govt|state of|county of|ci
 // ponytail: hand list of defense and federal-services employers; extend when a
 // cleared shop shows up unflagged.
 const GOV_EMPLOYERS = /\b(anduril|palantir|leidos|saic|booz allen|gdit|general dynamics|northrop|lockheed|raytheon|rtx|l3harris|bae systems|caci|mantech|peraton|parsons|kbr|shield ai|general atomics|cubic|sierra nevada|scale ai|mitre|aerospace corporation|g2 ops)\b/i;
-const GOV_BOARDS = /^(calopps|usajobs)/i;
+const GOV_BOARDS = /^(calcareers|calopps|clearancejobs|usajobs)/i;
 
 /**
  * Why a posting reads as government, public-sector, defense or cleared work,
