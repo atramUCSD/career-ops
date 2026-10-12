@@ -3,11 +3,13 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
-import { AlertTriangle, Check, ChevronDown, ChevronRight } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, ChevronRight, CircleHelp } from "lucide-react";
+import { PanelFindings } from "@/components/panel-findings";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { listItem } from "@/components/ui/motion";
 import { cn } from "@/lib/cn";
+import type { PanelRun } from "@/lib/core/hiring-panel";
 
 export type ReviewBullet = {
   text: string;
@@ -25,6 +27,8 @@ export type ReviewItem = {
   jdUnread: boolean;
   htmlMissing: boolean;
   bullets: ReviewBullet[];
+  /** Newest hiring-panel run on this report, read-only. */
+  panel: PanelRun | null;
   flagged: boolean;
 };
 
@@ -120,6 +124,14 @@ export function ReviewQueue({ items }: { items: ReviewItem[] }) {
                   <AlertTriangle aria-hidden className="size-3" /> <span className="max-sm:sr-only">JD unread</span>
                 </Chip>
               )}
+              {item.panel && item.panel.questions > 0 && (
+                <Chip tone="amber">
+                  <CircleHelp aria-hidden className="size-3" />{" "}
+                  <span className="max-sm:sr-only">
+                    {item.panel.questions} panel {item.panel.questions === 1 ? "question" : "questions"}
+                  </span>
+                </Chip>
+              )}
               {done && (
                 <Chip tone="green">
                   <Check aria-hidden className="size-3" /> <span className="max-sm:sr-only">approved</span>
@@ -130,6 +142,12 @@ export function ReviewQueue({ items }: { items: ReviewItem[] }) {
             {isOpen && (
               <div className="border-t border-border px-4 py-4">
                 <Delta item={item} />
+
+                {item.panel && (
+                  <div className="mt-4 border-t border-border pt-4">
+                    <PanelFindings run={item.panel} />
+                  </div>
+                )}
 
                 {/* Approve renders per application, below the delta — never in
                     the list, never in bulk. It only stamps the Notes marker;

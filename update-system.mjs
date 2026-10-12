@@ -156,6 +156,7 @@ const SYSTEM_PATHS = [
   'modes/pdf.md',
   'modes/ats.md',
   'modes/text.md',
+  'modes/hiring-panel.md',
   'modes/pdf/',
   'modes/cover.md',
   'modes/email.md',
@@ -259,6 +260,7 @@ const SYSTEM_PATHS = [
   'scripts/export-ats-text.mjs',
   'scripts/followup-sweep.sh',
   'story-provenance-check.mjs',
+  'hiring-panel.mjs',
   'lib/latex-content.mjs',
   'lib/context-budget.mjs',
   // Retired 2026-09-05: the suite moved to tests/context-budget.test.mjs. The

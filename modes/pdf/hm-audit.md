@@ -148,4 +148,4 @@ Placement follows the convention of the cover letter draft appended by `modes/of
 - **Not a rewriter.** This pass recommends; the user decides; `pdf` regenerates from Step 17.
 - **Not on by default.** `pdf.md` Step 20 runs it only for `--hm-audit`, or when `modes/_custom.md` turns it on for every CV. A `pdf` run that does not ask for it never prompts.
 - **Not a routable mode.** No entry in the router table or the argument-hint, and no mode name of its own — it is reached through `pdf --hm-audit`, the way `heuristics/recruiter-side.md` is reached through the modes that load it. The `AGENTS.md` and `modes/README.md` rows point at `pdf`, so the pass is discoverable without being addressable.
-- **Not a panel.** One reviewer. A multi-persona panel (recruiter + HM + peer) is a possible follow-up, deliberately out of scope for cost reasons.
+- **Not a panel.** One reviewer. The multi-persona panel is `modes/hiring-panel.md` (`/hiring-panel`), kept separate for cost reasons: it is user-invoked, and it writes only to its own run folder rather than into the report.

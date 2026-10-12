@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/field";
 
-export function CvEditor() {
+/** `footer` renders under the editor, inside the page container (the /cv page passes the latest hiring-panel run). */
+export function CvEditor({ footer }: { footer?: React.ReactNode }) {
   const [content, setContent] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [exists, setExists] = useState(true);
@@ -104,6 +105,7 @@ export function CvEditor() {
           </Card>
         </div>
       )}
+      {footer}
     </div>
   );
 }

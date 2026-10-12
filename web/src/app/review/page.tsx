@@ -3,6 +3,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { careerOpsRoot, findReportFile, readApplications, rootScript, spawnEnv, userRoot } from "@/lib/career-ops";
+import { panelRunsByReport, type PanelRun } from "@/lib/core/hiring-panel";
 import { matchClaims, reviewDelta } from "@/lib/review-diff.mjs";
 import { ReviewQueue, type ReviewItem } from "./review-queue";
 
@@ -57,7 +58,9 @@ export default async function ReviewPage() {
   const prepared = readApplications().filter(
     (a) => /prepared:\s*awaiting review/i.test(a.notes) && !/prepared:\s*approved/i.test(a.notes),
   );
-  const claims = prepared.length ? await uncertainClaims() : [];
+  const [claims, panels]: [Claim[], Map<number, PanelRun>] = prepared.length
+    ? await Promise.all([uncertainClaims(), panelRunsByReport()])
+    : [[], new Map()];
   const cvMd = readOr(path.join(root, "cv.md"));
 
   const items: ReviewItem[] = prepared.map((a) => {
@@ -81,6 +84,8 @@ export default async function ReviewPage() {
     const bullets = html
       ? reviewDelta(readOr(html), cvMd).map((b) => ({ ...b, claims: matchClaims(b.text, claims) }))
       : [];
+    // Panel runs record the report number unpadded; the review key is padded.
+    const panel = report ? (panels.get(parseInt(report, 10)) ?? null) : null;
     return {
       n: a.n,
       company: a.company,
@@ -89,7 +94,8 @@ export default async function ReviewPage() {
       jdUnread,
       htmlMissing: !html,
       bullets,
-      flagged: jdUnread || bullets.some((b) => b.claims.length > 0),
+      panel,
+      flagged: jdUnread || bullets.some((b) => b.claims.length > 0) || (panel?.questions ?? 0) > 0,
     };
   });
 

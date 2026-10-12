@@ -331,6 +331,7 @@ Two separate axes:
 | Wants to generate CV/PDF | `pdf` |
 | Wants to check if a generated CV is ATS-friendly (parseability score + issues) | `ats` |
 | Wants a hiring-manager's read on a tailored CV before sending | `pdf --hm-audit` — opt-in pass (`modes/pdf/hm-audit.md`), off by default: researches the likely reviewer, dispatches a separate agent role-playing them, and returns a bullet-by-bullet keep/cut/rewrite verdict |
+| Wants a resume run past a multi-persona panel (ATS, hiring manager, competing applicant, CEO, recruiter, teammate) | `hiring-panel` — `/hiring-panel` (`modes/hiring-panel.md`): seven isolated subagents, one line-referenced defect list ranked by independent agreement, a rewrite inside the fact gate, and a blind ATS rerun; writes only to `output/.hiring-panel/`. `hiring-panel.mjs` owns the run-folder format (`merge` ranks deterministically); the dashboard shows runs read-only in `/review` and `/cv` |
 | Wants the LaTeX/Overleaf CV path | `latex` |
 | Maintains their own hand-tuned `.tex` CV and wants it tailored in place (opt-in; cv.md stays the default) | `latex-tex` |
 | Wants a cover letter | `cover` |
