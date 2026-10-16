@@ -101,6 +101,8 @@ export function parseReply(text, reader) {
       if (!CATEGORIES.includes(category.toLowerCase())) bad(n, `unknown category "${category}"`);
       if (!problem || !fix.join('').trim()) bad(n, 'empty problem or fix');
       out.findings.push({ line: id, sev: Number(s[1]), category: category.toLowerCase(), problem, fix: fix.join(' | ') });
+    } else if (section === 'jd' && line.startsWith('-') && reader.id !== '01') {
+      // Every reader sees the contract's JD CHECK template, labelled ATS-only; merge reads only the ATS's rows.
     } else if (section === 'jd' && line.startsWith('-')) {
       m = line.match(/^-\s*(.+?)\s*\|\s*(present\s+L\d{3,}(?:\s*,\s*L\d{3,})*|missing)$/i)
         ?? bad(n, 'a JD CHECK row is "- requirement | present L###" or "- requirement | missing"');

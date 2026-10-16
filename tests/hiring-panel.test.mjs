@@ -154,6 +154,13 @@ test('parseReply names the reader and the line on a contract violation', () => {
   assert.equal(parseReply('```\nVERDICT: ADVANCE\nDECIDED BY: L001, L004 — x\nFINDINGS: none\n```', hm).decidedBy.join(), 'L001,L004');
 });
 
+test('parseReply ignores JD CHECK rows from non-ATS readers and stays strict for the ATS', () => {
+  const jd = (r, row) => parseReply(`VERDICT: ${r.verdicts[0]}\nDECIDED BY: L001 -- x\nFINDINGS: none\nJD CHECK (ATS reader only, one row per must-have):\n- ${row}`, r);
+  assert.deepEqual(jd(READERS[2], 'n/a | no JD supplied').jdCheck, []);
+  assert.deepEqual(jd(READERS[5], 'Go | present L005').jdCheck, []);
+  assert.throws(() => jd(READERS[0], 'n/a | no JD supplied'), /^Error: 01-ats\.md: line 5: a JD CHECK row/);
+});
+
 test('merge CLI writes 08-defects.md and refuses to overwrite dispositions', (t) => {
   const f = fixture(t);
   const ok = cli(f.root, 'merge', 'output/.hiring-panel/2026-10-12-example');
