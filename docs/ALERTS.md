@@ -6,11 +6,12 @@ invoked, and nothing is ever submitted on your behalf.
 
 ```
 swarm.mjs --scan --stale     scan → liveness → prune
+enrich-jd.mjs --skip linkedin.com   read new descriptions (not fatal)
 build-artifact.mjs           output/pipeline-artifact.html
 notify-email.mjs             diff against last alert → one email
 ```
 
-`scripts/alert.cmd` chains the three and appends a row to `data/alert-log.tsv`.
+`scripts/alert.cmd` chains the four and appends a row to `data/alert-log.tsv`.
 
 ## What arrives
 
@@ -87,7 +88,7 @@ they cover different ground:
 
 | Task | When | Script | Covers |
 |---|---|---|---|
-| `career-ops-alert` | daily 07:00 | `scripts/alert.cmd` | `swarm.mjs --scan` over the `portals.yml` company and board list, API-only liveness, prune, then the email |
+| `career-ops-alert` | daily 07:00 | `scripts/alert.cmd` | `swarm.mjs --scan` over the `portals.yml` company and board list, API-only liveness, prune, description reads (LinkedIn skipped), then the email |
 | `career-ops-sweep` | weekly, Sunday 03:00 | `scripts/sweep.cmd` | `scan-ats-full.mjs` reverse-ATS sweep, `scan-hn.mjs`, **full** liveness including the Playwright fallback, prune |
 
 ```bat

@@ -26,6 +26,16 @@ for /f "usebackq tokens=*" %%t in (`powershell -NoProfile -Command "(Get-Date).T
 call node swarm.mjs --scan --since 45 --stale 45
 if errorlevel 1 goto :failed_triage
 
+REM Read each new posting's description so its match score rests on what the
+REM posting demands rather than on its title alone. A title-only row is capped
+REM at 25 for a lane keyword and 62 for a target title, so a board posting with
+REM a generic title could never reach the mail while LinkedIn, searched by the
+REM target titles themselves, filled it. LinkedIn is skipped: see --skip in
+REM enrich-jd.mjs. Not fatal — an unread row keeps its title-only score, and a
+REM row a later read lifts into a top band arrives in the mail as "upgraded".
+call node enrich-jd.mjs --skip linkedin.com
+if errorlevel 1 echo !TS!	enrich	FAILED - continuing>> "%LOG%"
+
 call node build-artifact.mjs
 if errorlevel 1 goto :failed_artifact
 
@@ -45,6 +55,8 @@ if exist profiles (
       if errorlevel 1 (
         echo !TS!	profile %%~nxp scan	FAILED - mail skipped>> "%LOG%"
       ) else (
+        call node profiles.mjs run "%%~nxp" enrich-jd.mjs --skip linkedin.com
+        if errorlevel 1 echo !TS!	profile %%~nxp enrich	FAILED - continuing>> "%LOG%"
         call node build-artifact.mjs --root "%%p"
         call node notify-email.mjs --root "%%p"
         if errorlevel 1 (echo !TS!	profile %%~nxp alert	FAILED - continuing>> "%LOG%") else (echo !TS!	profile %%~nxp	ok>> "%LOG%")

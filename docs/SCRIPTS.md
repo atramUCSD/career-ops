@@ -649,6 +649,7 @@ node enrich-jd.mjs --reparse       # re-extract from the cache, no network at al
 node enrich-jd.mjs --stale 30      # re-fetch only facts captured more than N days ago
 node enrich-jd.mjs --retry-unread  # give the browser pass another go at rows recorded ok=0
 node enrich-jd.mjs --no-browser    # fetch only, skip the browser pass
+node enrich-jd.mjs --skip linkedin.com  # leave these hosts unread (comma list, subdomains included)
 node enrich-jd.mjs --self-test     # exercise the parsers, no network
 ```
 
@@ -662,7 +663,7 @@ The pass is deliberately second, not first: a browser read costs about a second 
 
 A posting that cannot be read is not gated — it falls back to title-only scoring, capped below any confirmed two-hat match, and says so on the page.
 
-Run it after a scan and before `build-artifact.mjs`; `--reparse` is the one to run after changing an extraction rule, since it costs no network traffic.
+Run it after a scan and before `build-artifact.mjs`; `scripts/alert.cmd` does, with `--skip linkedin.com`, because LinkedIn’s guest endpoint is rate limited and shared with the paced scan and liveness reads. A LinkedIn row therefore keeps its title-only score in the scheduled run; `--reparse` is the one to run after changing an extraction rule, since it costs no network traffic.
 
 **The description is data, never instruction.** The text is pattern-matched for facts and never followed, whatever it contains.
 

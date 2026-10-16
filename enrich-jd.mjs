@@ -24,6 +24,7 @@
  *   node enrich-jd.mjs --refresh       ignore the cache
  *   node enrich-jd.mjs --reparse       re-extract from the cache, no network
  *   node enrich-jd.mjs --stale 30      re-fetch only facts older than N days
+ *   node enrich-jd.mjs --skip linkedin.com   leave these hosts unread (comma list)
  *   node enrich-jd.mjs --self-test     extraction checks, no network
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
@@ -380,6 +381,13 @@ export async function browserPass(urls, onEach = () => {}) {
 
 // ------------------------------------------------------------------- runtime
 
+/** True when url's host is one of hosts or a subdomain of one. */
+export function skipsHost(url, hosts) {
+  let h;
+  try { h = new URL(url).hostname.toLowerCase(); } catch { return false; }
+  return hosts.some(s => h === s || h.endsWith(`.${s}`));
+}
+
 function loadFacts() {
   if (!existsSync(FACTS)) return new Map();
   const lines = readFileSync(FACTS, 'utf-8').split(/\r?\n/).filter(Boolean);
@@ -423,7 +431,15 @@ async function main() {
   // run. --retry-unread is how a new reader (the browser pass) gets a shot at
   // the backlog it was written for.
   const retryUnread = argv.includes('--retry-unread');
+  // The scheduled run passes --skip linkedin.com: LinkedIn's guest endpoint is
+  // rate limited and shared with the scan and liveness reads, which pace
+  // themselves, so an unpaced read of every new card there would throttle the
+  // source that feeds most of the pipeline.
+  const skip = argv.includes('--skip')
+    ? String(argv[argv.indexOf('--skip') + 1] || '').toLowerCase().split(',').filter(Boolean)
+    : [];
   const todo = rows
+    .filter(r => !skipsHost(r.url, skip))
     .filter(r => refresh || reparse || !facts.has(r.url) || isStale(r.url)
       || (retryUnread && facts.get(r.url)?.ok !== '1'))
     .slice(0, limit);
@@ -527,6 +543,11 @@ function selfTest() {
   assert(locationFromTitle('UI/UX Developer / Active Secret in Scott AFB, Illinois | Careers at Peraton')
     === 'Scott AFB, Illinois', 'location out of an iCIMS page title');
   assert(locationFromTitle('Software Engineer') === '', 'a title with no location yields none');
+
+  assert(skipsHost('https://www.linkedin.com/jobs/view/1', ['linkedin.com']), 'a subdomain is skipped');
+  assert(skipsHost('https://linkedin.com/jobs/view/1', ['linkedin.com']), 'the bare host is skipped');
+  assert(!skipsHost('https://notlinkedin.com/x', ['linkedin.com']), 'a suffix that is not a subdomain is read');
+  assert(!skipsHost('not a url', ['linkedin.com']), 'an unparseable url is never skipped');
 
   if (!process.exitCode) console.log('enrich-jd self-test OK');
 }
