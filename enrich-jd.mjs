@@ -41,6 +41,8 @@ const CACHE = join(DATA_ROOT, 'data/jd-cache');
 const FACTS = join(DATA_ROOT, 'data/jd-facts.tsv');
 const TIMEOUT_MS = 15_000;
 const CONCURRENCY = 6;
+/** Longest wait for any row to finish before the run gives up (see main). A browser page's own budget is 3×TIMEOUT_MS. */
+const STALL_MS = 180_000;
 
 export const FACT_COLUMNS = [
   'url', 'ok', 'yoe', 'degree', 'clearance',
@@ -325,6 +327,10 @@ export function locationFromTitle(title = '') {
 
 async function readPage(ctx, url) {
   const page = await ctx.newPage();
+  // goto is the only call here with a timeout of its own. Closing the page
+  // rejects whatever frame read is still pending, so a page that wedges after
+  // load costs this one row instead of stalling the pass.
+  const deadline = setTimeout(() => page.close().catch(() => {}), TIMEOUT_MS * 3);
   try {
     const res = await page.goto(url, { waitUntil: 'networkidle', timeout: TIMEOUT_MS * 2 });
     if (!res || res.status() !== 200) return { text: '', location: '' };
@@ -353,6 +359,7 @@ async function readPage(ctx, url) {
   } catch {
     return { text: '', location: '' };
   } finally {
+    clearTimeout(deadline);
     await page.close().catch(() => {});
   }
 }
@@ -466,6 +473,23 @@ async function main() {
     });
   };
 
+  // Not every read here can time out: a response body can stop mid-stream after
+  // the fetch timeout is cleared, and readPage's deadline only helps while the
+  // browser itself still answers. The first full backfill stopped mid browser
+  // pass and sat at zero CPU overnight, and alert.cmd waits on this process
+  // before it mails. So a run that finishes no row for STALL_MS keeps every fact
+  // recorded so far and exits non-zero, which alert.cmd logs before carrying on.
+  let stall;
+  const progress = () => {
+    clearTimeout(stall);
+    stall = setTimeout(() => {
+      writeFacts(facts);
+      console.error(`enrich-jd: no row finished in ${STALL_MS / 1000}s, stopping; facts so far kept`);
+      process.exit(1);
+    }, STALL_MS).unref();
+  };
+  progress();
+
   const queue = [...todo];
   await Promise.all(Array.from({ length: CONCURRENCY }, async () => {
     for (let r = queue.shift(); r; r = queue.shift()) {
@@ -476,6 +500,7 @@ async function main() {
         if (text) writeFileSync(file, text);
       }
       record(r, text);
+      progress();
       if (text) ok++;
       if (++done % 25 === 0) { writeFacts(facts); process.stderr.write(`${done}/${todo.length}\n`); }
     }
@@ -492,13 +517,17 @@ async function main() {
   if (blind.length) {
     process.stderr.write(`browser pass: ${blind.length} unread\n`);
     const byUrl = new Map(blind.map(r => [r.url, r]));
+    let seen = 0;
     await browserPass(blind.map(r => r.url), (url, { text, location }) => {
       if (text) { writeFileSync(join(CACHE, `${hash(url)}.txt`), text); browsed++; }
       if (location) located++;
       record(byUrl.get(url), text, location);
+      progress();
+      if (++seen % 25 === 0) { writeFacts(facts); process.stderr.write(`browser ${seen}/${blind.length}\n`); }
     });
     writeFacts(facts);
   }
+  clearTimeout(stall);
 
   console.log(JSON.stringify({
     pending: rows.length, attempted: todo.length, fetched: ok,
