@@ -7,9 +7,9 @@ import { pathToFileURL } from 'url';
 
 console.log('\nProvider helper — _profile-keywords');
 
-// Hoisted so the finally below removes it even if an assertion throws.
-let tmp = null;
-
+// Declared outside the try so the finally below can remove it: a step that
+// throws after mkdtempSync used to skip the rmSync and leave the dir in tmp.
+let tmp;
 try {
   const mod = await import(pathToFileURL(join(ROOT, 'providers/_profile-keywords.mjs')).href);
   const { profileTargetKeywords, resolveProfileKeywords } = mod;
@@ -73,7 +73,6 @@ try {
   } else {
     fail('resolveProfileKeywords should return [] for unparseable YAML');
   }
-  rmSync(tmp, { recursive: true, force: true });
 } catch (e) {
   fail(`_profile-keywords tests crashed: ${e.message}`);
 } finally {

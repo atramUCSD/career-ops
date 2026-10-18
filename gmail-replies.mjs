@@ -18,16 +18,15 @@ import { fileURLToPath } from 'node:url';
 import { config } from 'dotenv';
 import { getAccessToken } from './plugins/gmail/index.mjs';
 import { getMessageBody, isAuthenticEmail } from './plugins/gmail/_helpers.mjs';
-import { appendCandidate } from './paste-reply.mjs';
+import { appendCandidate, CANDIDATES_PATH } from './paste-reply.mjs';
 import { resolveTrackerPath } from './tracker-utils.mjs';
+import { getCareerOpsRoot } from './path-resolver.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 config({ path: path.join(__dirname, '.env'), quiet: true });
 
 const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1/users/me';
-const CANDIDATES_PATH = process.env.CAREER_OPS_REPLY_CANDIDATES
-  || path.join(__dirname, 'data', 'reply-candidates.json');
 const args = process.argv.slice(2);
 const dryRun = args.includes('--dry-run');
 const days = Number(args[args.indexOf('--days') + 1]) || 14;
@@ -55,7 +54,7 @@ async function main() {
     console.error('Missing GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET / GMAIL_REFRESH_TOKEN in .env — run: node scripts/mint-gmail-token.mjs --readonly');
     process.exit(1);
   }
-  const companies = trackerCompanies(fs.readFileSync(resolveTrackerPath(__dirname), 'utf-8'));
+  const companies = trackerCompanies(fs.readFileSync(resolveTrackerPath(getCareerOpsRoot()), 'utf-8'));
   if (!companies.length) { console.log('Tracker has no companies; nothing to scan for.'); return; }
 
   const seen = new Set(fs.existsSync(CANDIDATES_PATH)
@@ -115,6 +114,13 @@ async function main() {
   if (added && !dryRun) console.log('Next: node reply-watch.mjs');
 }
 
+const USAGE = `Usage:
+  node gmail-replies.mjs [--days 14] [--dry-run]`;
+
+if (isMainModule(import.meta.url) && process.argv.slice(2).some((a) => a === '--help' || a === '-h')) {
+  console.log(USAGE);
+  process.exit(0);
+}
 if (isMainModule(import.meta.url)) {
   main().catch(err => {
     console.error(err.message);

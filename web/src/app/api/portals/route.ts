@@ -1,8 +1,9 @@
 import path from "node:path";
-import { careerOpsRoot, userRoot } from "@/lib/career-ops";
+import { careerOpsRoot, portalsConfigPath, userRoot } from "@/lib/career-ops";
 import { atomicWriteWithBackup } from "@/lib/core/safe-write";
 import { portalsPatch } from "@/lib/portals-config.mjs";
 import { configErrorResponse, loadYamlDoc, setIn, toYaml } from "@/lib/yaml-doc.mjs";
+import { readJsonObject } from "@/lib/json-body";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,20 +15,15 @@ export const dynamic = "force-dynamic";
 // create.
 
 export async function POST(req: Request) {
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return Response.json({ error: "bad json" }, { status: 400 });
+  const body = await readJsonObject(req);
+  if (!body) {
+    return Response.json({ error: "expected a JSON object" }, { status: 400 });
   }
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    return Response.json({ error: "expected an object" }, { status: 400 });
-  }
-  const result = portalsPatch(body as Record<string, unknown>);
+  const result = portalsPatch(body);
   if ("error" in result) return Response.json({ error: result.error }, { status: 400 });
 
   // User file from the active profile, shipped example from the code root.
-  const file = path.join(userRoot(), "portals.yml");
+  const file = portalsConfigPath(userRoot());
   try {
     const { doc, src, seeded } = loadYamlDoc(file, path.join(careerOpsRoot(), "templates", "portals.example.yml"));
     setIn(doc, [], result.patch);

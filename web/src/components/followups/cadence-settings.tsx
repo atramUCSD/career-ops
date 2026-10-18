@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Check, Loader2 } from "lucide-react";
 import { PROFILE_CADENCE_KEYS, type ProfileCadenceKey } from "@/lib/followups";
 import { Button } from "@/components/ui/button";
@@ -16,16 +17,19 @@ const FIELDS: { key: ProfileCadenceKey; label: string; hint: string }[] = [
   { key: "applied_subsequent_days", label: "Between follow-ups", hint: "days between nudges while Applied" },
   { key: "applied_max_followups", label: "Max follow-ups", hint: "after this many with no reply the lead goes cold" },
   { key: "responded_initial_days", label: "Reply window", hint: "answer a company response within this many days" },
-  { key: "responded_subsequent_days", label: "Responded cadence", hint: "days between touches while in Responded" },
+  { key: "responded_subsequent_days", label: "Responded / assessment cadence", hint: "days between touches while in Responded or Assessment" },
   { key: "interview_thankyou_days", label: "Thank-you note", hint: "due within this many days of reaching Interview" },
 ];
 
 export function CadenceSettings() {
+  const router = useRouter();
   const [values, setValues] = useState<Record<ProfileCadenceKey, string> | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [enabled, setEnabled] = useState(true);
+  const [toggling, setToggling] = useState(false);
 
   // On a failed load, do NOT fall back to defaults: the user would see 7/7/2/…
   // with no warning and a Save would overwrite their real profile.yml
@@ -42,6 +46,7 @@ export function CadenceSettings() {
         // the CORE's cadenceDefaults (#2369) — no local defaults table to merge
         // in. A key the core didn't supply renders empty rather than as an
         // invented number.
+        setEnabled(d?.enabled !== false);
         const eff = (d?.effective ?? {}) as Partial<Record<ProfileCadenceKey, number>>;
         setValues(Object.fromEntries(
           PROFILE_CADENCE_KEYS.map((k) => [k, eff[k] === undefined ? "" : String(eff[k])]),
@@ -85,6 +90,30 @@ export function CadenceSettings() {
     setSaving(false);
   };
 
+  const toggle = async (next: boolean) => {
+    setToggling(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/followups/cadence", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: next }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(typeof j.error === "string" ? j.error : "Could not save.");
+      } else {
+        setEnabled(next);
+        // The nav is rendered on the server from the same setting. A router
+        // refresh re-renders it without unloading running jobs.
+        router.refresh();
+      }
+    } catch {
+      setError("Could not save.");
+    }
+    setToggling(false);
+  };
+
   return (
     <section>
       <h2 className="mt-8 mb-3 eyebrow text-xs font-semibold text-muted">Follow-up cadence</h2>
@@ -109,30 +138,49 @@ export function CadenceSettings() {
           </div>
         ) : (
           <>
-            <div className="mt-4 grid gap-4 sm:grid-cols-2">
-              {FIELDS.map((f) => (
-                <Input
-                  key={f.key}
-                  label={f.label}
-                  hint={f.hint}
-                  type="number"
-                  min={0}
-                  step={1}
-                  value={values[f.key]}
-                  onChange={(e) => setValues((v) => (v ? { ...v, [f.key]: e.target.value } : v))}
-                  className="w-24 tabular-nums"
-                />
-              ))}
-            </div>
+            <label className="mt-4 flex items-center gap-2 text-sm font-medium text-foreground">
+              <input
+                type="checkbox"
+                checked={enabled}
+                disabled={toggling}
+                onChange={(e) => toggle(e.target.checked)}
+                className="size-4 accent-brand focus-ring"
+              />
+              Track follow-ups
+              {toggling && <Loader2 aria-hidden className="size-3.5 motion-safe:animate-spin" />}
+            </label>
+            <p className="mt-0.5 text-xs text-faint">
+              Off hides the Follow-ups page and stops scheduling follow-up dates. Saved as{" "}
+              <span className="font-mono text-muted">follow_ups.enabled</span>.
+            </p>
+            {enabled && (
+              <>
+                <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                  {FIELDS.map((f) => (
+                    <Input
+                      key={f.key}
+                      label={f.label}
+                      hint={f.hint}
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={values[f.key]}
+                      onChange={(e) => setValues((v) => (v ? { ...v, [f.key]: e.target.value } : v))}
+                      className="w-24 tabular-nums"
+                    />
+                  ))}
+                </div>
+                <Button type="button" variant="secondary" size="sm" onClick={save} loading={saving} className="mt-4">
+                  {saved && <Check aria-hidden className="size-3.5 text-brand-text" />}
+                  {saved ? "Saved" : "Save cadence"}
+                </Button>
+              </>
+            )}
             {error && (
               <p role="alert" className="mt-3 text-xs text-bad-text">
                 {error}
               </p>
             )}
-            <Button type="button" variant="secondary" size="sm" onClick={save} loading={saving} className="mt-4">
-              {saved && <Check aria-hidden className="size-3.5 text-brand-text" />}
-              {saved ? "Saved" : "Save cadence"}
-            </Button>
           </>
         )}
       </Card>

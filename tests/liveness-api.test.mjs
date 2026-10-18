@@ -59,7 +59,9 @@ eq(
 // Coverage must never be claimed by guessing: a host this module does not know
 // belongs to the browser rung, whatever its URL looks like.
 eq(isAtsPosting('https://jobs.example.com/careers/job/123'), false, 'unknown ATS is still browser-only (no false coverage claim)');
-eq(isAtsPosting('http://databricks.com/x?gh_jid=1'), false, 'non-https is refused');
+// Plain http resolves only for a provider whose API host is fixed (#5392).
+eq(isAtsPosting('http://databricks.com/x?gh_jid=1'), true, 'plain-http gh_jid page resolves (fixed API host)');
+eq(isAtsPosting('http://boards.greenhouse.io/acme/jobs/123'), false, 'non-https is refused for a provider that does not opt in');
 eq(r('https://databricks.com/careers/job'), null, 'a vanity domain WITHOUT gh_jid is not claimed');
 eq(r('https://databricks.com/careers/job?gh_jid=not-a-number'), null, 'a non-numeric gh_jid is refused rather than sent to the API');
 
@@ -207,7 +209,7 @@ try {
   stubFetch([['myworkdayjobs.com', jsonRes(403, { errorCode: 'S22', httpStatus: 403, message: 'permission denied' })]]);
   const unpub = await checkLivenessViaApi(wdUrl);
   eq(unpub?.result, 'expired', 'Workday 403 S22 -> expired (unpublished, not a refusal to answer)');
-  eq(unpub?.code, 'workday_api_unpublished', 'the unpublished verdict is coded distinctly from a 404');
+  eq(unpub?.code, 'workday_api_withdrawn', 'the unpublished verdict is coded distinctly from a 404');
 
   // A WAF or CDN block is also a 403 — but it arrives as HTML, so the content
   // type has to hold before the status is read as an answer about the posting.

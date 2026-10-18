@@ -3,6 +3,7 @@ import { careerOpsRoot, userRoot } from "@/lib/career-ops";
 import { atomicWriteWithBackup } from "@/lib/core/safe-write";
 import { words } from "@/lib/portals-config.mjs";
 import { configErrorResponse, loadYamlDoc, setIn, toYaml } from "@/lib/yaml-doc.mjs";
+import { readJsonObject } from "@/lib/json-body";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,12 +13,8 @@ export const dynamic = "force-dynamic";
 // file is an error here rather than a copy of the example's lanes.
 
 export async function POST(req: Request) {
-  let body: Record<string, unknown>;
-  try {
-    body = await req.json();
-  } catch {
-    return Response.json({ error: "bad json" }, { status: 400 });
-  }
+  const body = await readJsonObject<Record<string, unknown>>(req);
+  if (!body) return Response.json({ error: "bad json" }, { status: 400 });
   const edits = body?.lanes;
   if (!edits || typeof edits !== "object" || Array.isArray(edits) || !Object.keys(edits).length) {
     return Response.json({ error: "lanes must name at least one lane" }, { status: 400 });

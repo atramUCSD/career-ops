@@ -3,6 +3,7 @@ import { todaySnapshot } from "@/lib/home/today-snapshot.mjs";
 import { homeData } from "@/lib/home/home-data";
 import { scoreNum } from "@/lib/format";
 import { OnboardingBanner } from "@/components/onboarding-banner";
+import { OnboardingProgress } from "@/components/home/onboarding-progress";
 import { FirstRunHome } from "@/components/home/first-run-home";
 import { TodayDashboard } from "@/components/home/today-dashboard";
 
@@ -21,7 +22,12 @@ export default async function Home() {
   return (
     <>
       {onboardingNeeded && <OnboardingBanner />}
-      <TodayDashboard applications={applications} inBetween={phase === "in-between"} home={await homeData()} />
+        {/* The growing-profile panel renders nothing once every prerequisite and
+            personalization section is complete. */}
+        <div className="mx-auto max-w-6xl px-4 pt-6 sm:px-6">
+          <OnboardingProgress />
+        </div>
+        <TodayDashboard applications={applications} inBetween={phase === "in-between"} home={await homeData()} />
     </>
   );
 }

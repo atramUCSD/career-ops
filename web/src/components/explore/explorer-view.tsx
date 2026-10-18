@@ -16,6 +16,7 @@ import { ExploreModeToggle } from "./explore-mode-toggle";
 import { AiSearchBox } from "./ai-search-box";
 import { ResultsList, type EnrichedOffer } from "./results-list";
 import { useExplore } from "./explore-provider";
+import { ScheduleJobAction } from "./schedule-job-action";
 
 // Same shape as core normalizeTextKey(s, " ") — never [^a-z0-9] (#2666).
 const norm = (s: string) => normalizeTextKey(s, " ");
@@ -206,7 +207,7 @@ export function ExplorerView({
               {refineOpen && (
                 <div className="space-y-4 border-t border-border p-4">
                   <FilterBuilder filters={shownFilters} onChange={setFilters} seededFrom={seed.seededFrom} />
-                  <DiscoverBar canDiscover={canDiscover} onDiscover={discover} label="Re-cast (free)" />
+                  <DiscoverBar canDiscover={canDiscover} onDiscover={discover} label="Re-cast (free)" filters={filters} />
                 </div>
               )}
             </Card>
@@ -214,7 +215,7 @@ export function ExplorerView({
             <Card className="mb-6">
               <FilterBuilder filters={shownFilters} onChange={setFilters} seededFrom={seed.seededFrom} />
               <div className="mt-5">
-                <DiscoverBar canDiscover={canDiscover} onDiscover={discover} label="Discover (free)" />
+                <DiscoverBar canDiscover={canDiscover} onDiscover={discover} label="Discover (free)" filters={filters} />
               </div>
             </Card>
           )}
@@ -287,12 +288,13 @@ export function ExplorerView({
   );
 }
 
-function DiscoverBar({ canDiscover, onDiscover, label }: { canDiscover: boolean; onDiscover: () => void; label: string }) {
+function DiscoverBar({ canDiscover, onDiscover, label, filters }: { canDiscover: boolean; onDiscover: () => void; label: string; filters: ExploreFilters }) {
   return (
     <div className="flex flex-wrap items-center gap-3">
       <Button size="lg" disabled={!canDiscover} onClick={onDiscover} className="font-semibold">
         <Compass aria-hidden className="size-4" /> {label}
       </Button>
+      <ScheduleJobAction filters={filters} />
       <span className="inline-flex items-center gap-1.5 text-xs text-muted">
         <span aria-hidden className="size-1.5 rounded-full bg-good" />
         Evaluating a role later costs tokens. Discovering never does.

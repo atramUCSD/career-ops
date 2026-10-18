@@ -234,4 +234,18 @@ async function main(args) {
   else console.log(JSON.stringify(map, null, 2));
 }
 
+const USAGE = `Usage:
+  node resume-heat.mjs                   corpus heat map (JSON)
+  node resume-heat.mjs --summary         ranked tables
+  node resume-heat.mjs --html            writes output/resume-heat.html
+  node resume-heat.mjs --url <posting>   one cached posting against cv.md
+  node resume-heat.mjs --jd <file>       one JD file against cv.md
+  node resume-heat.mjs --top 40          rows per table (default 25)
+  node resume-heat.mjs --cv <file>       read a draft instead of cv.md (before/after)
+  node resume-heat.mjs --profile alex    profiles/alex: their pipeline, scoring, cv.md, output/`;
+
+if (isMainModule(import.meta.url) && process.argv.slice(2).some((a) => a === '--help' || a === '-h')) {
+  console.log(USAGE);
+  process.exit(0);
+}
 if (isMainModule(import.meta.url)) await main(process.argv.slice(2));

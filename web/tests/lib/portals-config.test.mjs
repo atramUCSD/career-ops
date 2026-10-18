@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { portalsPatch, scanFunnel } from "../../src/lib/portals-config.mjs";
+import { portalsPatch, scanFunnel, watchedCompanies } from "../../src/lib/portals-config.mjs";
 
 test("the onboarding write replaces the include list and, when given, the allowed locations", () => {
   assert.deepEqual(portalsPatch({ roles: [" ML Engineer ", "", 7, "AI Engineer"], location: ["Remote"] }), {
@@ -63,4 +63,22 @@ test("a torn or unreadable last row falls back to the run before it", () => {
   assert.equal(f.segments.find((s) => s.key === "other").count, 4, "tier counts as Other");
   assert.equal(scanFunnel(""), null);
   assert.equal(scanFunnel("date\tcount\n2026-09-27\t4"), null);
+});
+
+test("watchedCompanies lists scanned companies first, then paused ones, with the careers host", () => {
+  const doc = {
+    tracked_companies: [
+      { name: "Globex", careers_url: "https://jobs.example.test/globex", enabled: false },
+      { name: "Acme AI", careers_url: "https://careers.acme.example/jobs" },
+      { name: "Initech", api: "https://boards-api.example.test/initech" },
+      { careers_url: "https://nameless.example" },
+      "not a company",
+    ],
+  };
+  assert.deepEqual(watchedCompanies(doc), [
+    { name: "Acme AI", enabled: true, host: "careers.acme.example" },
+    { name: "Initech", enabled: true, host: "boards-api.example.test" },
+    { name: "Globex", enabled: false, host: "jobs.example.test" },
+  ]);
+  assert.deepEqual(watchedCompanies({ title_filter: {} }), []);
 });

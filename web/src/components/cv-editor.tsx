@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import { SkillGaps } from "@/components/skill-gaps";
 import remarkGfm from "remark-gfm";
 import { Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -40,6 +41,11 @@ export function CvEditor({ footer }: { footer?: React.ReactNode }) {
         setExists(true);
         setSaved(true);
         setTimeout(() => setSaved(false), 2000);
+        // The skill-gap panel below reads cv.md to subtract skills the user
+        // already has, so a save changes its answer. Announced rather than
+        // wired directly, following the co-job-done convention, so the panel
+        // stays a listener and this stays a save.
+        window.dispatchEvent(new CustomEvent("co-cv-saved"));
       }
     } finally {
       setSaving(false);
@@ -105,6 +111,10 @@ export function CvEditor({ footer }: { footer?: React.ReactNode }) {
           </Card>
         </div>
       )}
+
+      {/* Below the editor: the gaps are context for what to write next, and they
+          belong after the document rather than competing with it. */}
+      <SkillGaps />
       {footer}
     </div>
   );

@@ -5,6 +5,7 @@ import { parseEnv, promisify } from "node:util";
 import * as yaml from "js-yaml";
 import { careerOpsRoot, coreModule, profilesModule, readInbox, userRoot, activeProfile, type NotifyModule } from "@/lib/career-ops";
 import { scanFunnel } from "@/lib/portals-config.mjs";
+import { getProfilePath } from "@/lib/core/profile-path.mjs";
 import { driftedKeywords, laneFindings, parseSchtasks, setupChecklist } from "@/lib/home/setup-check.mjs";
 
 // Everything Home shows about profiles, the digest, filters, lanes and
@@ -130,7 +131,7 @@ export async function homeData(): Promise<HomeData> {
   const running = task && task.health !== "disabled";
 
   const card = (name: string | null, dir: string, pending: number): ProfileCard => {
-    const profile = attempt(() => readYaml(path.join(dir, "config", "profile.yml")));
+    const profile = attempt(() => readYaml(getProfilePath(dir, { explicitRoot: true })));
     const p = failed(profile) ? {} : obj(profile);
     const primary = obj(p.target_roles).primary;
     const roles = Array.isArray(primary) ? primary.filter((r) => typeof r === "string").slice(0, 2).join(" · ") : "";
@@ -210,7 +211,8 @@ export async function homeData(): Promise<HomeData> {
     filters: attempt(() => readYaml(path.join(root, "portals.yml"))),
     funnel: scanFunnel(tsv),
     lanes,
-    prefs: attempt(() => readYaml(path.join(root, "config", "profile.yml"))),
+    // A named profile's file is its own; CAREER_OPS_PROFILE applies only to the default root.
+    prefs: attempt(() => readYaml(getProfilePath(root, { explicitRoot: Boolean(activeProfile()) }))),
     checkedAt: new Date().toISOString(),
   };
 }

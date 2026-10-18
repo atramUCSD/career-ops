@@ -1,4 +1,5 @@
 import { activeProfile, careerOpsRoot, profilesModule, setActiveProfile } from "@/lib/career-ops";
+import { readJsonObject } from "@/lib/json-body";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,12 +19,8 @@ export async function GET() {
 
 /** `{select: name | null}` switches (null = the owner); `{create: name}` scaffolds and switches. */
 export async function POST(req: Request) {
-  let body: { select?: string | null; create?: string };
-  try {
-    body = await req.json();
-  } catch {
-    return Response.json({ error: "invalid JSON" }, { status: 400 });
-  }
+  const body = await readJsonObject<{ select?: string | null; create?: string }>(req);
+  if (!body) return Response.json({ error: "invalid JSON" }, { status: 400 });
   try {
     if (typeof body.create === "string") {
       const mod = await profilesModule();

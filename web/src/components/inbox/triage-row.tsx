@@ -6,13 +6,15 @@ import { Bookmark, BookmarkCheck, Loader2, X } from "lucide-react";
 import type { InboxJob } from "@/lib/career-ops";
 import type { AtsSource } from "@/lib/explore";
 import { ATS_LABEL } from "@/lib/explore";
+import { unscoredInboxHref } from "@/lib/posting-url.mjs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { listItem } from "@/components/ui/motion";
 import { CompanyLogo } from "@/components/company-logo";
 import { cn } from "@/lib/cn";
+import { inboxScoreTarget } from "@/lib/inbox-score-target.mjs";
 
-export type RowScore = { score: number | null; tone: "good" | "warn" | "bad" | "muted"; jobId: string; running: boolean };
+export type RowScore = { score: number | null; tone: "good" | "warn" | "bad" | "muted"; jobId: string; running: boolean; reportN?: number | null };
 
 function agoLabel(age: number | null): string | null {
   if (age == null) return null;
@@ -51,7 +53,15 @@ export function TriageRow({
   onSkip: () => void;
 }) {
   const ago = agoLabel(age);
-  const evaluated = !!scored && (scored.running || scored.score != null);
+  const target = inboxScoreTarget(scored);
+  const evaluated = target.evaluated;
+  const postingHref = unscoredInboxHref(job.url, evaluated);
+  const title = (
+    <>
+      <span className="truncate font-medium text-foreground">{job.company}</span>
+      <span className="truncate text-muted"><span className="max-sm:hidden"> · </span>{job.role}</span>
+    </>
+  );
 
   return (
     <motion.li
@@ -79,8 +89,13 @@ export function TriageRow({
 
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm max-sm:flex max-sm:flex-col">
-          <span className="truncate font-medium text-foreground">{job.company}</span>
-          <span className="truncate text-muted"><span className="max-sm:hidden"> · </span>{job.role}</span>
+          {postingHref ? (
+            <a href={postingHref} target="_blank" rel="noreferrer" className="rounded-sm hover:text-brand focus-ring max-sm:flex max-sm:flex-col">
+              {title}
+            </a>
+          ) : (
+            title
+          )}
         </p>
         <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-2xs text-faint">
           {job.location && <span className="truncate">{job.location}</span>}
@@ -92,10 +107,16 @@ export function TriageRow({
       </div>
 
       {/* EVALUADA state (right-aligned, visually distinct from raw rows) */}
-      {evaluated ? (
+      {evaluated && target.href ? (
         <Link
-          href={`/jobs/${scored!.jobId}`}
-          aria-label={scored!.running ? `Scoring ${job.company}` : `${job.company} scored ${scored!.score}/5`}
+          href={target.href}
+          aria-label={
+            scored!.running
+              ? `Scoring ${job.company}`
+              : target.showScore
+                ? `${job.company} scored ${scored!.score}/5`
+                : `Open the ${job.company} report`
+          }
           className="flex shrink-0 items-center gap-1.5 rounded-md text-xs focus-ring max-sm:min-h-11"
         >
           {scored!.running ? (
@@ -103,8 +124,10 @@ export function TriageRow({
               <Loader2 aria-hidden className="size-3.5 text-brand motion-safe:animate-spin" />
               <span className="text-brand max-sm:hidden">Scoring…</span>
             </>
-          ) : (
+          ) : target.showScore ? (
             <Badge tone={scored!.tone}>{scored!.score}/5</Badge>
+          ) : (
+            <span className="text-brand">Report</span>
           )}
         </Link>
       ) : (

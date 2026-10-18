@@ -288,11 +288,20 @@ try {
     const withTmpCwd = async (setup, run) => {
       const tmp = mkdtempSync(join(tmpdir(), 'career-ops-jobtech-fallback-'));
       const cwdBefore = process.cwd();
+      // The fallback resolves through getProfilePath() from the data root, not
+      // the cwd (#5095), so point the root at the fixture as vdab's test does.
+      const rootEnvBefore = { root: process.env.CAREER_OPS_ROOT, dir: process.env.CAREER_OPS_DATA_DIR };
       try {
         setup(tmp);
         process.chdir(tmp);
+        process.env.CAREER_OPS_ROOT = tmp;
+        process.env.CAREER_OPS_DATA_DIR = '';
         return await run();
       } finally {
+        if (rootEnvBefore.root === undefined) delete process.env.CAREER_OPS_ROOT;
+        else process.env.CAREER_OPS_ROOT = rootEnvBefore.root;
+        if (rootEnvBefore.dir === undefined) delete process.env.CAREER_OPS_DATA_DIR;
+        else process.env.CAREER_OPS_DATA_DIR = rootEnvBefore.dir;
         // chdir back BEFORE removing: Windows refuses to delete the process's
         // own working directory.
         process.chdir(cwdBefore);

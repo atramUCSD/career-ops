@@ -7,10 +7,10 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { isNestedCheckout } from "../../../lib/mjs-files.mjs";
+import { listTree } from "../../../lib/walk-tree.mjs";
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src");
 
@@ -42,18 +42,10 @@ const ALLOW = [
   },
 ];
 
-function walk(dir) {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-    const p = join(dir, e.name);
-    if (e.isDirectory()) return isNestedCheckout(p) ? [] : walk(p);
-    return [p];
-  });
-}
-
 function scan() {
   const hits = [];
   const used = new Set();
-  for (const abs of walk(SRC)) {
+  for (const abs of listTree(SRC)) {
     const file = relative(SRC, abs).split(sep).join("/");
     if (file.startsWith("components/ui/")) continue;
     const buf = readFileSync(abs);

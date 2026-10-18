@@ -5,9 +5,12 @@ import * as yaml from "js-yaml";
 import { careerOpsRoot, rootScript, spawnEnv, userRoot } from "@/lib/career-ops";
 import { writeTempPortals, cleanupTempPortals } from "./portals";
 import { profileTargetKeywords } from "@/lib/profile-keywords.mjs";
+import { getProfilePath } from "@/lib/core/profile-path.mjs";
 import { titleFit } from "@/lib/title-fit.mjs";
 import { resolveScanTimeoutMs, scanTimeoutMessage } from "./scan-timeout.mjs";
-import { ATS_SOURCES, type DiscoveredOffer, type ExploreFilters, type FitBand, type ScanEvent } from "@/lib/explore";
+import { ATS_LABEL, ATS_SOURCES, type AtsSource, type DiscoveredOffer, type ExploreFilters, type FitBand, type ScanEvent } from "@/lib/explore";
+import { mergeScanResults, timedOutMessage } from "./scan-merge.mjs";
+import { parseScanJsonStdout } from "./scan-json.mjs";
 
 export type { DiscoveredOffer, ScanEvent, AtsSource } from "@/lib/explore";
 export { ATS_SOURCES } from "@/lib/explore";
@@ -50,9 +53,9 @@ function firstMatch(title: string, positives: string[]): string | undefined {
  * posture as seedExploreFilters in portals.ts). Annotation only: the result
  * never feeds filtering, ordering, or the summary counts.
  */
-function loadProfileTargets(): string[] {
+export function loadProfileTargets(): string[] {
   try {
-    const doc = yaml.load(fs.readFileSync(path.join(userRoot(), "config", "profile.yml"), "utf8"));
+    const doc = yaml.load(fs.readFileSync(getProfilePath(userRoot()), "utf8"));
     return profileTargetKeywords(doc && typeof doc === "object" ? (doc as Record<string, unknown>) : null);
   } catch {
     return [];
@@ -157,22 +160,42 @@ type ScanJson = {
 // Scan budget (ms) from config/profile.yml `scan.timeout_seconds` — the same
 // place `scan.extractor` lives. Never throws: a missing/malformed profile keeps
 // the default (a broken config must not block scanning).
-function readScanTimeoutMs(): number {
+export function readScanTimeoutMs(): number {
   try {
-    const parsed = yaml.load(fs.readFileSync(path.join(userRoot(), "config", "profile.yml"), "utf8"));
+    const parsed = yaml.load(fs.readFileSync(getProfilePath(userRoot()), "utf8"));
     return resolveScanTimeoutMs(parsed);
   } catch {
     return resolveScanTimeoutMs(undefined);
   }
 }
 
-export async function runDiscovery(filters: ExploreFilters, onEvent: (e: ScanEvent) => void): Promise<DiscoveredOffer[]> {
-  // The temp filter file wins over the profile's own portals.yml.
-  const tempPortals = writeTempPortals(filters);
-  const env = await spawnEnv({ CAREER_OPS_PORTALS: tempPortals });
+type ScannerRun = {
+  /** --json mode: the parsed result object, or null if the child produced none. */
+  json: ScanJson | null;
+  /** Killed at the deadline. */
+  timedOut: boolean;
+  /** Spawn/runtime failure message, when the child never produced a result. */
+  failed?: string;
+};
+
+/**
+ * Run ONE scan-ats-full.mjs child over `ats`, stopped after `timeoutMs`. Live
+ * progress is forwarded as it arrives. Offers the child surfaces while it runs
+ * (live stderr lines in --json mode, the human stdout in legacy mode) go into
+ * `sink`, which every child of one run shares so no offer is emitted twice. In
+ * --json mode the parsed result is returned for the caller to merge.
+ */
+function runScanner(
+  ats: string[],
+  useJson: boolean,
+  filters: ExploreFilters,
+  env: NodeJS.ProcessEnv,
+  onEvent: (e: ScanEvent) => void,
+  sink: { offers: DiscoveredOffer[]; seen: Set<string> },
+  timeoutMs: number,
+  roleTargets: string[],
+): Promise<ScannerRun> {
   return new Promise((resolve) => {
-    const ats = (filters.ats.length ? filters.ats : [...ATS_SOURCES]).filter((a) => (ATS_SOURCES as readonly string[]).includes(a));
-    const useJson = scannerSupportsJson();
     const args = [
       rootScript("scan-ats-full"),
       "--dry-run",
@@ -190,9 +213,7 @@ export async function runDiscovery(filters: ExploreFilters, onEvent: (e: ScanEve
       env,
     });
 
-    const offers: DiscoveredOffer[] = [];
-    const seen = new Set<string>();
-    const roleTargets = loadProfileTargets();
+    const { offers, seen } = sink;
     let currentAts: string = ats[0] || "";
     let pending: Omit<DiscoveredOffer, "url"> | null = null;
     let companiesScanned = 0;
@@ -204,11 +225,19 @@ export async function runDiscovery(filters: ExploreFilters, onEvent: (e: ScanEve
     // A broad ATS sweep can legitimately outlast the default budget (the scanner
     // probes every company in a source, not just --limit of them). Extend it in
     // config/profile.yml via scan.timeout_seconds. If our own timer fires, remember
-    // it so the close handler can say so honestly (and the scanner flushes the
+    // it so the caller can say so honestly (and the scanner flushes the
     // matches found so far as a partial --json result on SIGTERM).
-    const timeoutMs = readScanTimeoutMs();
     let timedOut = false;
     let hardKiller: ReturnType<typeof setTimeout> | undefined;
+    let settled = false;
+    const settle = (run: ScannerRun) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(killer);
+      if (hardKiller) clearTimeout(hardKiller);
+      resolve(run);
+    };
+
     const killer = setTimeout(() => {
       timedOut = true;
       try {
@@ -331,60 +360,93 @@ export async function runDiscovery(filters: ExploreFilters, onEvent: (e: ScanEve
     });
 
     child.on("error", (e) => {
-      clearTimeout(killer);
-      if (hardKiller) clearTimeout(hardKiller);
-      cleanupTempPortals(tempPortals);
-      onEvent({ kind: "error", message: e instanceof Error ? e.message : "scanner failed to start" });
-      resolve(offers);
+      settle({ json: null, timedOut, failed: e instanceof Error ? e.message : "scanner failed to start" });
     });
     child.on("close", () => {
-      clearTimeout(killer);
-      if (hardKiller) clearTimeout(hardKiller);
-      cleanupTempPortals(tempPortals);
       if (useJson) {
-        let j: ScanJson | null = null;
-        try {
-          j = JSON.parse(jsonOut.trim()) as ScanJson;
-        } catch {
-          j = null;
-        }
-        if (j && Array.isArray(j.offers)) {
-          for (const o of j.offers) {
-            ingestJsonOffer(o, currentAts, filters, seen, offers, onEvent, roleTargets);
-          }
-          onEvent({
-            kind: "summary",
-            companiesScanned: j.companiesScanned ?? 0,
-            unreachable: j.unreachableBoards ?? 0,
-            matches: j.postingsKept ?? offers.length,
-            companiesAvailable: j.companiesAvailable,
-            capHit: j.capHit,
-            datasetStatus: j.datasetStatus,
-            postingsDroppedNoDate: j.postingsDroppedNoDate,
-          });
-          // Stopped before finishing (our budget, or the scanner self-limited): the
-          // offers above are what it found so far — surface WHY without discarding them.
-          if (timedOut || j.stoppedEarly) {
-            const found = offers.length ? ` Showing the ${offers.length} match${offers.length === 1 ? "" : "es"} found so far.` : "";
-            onEvent({ kind: "error", message: scanTimeoutMessage(timeoutMs) + found });
-          }
-        } else {
-          // No parseable JSON. Either our timer stopped the scanner before it could
-          // emit its single stdout object (a full sweep outran the budget), or —
-          // defensively — the probe passed yet stdout still didn't parse. Say which.
-          onEvent({
-            kind: "error",
-            message: timedOut ? scanTimeoutMessage(timeoutMs) : "The scanner returned no readable output.",
-          });
-        }
-        resolve(offers);
+        const j = parseScanJsonStdout(jsonOut) as ScanJson | null;
+        settle({ json: j && Array.isArray(j.offers) ? j : null, timedOut });
         return;
       }
       if (outBuf.trim()) handleLine(outBuf);
-      // Legacy mode streams offers as they arrive, so any collected so far are
-      // returned; still tell the user the run was cut short if our timer fired.
-      if (timedOut) onEvent({ kind: "error", message: scanTimeoutMessage(timeoutMs) });
-      resolve(offers);
+      settle({ json: null, timedOut });
     });
   });
+}
+
+const NO_OUTPUT = "The scanner returned no readable output.";
+
+export async function runDiscovery(filters: ExploreFilters, onEvent: (e: ScanEvent) => void): Promise<DiscoveredOffer[]> {
+  const tempPortals = writeTempPortals(filters);
+  const ats = (filters.ats.length ? filters.ats : [...ATS_SOURCES]).filter((a) => (ATS_SOURCES as readonly string[]).includes(a));
+  const useJson = scannerSupportsJson();
+  // Read once per run: every child gets the same budget, and the copy quotes it
+  // exactly (a 1.5s budget must not read as 2s).
+  const timeoutMs = readScanTimeoutMs();
+  const deadlineSec = timeoutMs / 1000;
+  const roleTargets = loadProfileTargets();
+  const label = (a: string) => ATS_LABEL[a as AtsSource] ?? a;
+  // One sink for the whole run: offers streamed live by any child land here
+  // deduped by URL, and the final --json results below go through the same set.
+  const sink = { offers: [] as DiscoveredOffer[], seen: new Set<string>() };
+
+  try {
+    // The temp filter file wins over the profile's own portals.yml.
+    const env = await spawnEnv({ CAREER_OPS_PORTALS: tempPortals });
+    if (!useJson) {
+      // Older checkouts: one child, human-stdout parse. It streams offers as they
+      // arrive, so the ones collected so far are returned; a deadline kill still
+      // says so instead of ending silently.
+      const run = await runScanner(ats, false, filters, env, onEvent, sink, timeoutMs, roleTargets);
+      if (run.failed) onEvent({ kind: "error", message: run.failed });
+      else if (run.timedOut) onEvent({ kind: "error", message: scanTimeoutMessage(timeoutMs) });
+      return sink.offers;
+    }
+
+    // --json: one child per source, in parallel (see scan-merge.mjs for why).
+    // Dry runs write no scanner state and each source caches its own dataset
+    // file, so the children don't contend.
+    const runs = await Promise.all(
+      ats.map((a) => runScanner([a], true, filters, env, onEvent, sink, timeoutMs, roleTargets)),
+    );
+
+    const { offers, seen } = sink;
+    const finished: ScanJson[] = [];
+    runs.forEach((run, i) => {
+      if (!run.json) return;
+      finished.push(run.json);
+      for (const o of run.json.offers ?? []) ingestJsonOffer(o, ats[i], filters, seen, offers, onEvent, roleTargets);
+    });
+
+    // A child stopped at the deadline flushes what it found so far as a partial
+    // result (`stoppedEarly`), so having a result no longer means the source
+    // finished: its offers and counts are kept, and it is still named as incomplete.
+    const stopped = runs.map((r) => r.timedOut || r.json?.stoppedEarly === true);
+    const timedOut = ats.filter((_, i) => stopped[i]);
+    const incomplete = ats.filter((_, i) => !runs[i].json || stopped[i]);
+
+    if (finished.length === 0) {
+      const failed = runs.find((r) => r.failed)?.failed;
+      onEvent({
+        kind: "error",
+        message: timedOut.length ? timedOutMessage(timedOut.map(label), deadlineSec) : failed || NO_OUTPUT,
+      });
+      return offers;
+    }
+
+    if (timedOut.length) {
+      const message = timedOutMessage(timedOut.map(label), deadlineSec);
+      // No source finished: the timeout is the outcome, as when a stopped child
+      // printed nothing. Otherwise it is a note beside the sources that finished.
+      onEvent(incomplete.length === ats.length ? { kind: "error", message } : { kind: "log", line: message });
+    }
+    onEvent({
+      kind: "summary",
+      ...mergeScanResults(finished, offers.length),
+      ...(incomplete.length ? { incomplete } : {}),
+    });
+    return offers;
+  } finally {
+    cleanupTempPortals(tempPortals);
+  }
 }

@@ -2,10 +2,11 @@
 
 import { useMemo } from "react";
 import Link from "next/link";
-import { FileDown, Loader2, FileText, RotateCcw } from "lucide-react";
+import { FileDown, Loader2, FileText, RotateCcw, SlidersHorizontal, TriangleAlert } from "lucide-react";
 import { useJobs } from "@/components/jobs/job-store";
 import { CostBadge } from "@/components/cost/cost-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { pdfButtonState, type PdfFailure } from "@/lib/pdf-button-state.mjs";
 
 // Fires the real career-ops `pdf` mode (worker kind "pdf") to generate an
 // ATS-optimized CV tailored to THIS offer → output/cv-… + marks the tracker.
@@ -20,17 +21,18 @@ export function GeneratePdfButton({ n, company, pdfReady }: { n: string; company
   const generate = () =>
     startJob({ title: `CV PDF · ${company}`, subtitle: "tailored for this role", kind: "pdf", input: n, page: `/pipeline/${n}` });
 
-  if (job?.status === "running")
+  const state = pdfButtonState(job, pdfReady);
+
+  if (state.kind === "running")
     return (
-      <Link href={`/jobs/${job.id}`} className={buttonVariants({ variant: "soft", size: "sm" })}>
+      <Link href={`/jobs/${state.jobId}`} className={buttonVariants({ variant: "soft", size: "sm" })}>
         <Loader2 aria-hidden className="size-3.5 motion-safe:animate-spin" /> Generating CV…
       </Link>
     );
 
-  const ready = pdfReady || job?.status === "done";
-  if (ready)
+  if (state.kind === "ready")
     return (
-      <span className="inline-flex items-center gap-1">
+      <span className="inline-flex flex-wrap items-center gap-1">
         <a
           href={`/api/cv-pdf?n=${encodeURIComponent(n)}&company=${encodeURIComponent(company)}`}
           target="_blank"
@@ -39,6 +41,9 @@ export function GeneratePdfButton({ n, company, pdfReady }: { n: string; company
         >
           <FileText aria-hidden className="size-3.5" /> View tailored CV
         </a>
+        <Link href={`/pipeline/${encodeURIComponent(n)}/cv-studio`} className={buttonVariants({ variant: "soft", size: "sm" })}>
+          <SlidersHorizontal aria-hidden className="size-3.5" /> Review and customize
+        </Link>
         <Button
           variant="ghost"
           size="icon-sm"
@@ -49,6 +54,7 @@ export function GeneratePdfButton({ n, company, pdfReady }: { n: string; company
         >
           <RotateCcw aria-hidden className="size-3.5" />
         </Button>
+        <FailureNote failure={state.failure} />
       </span>
     );
 
@@ -56,7 +62,7 @@ export function GeneratePdfButton({ n, company, pdfReady }: { n: string; company
   // AI (spends tokens). Surface it right on the trigger so cost is never a
   // surprise — the community's #1 pain (mirrors Explore's token-honesty).
   return (
-    <span className="inline-flex items-center gap-1.5">
+    <span className="inline-flex flex-wrap items-center gap-1.5">
       <Button
         variant="secondary"
         size="sm"
@@ -67,6 +73,22 @@ export function GeneratePdfButton({ n, company, pdfReady }: { n: string; company
         <FileDown aria-hidden className="size-3.5" /> Generate tailored CV (PDF)
       </Button>
       <CostBadge kind="spend" size="xs" />
+      <FailureNote failure={state.failure} />
     </span>
+  );
+}
+
+function FailureNote({ failure }: { failure: PdfFailure }) {
+  if (!failure) return null;
+  return (
+    <Link
+      href={`/jobs/${failure.jobId}`}
+      role="alert"
+      title="Open the run log"
+      className="inline-flex max-w-md items-start gap-1 rounded-sm text-xs text-bad-text hover:underline focus-ring"
+    >
+      <TriangleAlert aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+      <span>CV not generated. {failure.reason}</span>
+    </Link>
   );
 }

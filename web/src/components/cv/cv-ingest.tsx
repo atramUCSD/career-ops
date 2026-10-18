@@ -14,6 +14,7 @@ import { Textarea } from "@/components/ui/field";
 import { listItem } from "@/components/ui/motion";
 import { instrumentSerif } from "@/lib/fonts";
 import { cvReadiness, parseCvStream, type CvSeed } from "@/lib/cv/quality";
+import { ingestErrorMessage } from "@/lib/cv/ingest-error.mjs";
 import { DEFAULT_FILTERS, filtersToParams } from "@/lib/explore";
 
 type Phase = "input" | "parsing" | "review" | "saving" | "error";
@@ -51,8 +52,9 @@ export function CvIngest({ onSaved }: { onSaved?: () => void }) {
     setErr("");
     try {
       const r = await fetch("/api/cv/ingest", init);
-      if (r.status === 404) {
-        setErr("Connect an AI CLI in Config first — it parses your CV locally.");
+      const failure = await ingestErrorMessage(r);
+      if (failure) {
+        setErr(failure);
         setPhase("error");
         return;
       }

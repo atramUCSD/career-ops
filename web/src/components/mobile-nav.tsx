@@ -12,7 +12,7 @@ import { UsageMeter } from "@/components/usage-meter";
 import { ProfilePicker } from "@/components/profile-picker";
 import { Button } from "@/components/ui/button";
 import { instrumentSerif } from "@/lib/fonts";
-import { NAV_ITEMS, isActivePath } from "@/lib/nav-items";
+import { visibleNavItems, isActivePath } from "@/lib/nav-items";
 import { useJobs } from "@/components/jobs/job-store";
 
 // Mobile navigation (< md): a top bar + a right-side slide-over drawer that
@@ -41,7 +41,7 @@ const STYLE = `
 
 const FOCUSABLE = 'a[href], button:not([disabled]), select:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-export function MobileNav() {
+export function MobileNav({ followupsEnabled }: { followupsEnabled: boolean }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const panelRef = useRef<HTMLElement>(null);
@@ -155,7 +155,7 @@ export function MobileNav() {
         </div>
 
         <nav className="flex flex-col gap-1 px-3">
-          {NAV_ITEMS.map(({ href, label, icon: Icon, chip }) => {
+          {visibleNavItems(followupsEnabled).map(({ href, label, icon: Icon, chip }) => {
             const active = isActivePath(href, pathname);
             return (
               <Link

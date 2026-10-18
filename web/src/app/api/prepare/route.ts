@@ -27,6 +27,7 @@ import { canonicalizeStatus } from "@/lib/core/states";
 import { atomicWrite } from "@/lib/core/safe-write";
 import { acquireTrackerWrite, releaseTrackerWrite } from "@/lib/core/run-registry";
 import { runPrepareBatch, MAX_PREPARE_BATCH } from "@/lib/prepare-fanout.mjs";
+import { readJsonObject } from "@/lib/json-body";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,12 +41,8 @@ const json = (obj: unknown, status: number) =>
   new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } });
 
 export async function POST(req: Request) {
-  let body: { urls?: unknown; cliId?: unknown };
-  try {
-    body = await req.json();
-  } catch {
-    return json({ error: "bad json" }, 400);
-  }
+  const body = await readJsonObject<{ urls?: unknown; cliId?: unknown }>(req);
+  if (!body) return json({ error: "bad json" }, 400);
   const { urls, cliId } = body;
   if (!Array.isArray(urls) || urls.length === 0 || !urls.every((u) => typeof u === "string" && u.trim())) {
     return json({ error: "urls (non-empty string array) and cliId required" }, 400);

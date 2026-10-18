@@ -56,8 +56,9 @@ import { fileURLToPath } from 'url';
 import * as yaml from 'js-yaml';
 import { flagValue, validateFlags } from './lib/cli-flags.mjs';
 import { localToday } from './lib/local-today.mjs';
+import { parseDate } from './lib/parse-date.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
-import { getCareerOpsRoot } from './path-resolver.mjs';
+import { getCareerOpsRoot, getProfilePath } from './path-resolver.mjs';
 
 const CAREER_OPS = dirname(fileURLToPath(import.meta.url));
 const DATA_ROOT = getCareerOpsRoot();
@@ -105,14 +106,6 @@ export function parsePositiveInt(value) {
 }
 
 // --- Date helpers (UTC-midnight calendar math — no time-of-day drift) ---
-export function parseDate(dateStr) {
-  const iso = String(dateStr ?? '').trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return null;
-  const date = new Date(`${iso}T00:00:00Z`);
-  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== iso) return null;
-  return date;
-}
-
 const isoDay = (date) => date.toISOString().slice(0, 10);
 
 // Shift a UTC-midnight date by whole calendar months, clamping the day to the
@@ -289,7 +282,7 @@ function loadTables(dir = TEMPLATES_DIR) {
 // partially parsed or silently swallowed: months stays null (default applies)
 // and a warning entry reports the rejected value.
 function loadConfigMaxAge() {
-  const profilePath = join(DATA_ROOT, 'config/profile.yml');
+  const profilePath = getProfilePath();
   if (!existsSync(profilePath)) return { months: null, warning: null };
   try {
     const profile = yaml.load(readFileSync(profilePath, 'utf-8'));

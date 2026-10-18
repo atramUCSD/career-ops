@@ -2,6 +2,8 @@ import path from "node:path";
 import { careerOpsRoot, userRoot } from "@/lib/career-ops";
 import { atomicWriteWithBackup } from "@/lib/core/safe-write";
 import { configErrorResponse, loadYamlDoc, setIn, toYaml } from "@/lib/yaml-doc.mjs";
+import { getProfilePath } from "@/lib/core/profile-path.mjs";
+import { profilePatchError } from "@/lib/profile-patch.mjs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -68,14 +70,15 @@ export async function POST(req: Request) {
   } catch {
     return Response.json({ error: "bad json" }, { status: 400 });
   }
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    return Response.json({ error: "expected an object" }, { status: 400 });
-  }
+  // Type and range checks first; profileEdits then validates language, spendTier
+  // and text lengths.
+  const invalid = profilePatchError(body);
+  if (invalid) return Response.json({ error: invalid }, { status: 400 });
   const edits = profileEdits(body as Record<string, unknown>);
   if (typeof edits === "string") return Response.json({ error: edits }, { status: 400 });
   if (edits.length === 0) return Response.json({ error: "nothing to write" }, { status: 400 });
 
-  const file = path.join(userRoot(), "config", "profile.yml");
+  const file = getProfilePath(userRoot());
   try {
     const template = path.join(careerOpsRoot(), "config", "profile.example.yml");
     const { doc, src, seeded } = loadYamlDoc(file, template, "config/profile.yml");

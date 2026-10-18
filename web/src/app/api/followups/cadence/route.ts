@@ -4,8 +4,11 @@ import path from "node:path";
 import * as yaml from "js-yaml";
 import { careerOpsRoot, rootScript, spawnEnv, userRoot } from "@/lib/career-ops";
 import { atomicWriteWithBackup } from "@/lib/core/safe-write";
+import { getProfilePath } from "@/lib/core/profile-path.mjs";
 import { PROFILE_CADENCE_KEYS, type ProfileCadenceKey } from "@/lib/followups";
 import { configErrorResponse, loadYamlDoc, setIn, toYaml } from "@/lib/yaml-doc.mjs";
+import { readJsonObject } from "@/lib/json-body";
+import { followupsEnabledFromProfile } from "@/lib/followups-setting.mjs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,7 +44,11 @@ async function readCoreDefaults(): Promise<Partial<Record<ProfileCadenceKey, num
   if (!fs.existsSync(script)) return null;
   const env = await spawnEnv();
   const stdout = await new Promise<string>((resolve) => {
-    execFile("node", [script, "--json"], { cwd: careerOpsRoot(), env, timeout: 12_000 }, (_e, out) => resolve(out || ""));
+    // process.execPath + windowsHide: see api/doctor/route.ts — a stale inherited
+    // console kills every child with 0xC0000142 on Windows; never inherit one.
+    execFile(process.execPath, [script, "--json"], { cwd: careerOpsRoot(), env, timeout: 12_000, windowsHide: true }, (_e, out) =>
+      resolve(out || ""),
+    );
   });
   try {
     const start = stdout.indexOf("{");
@@ -69,8 +76,9 @@ async function readCoreDefaults(): Promise<Partial<Record<ProfileCadenceKey, num
 }
 
 export async function GET() {
-  const file = path.join(userRoot(), "config", "profile.yml");
+  const file = getProfilePath(userRoot());
   const overrides: Partial<Record<ProfileCadenceKey, number>> = {};
+  let enabled = true;
   if (fs.existsSync(file)) {
     let profile: Record<string, unknown> = {};
     try {
@@ -79,6 +87,7 @@ export async function GET() {
     } catch {
       /* unreadable/malformed → show defaults (read is best-effort) */
     }
+    enabled = followupsEnabledFromProfile(profile);
     const source = isObj(profile.followup_cadence) ? profile.followup_cadence : {};
     for (const key of PROFILE_CADENCE_KEYS) {
       const n = Number.parseInt(String(source[key]), 10);
@@ -89,16 +98,12 @@ export async function GET() {
   // `defaultsAvailable: false` tells the form to render its placeholders as
   // unknown rather than inventing a number — an honest gap beats a stale copy.
   const effective = { ...(defaults ?? {}), ...overrides };
-  return Response.json({ defaults: defaults ?? {}, defaultsAvailable: defaults !== null, overrides, effective });
+  return Response.json({ defaults: defaults ?? {}, defaultsAvailable: defaults !== null, overrides, effective, enabled });
 }
 
 export async function POST(req: Request) {
-  let body: Record<string, unknown>;
-  try {
-    body = (await req.json()) as Record<string, unknown>;
-  } catch {
-    return Response.json({ error: "bad json" }, { status: 400 });
-  }
+  const body = await readJsonObject<Record<string, unknown>>(req);
+  if (!body) return Response.json({ error: "bad json" }, { status: 400 });
 
   const cadence: Record<string, number> = {};
   for (const key of PROFILE_CADENCE_KEYS) {
@@ -109,16 +114,24 @@ export async function POST(req: Request) {
     }
     cadence[key] = n;
   }
-  if (Object.keys(cadence).length === 0) return Response.json({ error: "nothing to write" }, { status: 400 });
+  if (body.enabled !== undefined && typeof body.enabled !== "boolean") {
+    return Response.json({ error: "enabled must be true or false" }, { status: 400 });
+  }
+  const enabled = body.enabled as boolean | undefined;
+  if (Object.keys(cadence).length === 0 && enabled === undefined) {
+    return Response.json({ error: "nothing to write" }, { status: 400 });
+  }
 
-  const file = path.join(userRoot(), "config", "profile.yml");
+  const file = getProfilePath(userRoot());
   try {
     // First create seeds from the example, so a profile is never cadence-only.
     const template = path.join(careerOpsRoot(), "config", "profile.example.yml");
     const { doc, src } = loadYamlDoc(file, template, "config/profile.yml");
     setIn(doc, ["followup_cadence"], cadence);
+    if (enabled !== undefined) setIn(doc, ["follow_ups", "enabled"], enabled);
     atomicWriteWithBackup(file, toYaml(doc, src));
-    return Response.json({ ok: true, followup_cadence: doc.toJS().followup_cadence });
+    const saved = doc.toJS();
+    return Response.json({ ok: true, followup_cadence: saved.followup_cadence, follow_ups: saved.follow_ups });
   } catch (error) {
     return configErrorResponse(error);
   }

@@ -10,6 +10,7 @@ import { layoutMove, listItem } from "@/components/ui/motion";
 import { CompanyLogo } from "@/components/company-logo";
 import { CostBadge } from "@/components/cost/cost-badge";
 import { cn } from "@/lib/cn";
+import { formatRunCostEstimate } from "@/lib/run-cost-estimate.mjs";
 
 export type ShortItem = { url: string; company: string; role: string };
 
@@ -27,16 +28,6 @@ export type PrepProgress = { running: boolean; label: string | null; byUrl: Reco
 // /api/prepare rejects larger batches with 400 (route time budget is shared
 // across sequential tailor workers) — say so up front instead of failing late.
 const PREPARE_MAX = 10;
-
-function fmtTokens(t: number): string {
-  if (t >= 1_000_000) return `${(t / 1_000_000).toFixed(1)}M`;
-  if (t >= 1_000) return `${Math.round(t / 1_000)}k`;
-  return `${t}`;
-}
-
-function costLine(e: { tokens?: number; usd?: number }): string {
-  return e.tokens ? `≈ ${fmtTokens(e.tokens)} tokens${e.usd != null ? ` · ≈ $${e.usd.toFixed(2)}` : ""}` : "uses your tokens";
-}
 
 // Pure batch characterization for "Prepare N" — one score slot per shortlist
 // item; null = no completed evaluation (blocked: nothing to tailor against).
@@ -97,8 +88,8 @@ export function ShortlistTray({
   if (items.length === 0) return null;
 
   const n = items.length;
-  const costText = costLine(estimate);
-  const prepCostText = costLine(prepEstimate);
+  const costText = formatRunCostEstimate(estimate);
+  const prepCostText = formatRunCostEstimate(prepEstimate);
 
   return (
     <div className="fixed inset-x-0 bottom-0 z-30 sm:bottom-4 md:left-60">

@@ -37,6 +37,7 @@ function initRepo(dir) {
   git(dir, 'init', '-q');
   git(dir, 'config', 'user.email', 'test@example.com');
   git(dir, 'config', 'user.name', 'Test');
+  git(dir, 'config', 'core.hooksPath', join(dir, 'no-such-hooks'));
 }
 
 // 1. A tracked .bak file is reported as a warning naming the remedy.

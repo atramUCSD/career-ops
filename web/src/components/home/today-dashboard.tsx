@@ -16,6 +16,7 @@ import type { HomeData } from "@/lib/home/home-data";
 import { QuickEvaluate } from "@/components/quick-evaluate";
 import { scoreNum } from "@/lib/format";
 import { pickAwaitingDecision } from "@/lib/home/awaiting.mjs";
+import { displayCounts, mayClaimAllClear, missingSourceLabel, resolveHeroState } from "@/lib/home/hero-state.mjs";
 import { CountUp } from "@/components/ui/charts";
 import { ProfileCards } from "./profile-cards";
 import { DigestPanel, when, type AlertsView } from "./digest-panel";
@@ -44,25 +45,41 @@ export function TodayDashboard({ applications, inBetween, home }: { applications
   const [showPreview, setShowPreview] = useState(false);
   // Counts start at 0: hide the headline until the first follow-ups/whats-new pair settles so its text never swaps.
   const [loaded, setLoaded] = useState(false);
+  const [errors, setErrors] = useState({ followups: false, fresh: false });
+  const [followupsEnabled, setFollowupsEnabled] = useState(true);
   const dateLabel = useMemo(() => new Date().toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" }), []);
 
   const refetch = useCallback(() => {
+    // Each resolves to whether its source failed. A failure leaves the old count in
+    // state; displayCounts() zeroes it so the headline never prints a stale figure.
+    const json = (r: Response) => {
+      if (!r.ok) throw new Error(r.statusText);
+      return r.json();
+    };
     const followups = fetch("/api/followups")
-      .then((r) => r.json())
+      .then(json)
       .then((d) => {
+        // The cadence route reports engine failures as 200 with available:false: unknown, not empty.
+        if (d.available === false) throw new Error("follow-ups unavailable");
         // /api/followups already filters to urgent/overdue: both are due now (#86).
         setDue((d.metadata?.overdue ?? 0) + (d.metadata?.urgent ?? 0));
         setOverdue(d.metadata?.overdue ?? 0);
+        setFollowupsEnabled(d.followupsEnabled !== false);
+        return false;
       })
-      .catch(() => {});
+      .catch(() => true);
     const whatsNew = fetch("/api/whats-new")
-      .then((r) => r.json())
+      .then(json)
       .then((d) => {
         const count = Number(d.count);
         setFreshCount(Number.isFinite(count) ? Math.max(0, Math.trunc(count)) : Array.isArray(d.offers) ? d.offers.length : 0);
+        return false;
       })
-      .catch(() => {});
-    Promise.allSettled([followups, whatsNew]).then(() => setLoaded(true));
+      .catch(() => true);
+    Promise.all([followups, whatsNew]).then(([followupsError, freshError]) => {
+      setErrors({ followups: followupsError, fresh: freshError });
+      setLoaded(true);
+    });
     // Composing the digest reads the whole pipeline (~1s), so it loads after the page.
     fetch("/api/alerts")
       .then((r) => r.json())
@@ -86,7 +103,12 @@ export function TodayDashboard({ applications, inBetween, home }: { applications
   const alerts = failed(home.alerts) ? null : (home.alerts as unknown as AlertsView);
   const fresh = preview && !failed(preview) ? preview.counts.fresh : null;
   const next = when(home.schedule?.nextRun ?? null);
-  const allClear = freshCount === 0 && due === 0 && awaiting.length === 0;
+  const flags = { followupsError: errors.followups, freshError: errors.fresh };
+  // "All caught up" only when every source answered (lib/home/hero-state.mjs).
+  const heroState = resolveHeroState({ followupsLoading: !loaded, freshLoading: !loaded, ...flags, overdue: due, newThisWeek: freshCount, awaitingCount: awaiting.length });
+  const allClear = mayClaimAllClear(heroState);
+  const shown = displayCounts({ ...flags, overdue: due, newThisWeek: freshCount });
+  const missing = missingSourceLabel(flags);
   const positives = useMemo(() => {
     const t = failed(home.filters) || !home.filters ? null : (home.filters.title_filter as { positive?: unknown } | undefined);
     return Array.isArray(t?.positive) ? t.positive.filter((s): s is string => typeof s === "string") : [];
@@ -109,21 +131,23 @@ export function TodayDashboard({ applications, inBetween, home }: { applications
               <span aria-hidden className="block h-[1.05em] w-2/3 max-w-md rounded-md bg-surface-muted motion-safe:animate-pulse" />
             ) : (
             <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: DURATION.base, ease: EASE_OUT }}>
-            {allClear ? (
+            {heroState === "unavailable" ? (
+              <>Some updates are unavailable.</>
+            ) : allClear ? (
               <>You&apos;re all caught up.</>
             ) : (
               <>
-                {freshCount > 0 && (
+                {shown.newThisWeek > 0 && (
                   <>
-                    <CountUp value={freshCount} className="text-brand" /> new match{freshCount === 1 ? "" : "es"} this week.{" "}
+                    <CountUp value={shown.newThisWeek} className="text-brand" /> new match{shown.newThisWeek === 1 ? "" : "es"} this week.{" "}
                   </>
                 )}
-                {due > 0 && (
+                {shown.overdue > 0 && (
                   <>
-                    <CountUp value={due} className="text-brand" /> follow-up{due === 1 ? "" : "s"} due today.
+                    <CountUp value={shown.overdue} className="text-brand" /> follow-up{shown.overdue === 1 ? "" : "s"} due today.
                   </>
                 )}
-                {freshCount === 0 && due === 0 && (
+                {shown.newThisWeek === 0 && shown.overdue === 0 && (
                   <>
                     <CountUp value={awaiting.length} className="text-brand" /> role{awaiting.length === 1 ? "" : "s"} awaiting your call.
                   </>
@@ -134,7 +158,14 @@ export function TodayDashboard({ applications, inBetween, home }: { applications
             )}
           </h1>
           <p className="mt-4 min-h-10 max-w-2xl text-sm text-muted">
-            {alerts?.enabled && alerts.to && next ? (
+            {missing ? (
+              <>
+                {missing} could not be read, so this may be missing work.{" "}
+                <button type="button" onClick={refetch} className="rounded-sm font-medium text-brand-text hover:underline focus-ring">
+                  Retry
+                </button>
+              </>
+            ) : alerts?.enabled && alerts.to && next ? (
               <>
                 The next digest goes to <span className="text-foreground">{alerts.to}</span> {next}.
                 {fresh !== null && (
@@ -147,8 +178,10 @@ export function TodayDashboard({ applications, inBetween, home }: { applications
               </>
             ) : allClear ? (
               "I'll keep scanning in the background and surface anything that fits."
-            ) : (
+            ) : followupsEnabled ? (
               "Your action queue for today: discovery and follow-ups, in one place."
+            ) : (
+              "Your action queue for today, in one place."
             )}
           </p>
           <div className="mt-6 flex flex-wrap gap-2.5">

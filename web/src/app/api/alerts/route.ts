@@ -4,6 +4,7 @@ import { careerOpsRoot, coreModule, rootScript, spawnEnv, userRoot, type NotifyM
 import { alertsPatch } from "@/lib/alerts-config.mjs";
 import { atomicWriteWithBackup } from "@/lib/core/safe-write";
 import { configErrorResponse, loadYamlDoc, setIn, toYaml } from "@/lib/yaml-doc.mjs";
+import { readJsonObject } from "@/lib/json-body";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -51,15 +52,8 @@ async function runAction(action: unknown): Promise<Response> {
 }
 
 export async function POST(req: Request) {
-  let body: Record<string, unknown>;
-  try {
-    body = await req.json();
-  } catch {
-    return Response.json({ error: "bad json" }, { status: 400 });
-  }
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    return Response.json({ error: "expected an object" }, { status: 400 });
-  }
+  const body = await readJsonObject<Record<string, unknown>>(req);
+  if (!body) return Response.json({ error: "bad json" }, { status: 400 });
   if (body.action !== undefined) return runAction(body.action);
 
   const result = alertsPatch(body.config);

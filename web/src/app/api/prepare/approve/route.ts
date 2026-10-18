@@ -16,6 +16,7 @@ import { careerOpsRoot, readApplications, rootScript, spawnEnv } from "@/lib/car
 import { canonicalizeStatus } from "@/lib/core/states";
 import { clientErrorMessage, parseCliJson, trackerRowArg } from "@/lib/status-cli.mjs";
 import { boundedLockWaitEnv, CORE_SCRIPT_TIMEOUT_MS } from "@/lib/prepare-fanout.mjs";
+import { readJsonObject } from "@/lib/json-body";
 
 export const runtime = "nodejs"; // delegates to the core CLI via child_process
 
@@ -52,12 +53,8 @@ async function runSetStatus(args: string[]): Promise<CliResult> {
 }
 
 export async function POST(req: Request) {
-  let body: { report?: unknown };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "bad json" }, { status: 400 });
-  }
+  const body = await readJsonObject<{ report?: unknown }>(req);
+  if (!body) return NextResponse.json({ error: "bad json" }, { status: 400 });
   // Same digits-only gate as /api/status's row selector: answer a bad request
   // before paying for a process spawn and a tracker lock.
   const report = trackerRowArg(body.report);

@@ -8,6 +8,7 @@ import { useJobs } from "@/components/jobs/job-store";
 import { WorkerCard } from "@/components/jobs/worker-card";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { layoutMove, listItem } from "@/components/ui/motion";
+import { workerDetailsLabel, workerIdentity } from "@/lib/worker-feedback.mjs";
 import { cn } from "@/lib/cn";
 
 // Collapsed "worker" pills in the sidebar — each the shared <WorkerCard> wrapped
@@ -59,7 +60,7 @@ export function WorkerPills() {
                 >
                   <Link
                     href={`/jobs/${j.id}`}
-                    aria-label={`Open ${j.title}`}
+                    aria-label={workerDetailsLabel(j)}
                     aria-current={active ? "page" : undefined}
                     className="absolute inset-0 rounded-md focus-ring"
                   />
@@ -73,7 +74,7 @@ export function WorkerPills() {
                         type="button"
                         onClick={() => removeJob(j.id)}
                         className="relative z-10 -m-1.5 grid size-6 place-items-center rounded-md text-faint opacity-0 focus-ring transition-opacity duration-150 ease-out group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100 max-md:opacity-100"
-                        aria-label={`Dismiss ${j.title}`}
+                        aria-label={`Dismiss worker: ${workerIdentity(j)}`}
                       >
                         <X aria-hidden className="size-3" />
                       </button>

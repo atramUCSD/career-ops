@@ -581,4 +581,17 @@ function selfTest() {
   if (!process.exitCode) console.log('enrich-jd self-test OK');
 }
 
+const USAGE = `Usage:
+  node enrich-jd.mjs                 fetch everything not already cached
+  node enrich-jd.mjs --limit 20      first N uncached rows (sample a run)
+  node enrich-jd.mjs --refresh       ignore the cache
+  node enrich-jd.mjs --reparse       re-extract from the cache, no network
+  node enrich-jd.mjs --stale 30      re-fetch only facts older than N days
+  node enrich-jd.mjs --skip linkedin.com   leave these hosts unread (comma list)
+  node enrich-jd.mjs --self-test     extraction checks, no network`;
+
+if (isMainModule(import.meta.url) && process.argv.slice(2).some((a) => a === '--help' || a === '-h')) {
+  console.log(USAGE);
+  process.exit(0);
+}
 if (isMainModule(import.meta.url)) await main();

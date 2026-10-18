@@ -6,6 +6,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { describeSpawn } from './helpers/describe-spawn.mjs';
 
 const SCRIPT = join(dirname(dirname(fileURLToPath(import.meta.url))), 'reconcile-pipeline.mjs');
 const URL = 'https://jobs.example.test/4521';
@@ -30,7 +31,7 @@ function fixture(t, { report, stateScore = '-', stateStatus = 'completed', langu
       timeout: 15_000,
     });
     assert.ifError(result.error);
-    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(result.status, 0, describeSpawn(result, `\n`));
     return result;
   };
   return { pipeline, original, run };

@@ -34,6 +34,7 @@ import { buildChannelTrust } from './channel-trust.mjs';
 import { resolveColumns, parseTrackerRow } from './tracker-parse.mjs';
 import { parseExpiredLog } from './expired-log.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
+import { getProfilePath } from './path-resolver.mjs';
 import { cumulativeTiles } from './web/src/lib/funnel-tiles.mjs';
 import { scaleLinear, barWidths, histogramBins, stackedSegments, sparklinePath, shadePct } from './web/src/lib/chart-geometry.mjs';
 import { computeRunStats } from './stats.mjs';
@@ -362,7 +363,7 @@ function loadUpskill(root) {
     }
     if (!reports.length) return null;
     const known = extractSkills(knownSkillsText(
-      readIf(join(root, 'cv.md')), readIf(join(root, 'config/profile.yml')), () => {}));
+      readIf(join(root, 'cv.md')), readIf(getProfilePath(root)), () => {}));
     const agg = aggregateGaps(reports, known);
     if (!agg.gaps.length) return null;
     return { gaps: agg.gaps.slice(0, 12), totalLowFit: agg.totalLowFit, reports: reports.length };
@@ -434,8 +435,8 @@ export function buildModel({ root = ROOT, now = new Date(), profileRoot = null, 
   // Response-likelihood prior. Runs after rows exist because two of its
   // signals — how many reqs a company has open, how often a company+title pair
   // has been seen — are properties of the pipeline, not of a single row.
-  const profile = existsSync(join(intentRoot, 'config/profile.yml'))
-    ? yaml.load(readFileSync(join(intentRoot, 'config/profile.yml'), 'utf-8')) || {}
+  const profile = existsSync(getProfilePath(intentRoot))
+    ? yaml.load(readFileSync(getProfilePath(intentRoot), 'utf-8')) || {}
     : {};
   const scoreRow = buildScorer({ profile, lanes, rows, history: history.added, facts: jdFacts });
   for (const r of rows) {
@@ -1785,4 +1786,11 @@ async function main(argv) {
   console.log(`${out} — ${model.rows.length} pending (${laneCounts}), ${Math.round(html.length / 1024)}KB`);
 }
 
+const USAGE = `Usage:
+  node build-artifact.mjs --out page.html`;
+
+if (isMainModule(import.meta.url) && process.argv.slice(2).some((a) => a === '--help' || a === '-h')) {
+  console.log(USAGE);
+  process.exit(0);
+}
 if (isMainModule(import.meta.url)) main(process.argv.slice(2));

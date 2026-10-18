@@ -6,6 +6,7 @@
 
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
+import { sectionState, scanHeadings, SECTIONS } from './lib/personalization.mjs';
 
 // Personalization files that silently degrade output while still passing the
 // existence check. `modes/_custom.md` is deliberately absent: it holds optional
@@ -15,8 +16,8 @@ import { join } from 'path';
 //     into every A-F evaluation, so offers are scored against a stranger.
 //   _brief.md unedited hands the triage first pass literal `{placeholders}`
 //     instead of the candidate's archetypes, comp floor and hard DQ criteria.
-// doctor auto-copies both from their templates on first run, so "the file
-// exists" is guaranteed and tells us nothing — only its CONTENT does.
+// Explicit onboarding copies both from their templates, so existence alone
+// tells us nothing about personalization — only the CONTENT does.
 export const PERSONALIZATION_FILES = [
   {
     path: 'modes/_profile.md',
@@ -40,15 +41,17 @@ function templatePlaceholders(text) {
 /**
  * [{ path, reason, impact }] for personalization files under `root` still
  * carrying template content. Missing files are NOT reported here — that is
- * the existence checks' job. Templates are read from `templateRoot`, which
- * differs from `root` when `root` is a profile's data directory: a profile
- * holds a copy of the template, never the template itself.
+ * the existence checks' job. Templates are read from `templateRoot` (the code
+ * checkout) first, so doctor and the web agree on which sections are still
+ * template text even when a separate data root or profile holds an older copy;
+ * `root`'s own copy only covers a checkout that ships none (#5340).
  */
 export function unpersonalizedFiles(root, templateRoot = root) {
   const out = [];
   for (const { path, template, impact } of PERSONALIZATION_FILES) {
     const targetPath = join(root, ...path.split('/'));
-    const templatePath = join(templateRoot, ...template.split('/'));
+    const checkoutTemplatePath = join(templateRoot, ...template.split('/'));
+    const templatePath = existsSync(checkoutTemplatePath) ? checkoutTemplatePath : join(root, ...template.split('/'));
     if (!existsSync(targetPath) || !existsSync(templatePath)) continue;
     let target, tpl;
     try {
@@ -56,6 +59,45 @@ export function unpersonalizedFiles(root, templateRoot = root) {
       tpl = readFileSync(templatePath, 'utf-8');
     } catch {
       continue; // unreadable → let the existence checks speak
+    }
+    // An empty file is neither identical to the template nor carries a
+    // placeholder, so it would pass as personalized while the web asks for
+    // every section (#5340).
+    if (!target.trim()) {
+      out.push({ path, reason: 'is empty', impact });
+      continue;
+    }
+    if (path === 'modes/_profile.md') {
+      // A _profile.md written in the user's own structure, without any of the
+      // eight ## Your … headings, is quiet here rather than reported as missing
+      // every section (#5126). Missing prerequisites speak for absent files.
+      const userHeadings = new Set(scanHeadings(target).heads.filter((h) => h.level === 2).map((h) => h.heading));
+      const hasAnyTemplateHeading = SECTIONS.some((s) => userHeadings.has(s.heading));
+      if (!hasAnyTemplateHeading) {
+        const left = [...templatePlaceholders(tpl)].filter((p) => target.includes(p));
+        if (left.length > 0) {
+          out.push({
+            path,
+            reason: `still has ${left.length} unfilled placeholder${left.length === 1 ? '' : 's'} (e.g. ${left[0]})`,
+            impact,
+          });
+        }
+        continue;
+      }
+      const states = sectionState(target, tpl);
+      const unfilled = states.filter((s) => s.state !== 'filled');
+      if (unfilled.length > 0) {
+        const n = unfilled.length;
+        const templateCount = unfilled.filter((s) => s.state === 'template').length;
+        const missingCount = unfilled.filter((s) => s.state === 'missing').length;
+        const ids = unfilled.map((s) => s.id).join(', ');
+        out.push({
+          path,
+          reason: `still has ${n} unfilled section${n === 1 ? '' : 's'}: ${templateCount} on template, ${missingCount} missing (${ids})`,
+          impact,
+        });
+      }
+      continue;
     }
     if (target === tpl) {
       out.push({ path, reason: 'still identical to the shipped template', impact });

@@ -206,4 +206,11 @@ function main(argv) {
   return 0;
 }
 
+const USAGE = `Usage:
+  node build-hub.mjs [--out output/hub.html]`;
+
+if (isMainModule(import.meta.url) && process.argv.slice(2).some((a) => a === '--help' || a === '-h')) {
+  console.log(USAGE);
+  process.exit(0);
+}
 if (isMainModule(import.meta.url)) process.exit(main(process.argv.slice(2)));

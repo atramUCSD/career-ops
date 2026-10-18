@@ -326,7 +326,8 @@ model.patterns && model.patterns.error && /Not enough data/.test(model.patterns.
   ? pass('analyze-patterns carries its own not-enough-data verdict instead of hiding it')
   : fail(`patterns error missing: ${JSON.stringify(model.patterns)}`);
 
-model.velocity && model.velocity.hops.length === 4 && model.velocity.waiting.inFlight === 1
+// Six hops since upstream's Assessment stage (#4317).
+model.velocity && model.velocity.hops.length === 6 && model.velocity.waiting.inFlight === 1
   ? pass('funnel-velocity folds the tracker even without a status log')
   : fail(`velocity wrong: ${JSON.stringify(model.velocity)}`);
 
