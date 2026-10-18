@@ -318,8 +318,15 @@ const SYSTEM_PATHS = [
   'tests/',
   'user-agent.mjs',
   'doctor.mjs',
+  // doctor.mjs imports this statically, so it has to arrive with doctor or an
+  // install upgraded onto this fork crashes on load. Upstream has never shipped
+  // it: apply skips it there as absent and the prune keeps the local copy.
+  'personalization.mjs',
   'jsonc-parse.mjs',
   'check-liveness.mjs',
+  // scan.mjs and check-liveness.mjs import this statically: same crash class
+  // as personalization.mjs above, and the same benign skip against upstream.
+  'expired-log.mjs',
   'liveness-core.mjs',
   'liveness-api.mjs',
   'liveness-browser.mjs',
@@ -564,7 +571,6 @@ export const USER_PATHS = [
   'build-hub.mjs',
   'build-artifact.mjs',
   'profiles.mjs',
-  'personalization.mjs',
   'callback-score.mjs',
   'enrich-jd.mjs',
   'notify-email.mjs',
@@ -572,7 +578,6 @@ export const USER_PATHS = [
   'gmail-replies.mjs',
   'resume-heat.mjs',
   'scripts/mint-gmail-token.mjs',
-  'expired-log.mjs',
   'prune-pipeline.mjs',
   'scripts/alert.cmd',
   'scripts/sweep.cmd',
