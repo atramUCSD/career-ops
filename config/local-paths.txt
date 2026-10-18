@@ -1,0 +1,5 @@
+# caveman IDE rule files (13fe5e4a): fork-only, never shipped by update-system
+.clinerules/caveman.md
+.cursor/rules/caveman.mdc
+.opencode/AGENTS.md
+.windsurf/rules/caveman.md
