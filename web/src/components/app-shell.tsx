@@ -32,7 +32,9 @@ export function AppShell({ children, followupsEnabled }: { children: React.React
       <ApplyProvider>
       <ExploreProvider>
       <MobileNav followupsEnabled={followupsEnabled} />
-      <div className="flex min-h-screen">
+      {/* md: only. Under md the sticky MobileNav sits above this box, so a
+          full-height min made every short page scroll by the header height. */}
+      <div className="flex md:min-h-screen">
         <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col overflow-y-auto border-r border-border bg-surface/30 p-4 md:flex">
           <Link href="/" className="mb-8 flex items-center gap-2.5 rounded-md px-1 focus-ring-inset">
             <CoMark size={32} />

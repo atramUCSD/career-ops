@@ -77,7 +77,6 @@ const GOV_BOARDS = /^(calcareers|calopps|clearancejobs|usajobs)/i;
 export function publicSectorReason(row, facts) {
   if (facts?.clearance === 'ts_sci') return 'TS/SCI in description';
   if (facts?.clearance === 'secret') return 'Secret clearance in description';
-  if (facts?.sector === 'gov') return 'government employer per description';
   if (GOV_BOARDS.test(row.portal || '')) return 'public-agency board';
   if (GOV_TEXT.test(row.t || '')) return 'title';
   if (GOV_TEXT.test(row.c || '') || GOV_EMPLOYERS.test(row.c || '')) return 'employer';

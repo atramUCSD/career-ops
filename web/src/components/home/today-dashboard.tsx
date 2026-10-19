@@ -3,12 +3,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Bell, CircleHelp, Eye, Sparkles } from "lucide-react";
+import { ArrowRight, Bell, ChevronRight, CircleHelp, Eye, Settings, Sparkles } from "lucide-react";
 import { motion } from "motion/react";
 import { DURATION, EASE_OUT } from "@/components/ui/motion";
 import { HeroGlow } from "@/components/hero-glow";
-import { Card } from "@/components/ui/card";
-import { Dialog } from "@/components/ui/dialog";
+import { Badge } from "@/components/ui/badge";
 import { StatCard } from "@/components/ui/stat-card";
 import { cn } from "@/lib/cn";
 import type { Application } from "@/lib/career-ops";
@@ -18,24 +17,17 @@ import { scoreNum } from "@/lib/format";
 import { pickAwaitingDecision } from "@/lib/home/awaiting.mjs";
 import { displayCounts, mayClaimAllClear, missingSourceLabel, resolveHeroState } from "@/lib/home/hero-state.mjs";
 import { CountUp } from "@/components/ui/charts";
-import { ProfileCards } from "./profile-cards";
-import { DigestPanel, when, type AlertsView } from "./digest-panel";
-import { SetupPanel } from "./setup-panel";
-import { FiltersPanel } from "./filters-panel";
-import { LanesPanel } from "./lanes-panel";
-import { PreferencesPanel } from "./preferences-panel";
-
-type Preview = { subject: string; html: string; to: string; quiet: boolean; counts: { fresh: number }; lastRun: string | null };
+import { when, type AlertsView } from "./digest-panel";
+import { PreviewDialog, failed, type Preview } from "./settings-panels";
+import { SETTINGS_SECTIONS } from "@/lib/home/settings-sections";
 
 // The three hero actions keep their pill shape (DESIGN.md section 5 exception).
 const HERO_LINK =
   "inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-medium focus-ring transition-colors duration-150 ease-out max-sm:min-h-11";
 
-const failed = (v: unknown): v is { error: string } => !!v && typeof v === "object" && "error" in v;
-
 // Home: the day's queue up top (supply: fresh scan matches; demand: follow-ups
-// due), then the control center for the active profile. Every panel edits the
-// same user-layer file the CLI reads, through the routes that keep a .bak.
+// due), then one row into /config for the settings that used to stack below it
+// and made Home ~17 phone screens of mostly set-once controls.
 export function TodayDashboard({ applications, inBetween, home }: { applications: Application[]; inBetween: boolean; home: HomeData }) {
   const router = useRouter();
   const [due, setDue] = useState(0);
@@ -109,10 +101,7 @@ export function TodayDashboard({ applications, inBetween, home }: { applications
   const allClear = mayClaimAllClear(heroState);
   const shown = displayCounts({ ...flags, overdue: due, newThisWeek: freshCount });
   const missing = missingSourceLabel(flags);
-  const positives = useMemo(() => {
-    const t = failed(home.filters) || !home.filters ? null : (home.filters.title_filter as { positive?: unknown } | undefined);
-    return Array.isArray(t?.positive) ? t.positive.filter((s): s is string => typeof s === "string") : [];
-  }, [home.filters]);
+  const setup = failed(home.checklist) ? null : home.checklist;
 
   return (
     <div className="mx-auto max-w-6xl space-y-8 px-4 py-6 max-sm:pb-24 sm:px-6 sm:py-8">
@@ -221,90 +210,25 @@ export function TodayDashboard({ applications, inBetween, home }: { applications
       </div>
       </div>
 
-      <ProfileCards profiles={home.profiles} active={home.active} />
-
-      <div className="grid items-start gap-4 lg:grid-cols-[3fr_2fr]">
-        {alerts ? (
-          <DigestPanel
-            key={JSON.stringify(alerts)}
-            alerts={alerts}
-            schedule={home.schedule}
-            gmailMissing={home.gmailMissing}
-            onPreview={() => setShowPreview(true)}
-          />
-        ) : (
-          <Broken title="Email digest" error={(home.alerts as { error: string }).error} />
+      <Link
+        href="/config"
+        className="flex items-center gap-3 rounded-2xl border border-border bg-surface px-5 py-4 focus-ring transition-colors duration-150 ease-out hover:border-brand/40"
+      >
+        <Settings aria-hidden className="size-4 shrink-0 text-brand" />
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium text-foreground">Settings for {home.active.label}</span>
+          <span className="block truncate text-xs text-muted">{SETTINGS_SECTIONS.map((x) => x.label).join(", ")}</span>
+        </span>
+        {setup && setup.ready < setup.total && (
+          <Badge tone="warn">
+            Setup {setup.ready}/{setup.total}
+          </Badge>
         )}
-        <SetupPanel checklist={home.checklist} schedule={home.schedule} gmailMissing={home.gmailMissing} checkedAt={home.checkedAt} />
-      </div>
-
-      {failed(home.filters) ? (
-        <Broken title="Scan filters" error={home.filters.error} />
-      ) : (
-        <FiltersPanel key={JSON.stringify(home.filters)} filters={home.filters} funnel={home.funnel} />
-      )}
-
-      {home.lanes && (
-        <div id="lanes" className="scroll-mt-6">
-          {failed(home.lanes) ? (
-            <Broken title="Lanes" error={home.lanes.error} />
-          ) : (
-            <LanesPanel key={JSON.stringify(home.lanes)} lanes={home.lanes} positives={positives} />
-          )}
-        </div>
-      )}
-
-      {failed(home.prefs) ? <Broken title="Preferences" error={home.prefs.error} /> : <PreferencesPanel key={JSON.stringify(home.prefs)} prefs={home.prefs} />}
+        <ChevronRight aria-hidden className="size-4 shrink-0 text-muted" />
+      </Link>
 
       {/* Mounted only while open so the digest iframe (remote images and all) loads on demand, as before. */}
       {showPreview && <PreviewDialog preview={preview} onClose={() => setShowPreview(false)} />}
     </div>
-  );
-}
-
-/** A file that exists but does not parse: say which and why rather than showing defaults over it. */
-function Broken({ title, error }: { title: string; error: string }) {
-  return (
-    <Card as="section" tone="bad" role="alert">
-      <h2 className="eyebrow text-sm font-semibold text-bad-text">{title}</h2>
-      <p className="mt-2 text-sm text-foreground">{error}</p>
-      <p className="mt-1 text-xs text-muted">Fix the file by hand; nothing here writes over it while it is broken.</p>
-    </Card>
-  );
-}
-
-function PreviewDialog({ preview, onClose }: { preview: Preview | { error: string } | null; onClose: () => void }) {
-  const ok = preview && !failed(preview) ? preview : null;
-  return (
-    <Dialog
-      open
-      onClose={onClose}
-      size="xl"
-      title={<span className="block truncate">{ok ? ok.subject : "Digest preview"}</span>}
-      description={
-        ok ? (
-          <span className="block truncate">
-            To {ok.to || "no one yet"}
-            {ok.quiet && " · would be skipped: nothing new"}
-          </span>
-        ) : undefined
-      }
-    >
-      {!preview ? (
-        <p className="text-sm text-muted">Composing…</p>
-      ) : failed(preview) ? (
-        <p role="alert" className="text-sm text-bad-text">
-          {preview.error}
-        </p>
-      ) : (
-        // No allow-scripts: the digest embeds posting titles from job boards.
-        <iframe
-          title="Digest preview"
-          sandbox="allow-popups allow-popups-to-escape-sandbox"
-          srcDoc={`<base target="_blank">${preview.html}`}
-          className="block size-full rounded-xl border border-border bg-white"
-        />
-      )}
-    </Dialog>
   );
 }

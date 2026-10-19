@@ -78,7 +78,7 @@ export function SetupPanel({
                       Personalize
                     </Button>
                   ) : (
-                    <Link href="/config" className={cn(buttonVariants({ variant: "soft", size: "sm" }), "shrink-0")}>
+                    <Link href="/config#engine" className={cn(buttonVariants({ variant: "soft", size: "sm" }), "shrink-0")}>
                       Connect a CLI
                     </Link>
                   ))}

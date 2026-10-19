@@ -312,6 +312,10 @@ dialog.ui-dialog:not([open])::backdrop { opacity: 0; }
   color: var(--fg);
   font-size: 0.95rem;
   line-height: 1.7;
+  /* Raw URLs and ===== rule lines are single unbreakable tokens; unwrapped, one
+     widens the whole prose box and a phone pans sideways. break-word, not
+     anywhere, so table min-content widths are untouched (see .report-prose td). */
+  overflow-wrap: break-word;
 }
 .report-prose > p,
 .report-prose > ul,

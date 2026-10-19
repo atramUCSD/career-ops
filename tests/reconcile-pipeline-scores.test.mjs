@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describeSpawn } from './helpers/describe-spawn.mjs';
+import { acquirePipelineLock } from '../pipeline-lock.mjs';
 
 const SCRIPT = join(dirname(dirname(fileURLToPath(import.meta.url))), 'reconcile-pipeline.mjs');
 const URL = 'https://jobs.example.test/4521';
@@ -136,4 +137,30 @@ test('dry-run, backup and repeated reconciliation preserve the Spanish pipeline'
   f.run();
   assert.equal(readFileSync(f.pipeline, 'utf8'), written);
   assert.equal(readFileSync(`${f.pipeline}.pre-reconcile.bak`, 'utf8'), f.original);
+});
+
+// reconcile rewrote pipeline.md with no lock, so a scan appending offers
+// mid-run lost them to this stale read-modify-write. A held lock must now make
+// it wait, then give up without writing, rather than write over the holder.
+test('a live run waits for the pipeline lock and writes nothing while another writer holds it', async t => {
+  const f = fixture(t, { report: '**Score:** 4.2/5' });
+  const root = dirname(dirname(f.pipeline));
+  const lock = await acquirePipelineLock(f.pipeline);
+  try {
+    const blocked = spawnSync(process.execPath, [SCRIPT, '--pipeline', f.pipeline, '--state', join(root, 'batch', 'batch-state.tsv')], {
+      cwd: root,
+      env: { ...process.env, CAREER_OPS_ROOT: root, CAREER_OPS_DATA_DIR: root, CAREER_OPS_TRACKER: '', CAREER_OPS_PIPELINE_LOCK_TIMEOUT_MS: '300' },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+    assert.ifError(blocked.error);
+    assert.notEqual(blocked.status, 0, 'a run that never got the lock must not report success');
+    assert.match(blocked.stderr, /pipeline lock timeout/);
+    assert.equal(readFileSync(f.pipeline, 'utf8'), f.original);
+    assert.equal(existsSync(`${f.pipeline}.pre-reconcile.bak`), false);
+  } finally {
+    lock.release();
+  }
+  f.run();
+  assert.equal(processedRow(f.pipeline).score, '4.2/5');
 });

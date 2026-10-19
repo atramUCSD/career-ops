@@ -146,6 +146,19 @@ test('08-defects.md rows round-trip, including hand-edited dispositions', () => 
   assert.match(broken.problems[0], /row \d+ does not match/);
 });
 
+test('a run of three or more hyphens cannot forge a row separator', () => {
+  const { defects, dropped } = mergeFindings(parseInput(input()), parsed());
+  defects[0].problem = 'a --- b';
+  defects[0].fix = 'x ---- y';
+  defects[1].problem = 'foo ---';
+  const back = parseDefects(formatDefects(defects, dropped));
+  assert.deepEqual(back.problems, []);
+  assert.equal(back.defects.length, defects.length);
+  assert.equal(back.defects[0].problem, 'a - b');
+  assert.equal(back.defects[0].fix, 'x - y');
+  assert.equal(back.defects[1].problem, 'foo -');
+});
+
 test('parseReply names the reader and the line on a contract violation', () => {
   const hm = READERS[2];
   assert.throws(() => parseReply('VERDICT: MAYBE\nDECIDED BY: L001 -- x\nFINDINGS:', hm), /^Error: 03-hm-full\.md: line 1: verdict "MAYBE"/);

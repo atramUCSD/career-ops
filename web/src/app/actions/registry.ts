@@ -109,7 +109,7 @@ function isAllowedPath(p: string): boolean {
   // The apply checklist is the one two-segment route. A wider pattern would
   // also allow /explore/:x/apply and similar paths this app does not have.
   if (/^\/pipeline\/[^/]+\/apply$/.test(path)) return true;
-  return /^\/(explore|pipeline|portals|analytics|cv|config|apply|jobs)(\/[^/]+)?$/.test(path);
+  return /^\/(explore|board|pipeline|portals|analytics|cv|config|apply|jobs)(\/[^/]+)?$/.test(path);
 }
 
 function genBatchId(): string {

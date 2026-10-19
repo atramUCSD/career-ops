@@ -55,8 +55,9 @@ const ATS_AFTER = { ...READERS[0], file: '10-ats.after.md' };
 const DISPOSITIONS = ['pending', 'fix', 'needs-user', 'wontfix'];
 const stem = (reader) => reader.file.replace(/\.md$/, '');
 const lineNo = (id) => Number(id.slice(1));
-// Row fields are joined with ' -- ', so no field may contain '--'.
-const clean = (s) => String(s).replace(/\s+/g, ' ').replace(/--/g, '-').trim();
+// Row fields are joined with ' -- ', so no field may contain '--'. The whole
+// run collapses: replacing pairs would leave '---' as '--'.
+const clean = (s) => String(s).replace(/\s+/g, ' ').replace(/-{2,}/g, '-').trim();
 
 /**
  * Parse one reader's reply against the output contract in modes/hiring-panel.md.

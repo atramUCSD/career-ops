@@ -21,6 +21,9 @@ const item = (id, title, extra = {}) => ({
   ...extra,
 });
 const page = (rows, totalPages = 1) => ({ data: rows, meta: { pagination: { total_pages: totalPages, per_page: 20 } } });
+// Test clock: records each delay instead of waiting it out.
+const slept = [];
+const sleep = async (ms) => { slept.push(ms); };
 
 try {
   const mod = await import(pathToFileURL(join(ROOT, 'providers/clearancejobs.mjs')).href);
@@ -71,7 +74,8 @@ try {
             : page([item(100, 'Last')], 5);
         }
         return page([item(1, 'Job 1')]); // duplicate of software p1
-      } },
+      },
+      sleep },
   );
   const sw = sent.filter(s => s.body.keywords === 'software');
   if (fetched.length === 21 && sw.length === 2 && sent.length === 3) {
@@ -79,6 +83,9 @@ try {
   } else {
     fail(`clearancejobs.fetch() returned ${fetched.length} jobs over ${sent.length} requests`);
   }
+  // One delay: between software p1 and p2, none after a short page.
+  if (slept.join() === '250') pass('clearancejobs.fetch() paces 250 ms between pages through the ctx clock');
+  else fail(`clearancejobs.fetch() slept ${JSON.stringify(slept)}`);
   const first = sent[0];
   const ux = sent.find(s => s.body.keywords === 'ux');
   if (first.url === 'https://api.clearancejobs.com/api/v1/jobs/search' && first.method === 'POST'
@@ -89,39 +96,57 @@ try {
     fail(`clearancejobs.fetch() sent ${JSON.stringify(sent.slice(0, 1))}`);
   }
 
-  // max_pages bounds the walk even when the source reports more pages
+  // max_pages bounds the walk even when the source reports more pages. Run
+  // with no ctx clock, as makeHttpCtx() supplies none: pacing must still
+  // happen on a real timer, stubbed here to record the delay and fire at once.
   let calls = 0;
-  await cj.fetch(
-    { name: 'C', clearancejobs: { max_pages: 2, queries: [{ keywords: 'x' }] } },
-    { fetchJson: async () => { calls++; return page(Array.from({ length: 20 }, (_, i) => item(calls * 100 + i, 'J')), 9999); } },
-  );
+  const realSetTimeout = globalThis.setTimeout;
+  const timers = [];
+  try {
+    globalThis.setTimeout = (fn, ms, ...rest) => { timers.push(ms); return realSetTimeout(fn, 0, ...rest); };
+    await cj.fetch(
+      { name: 'C', clearancejobs: { max_pages: 2, queries: [{ keywords: 'x' }] } },
+      { fetchJson: async () => { calls++; return page(Array.from({ length: 20 }, (_, i) => item(calls * 100 + i, 'J')), 9999); } },
+    );
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
   if (calls === 2) pass('clearancejobs.fetch() stops at max_pages regardless of reported total_pages');
   else fail(`clearancejobs.fetch() made ${calls} calls with max_pages 2`);
+  if (timers.includes(250)) pass('clearancejobs.fetch() still paces between pages when ctx has no sleep');
+  else fail(`clearancejobs.fetch() without ctx.sleep armed timers ${JSON.stringify(timers)}`);
 
-  const empty = await cj.fetch({ name: 'C', clearancejobs: { keywords: ['none'] } }, { fetchJson: async () => page([], 0) });
+  const empty = await cj.fetch({ name: 'C', clearancejobs: { keywords: ['none'] } }, { fetchJson: async () => page([], 0), sleep });
   if (Array.isArray(empty) && empty.length === 0) pass('clearancejobs.fetch() returns [] for a zero-hit answer');
   else fail(`clearancejobs.fetch() empty = ${JSON.stringify(empty)}`);
 
   let malformed = '';
   try {
-    await cj.fetch({ name: 'C', clearancejobs: { keywords: ['x'] } }, { fetchJson: async () => ({ message: 'The loc must be an array.' }) });
+    await cj.fetch({ name: 'C', clearancejobs: { keywords: ['x'] } }, { fetchJson: async () => ({ message: 'The loc must be an array.' }), sleep });
   } catch (err) { malformed = err.message; }
   if (malformed.includes('unexpected response') && malformed.includes('message')) pass('clearancejobs.fetch() throws when every query answers malformed');
   else fail(`clearancejobs.fetch() malformed error = ${JSON.stringify(malformed) || 'did not throw'}`);
 
   let partialThrew = false;
   let partial;
+  let badCalls = 0;
   try {
     partial = await cj.fetch(
       { name: 'C', clearancejobs: { keywords: ['OK', 'BAD'] } },
       { fetchJson: async (_url, opts) => {
-          if (JSON.parse(opts.body).keywords === 'BAD') throw new Error('HTTP 503');
+          if (JSON.parse(opts.body).keywords === 'BAD') {
+            badCalls++;
+            throw Object.assign(new Error('HTTP 503'), { status: 503 });
+          }
           return page([item(7, 'Analyst')]);
-        } },
+        },
+        sleep },
     );
   } catch { partialThrew = true; }
   if (!partialThrew && partial.length === 1) pass('clearancejobs.fetch() keeps partial results when one query fails');
   else fail(`clearancejobs.fetch() partial threw=${partialThrew}, result=${JSON.stringify(partial)}`);
+  if (badCalls === 3) pass('clearancejobs.fetch() retries a 503 page twice before giving up on the query');
+  else fail(`clearancejobs.fetch() made ${badCalls} request(s) for a persistently 503 query`);
 } catch (e) {
   fail(`clearancejobs provider tests crashed: ${e.message}`);
 }

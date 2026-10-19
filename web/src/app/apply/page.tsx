@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 export default function ApplyPage() {
   return (
-    <div className="relative min-h-screen">
+    <div className="relative">
       {/* full-viewport blurred form wallpaper (behind everything) */}
       <ApplyBackdropMount />
       <div className="relative z-10 mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-8 max-sm:pb-24">

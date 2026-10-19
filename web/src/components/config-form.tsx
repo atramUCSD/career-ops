@@ -105,13 +105,11 @@ export function ConfigForm() {
   const installed = clis?.filter((c) => c.installed) ?? [];
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-8 max-sm:pb-24">
-      <h1 className="font-display text-2xl tracking-tight text-landing">Config</h1>
-      <p className="mt-1 text-sm text-muted">
+    <section id="engine" aria-labelledby="config-engine" className="max-w-3xl scroll-mt-6 max-md:scroll-mt-24">
+      <h2 id="config-engine" className="eyebrow mb-1 text-xs font-semibold text-muted">AI engine</h2>
+      <p className="mb-3 text-sm text-muted">
         Run career-ops on your own AI, right on your computer. Your CV and data never leave your machine.
       </p>
-
-      <h2 className="eyebrow mt-6 mb-3 text-xs font-semibold text-muted">AI engine</h2>
       <div className="grid gap-2 sm:grid-cols-3">
         <ModeCard
           active={mode === "cli"}
@@ -292,8 +290,7 @@ export function ConfigForm() {
       </div>
 
       <CadenceSettings />
-
-    </div>
+    </section>
   );
 }
 

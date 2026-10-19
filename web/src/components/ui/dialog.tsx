@@ -15,6 +15,8 @@ const SIZES = {
   // The height sits on the dialog, not the body: flex-1's 0% basis ignores a body
   // height, and a definite dialog height lets h-full children (the digest iframe) resolve.
   xl: "h-[85vh] max-w-3xl",
+  // Workspace overlay (the /board card panel): the viewport minus the base gutter.
+  full: "h-[90vh] max-w-none",
 } as const;
 
 export function Dialog({

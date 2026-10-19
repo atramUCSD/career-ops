@@ -37,12 +37,15 @@
 
 import { resolveProfileKeywords } from './_profile-keywords.mjs';
 import { decodeEntities } from './_html-entities.mjs';
+import { sleep } from './_http.mjs';
 
 const SEARCH_URL = 'https://calcareers.ca.gov/CalHrPublic/Search/JobSearchResults.aspx';
 const POSTING_URL = 'https://www.calcareers.ca.gov/CalHrPublic/Jobs/JobPosting.aspx?JobControlId=';
 const F = 'ctl00$cphMainContent$';
 const FIRST_PAGE = 10;
 const MAX_ROWS = 100;
+// Spacing between keywords' postback chains, all on one session.
+const INTER_PAGE_DELAY_MS = 500;
 
 /**
  * Hidden inputs of a WebForms page, decoded, as the base of the next postback.
@@ -128,6 +131,9 @@ export default {
 
     /** @type {Map<string, string>} */
     const jar = new Map();
+    // Not wrapped in fetchTextWithRetry: that reads through ctx.fetchText,
+    // which drops the Set-Cookie this session lives on. A failed keyword
+    // already restarts the session below, so a blip costs one keyword.
     /** @param {URLSearchParams | null} form */
     const request = async (form) => {
       const res = await ctx.fetchResponse(SEARCH_URL, {
@@ -189,7 +195,7 @@ export default {
         // post from; restart the session form.
         try { html = await request(null); } catch { break; }
       }
-      if (ctx.sleep) await ctx.sleep(500);
+      await sleep(INTER_PAGE_DELAY_MS, ctx);
     }
 
     if (succeeded === 0 && errors.length) {

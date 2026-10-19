@@ -33,10 +33,11 @@
  *   CAREER_OPS_PIPELINE overrides the pipeline path (same env var scan.mjs uses).
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { parseExpiredLog, EXPIRED_LOG_PATH } from './expired-log.mjs';
 import { normalizeUrlForDedup } from './scan.mjs';
 import { withPipelineLock } from './pipeline-lock.mjs';
+import { writeFileAtomic } from './tracker-utils.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
 
 const PIPELINE_PATH = process.env.CAREER_OPS_PIPELINE || 'data/pipeline.md';
@@ -156,7 +157,7 @@ async function main() {
   const run = () => {
     const text = readFileSync(PIPELINE_PATH, 'utf-8');
     const plan = planPrune(text, dead, { staleDays, today });
-    if (!dryRun && plan.moved.length > 0) writeFileSync(PIPELINE_PATH, plan.text, 'utf-8');
+    if (!dryRun && plan.moved.length > 0) writeFileAtomic(PIPELINE_PATH, plan.text);
     return plan;
   };
   const plan = dryRun ? run() : await withPipelineLock(PIPELINE_PATH, async () => run());

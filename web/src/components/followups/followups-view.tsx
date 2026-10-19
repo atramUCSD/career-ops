@@ -238,7 +238,7 @@ export function FollowupsView() {
       {meta && !filtering && <NarrativeCard meta={meta} entries={entries} />}
 
       {/* urgency filter */}
-      <div role="group" aria-label="Filter by urgency" className="flex flex-nowrap gap-1 overflow-x-auto border-b border-border">
+      <div role="group" aria-label="Filter by urgency" className="flex flex-nowrap gap-1 overflow-x-auto border-b border-border max-sm:scroll-px-4 max-sm:[mask-image:linear-gradient(to_right,#000_calc(100%-2rem),transparent)]">
         {URGENCY_TABS.map((t) => {
           const count = t === "ALL" ? entries.length : entries.filter((e) => e.urgency.toUpperCase() === t).length;
           return (

@@ -34,6 +34,8 @@ import { parsePendingRows } from './swarm.mjs';
 import { resolveAtsApi, greenhouseEmbed } from './liveness-api.mjs';
 import { DEFAULT_USER_AGENT } from './user-agent.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
+import { flagValue, hasFlag, safeIntFlag, validateFlags } from './lib/cli-flags.mjs';
+import { writeFileAtomic } from './tracker-utils.mjs';
 
 import { getCareerOpsRoot } from './path-resolver.mjs';
 const DATA_ROOT = getCareerOpsRoot();
@@ -318,6 +320,13 @@ async function fetchJd(url) {
 // a generic "no longer available" page that is long enough to pass every
 // length test and parses into confident nonsense. Only a 200 is a description.
 const BROWSER_CONCURRENCY = 3;
+// A context keeps the HTTP cache, cookies, storage and service workers of every
+// site it has visited, in memory, for as long as it lives; the first 5544-row
+// run was killed by the OS for low memory in this pass. Fifty pages costs one
+// context setup (tens of ms) per ~50 s of page loads, so the overhead is noise.
+// ponytail: a fixed page count, not a memory reading. If a run still runs out,
+// recycle on the browser's RSS instead.
+const PAGES_PER_CONTEXT = 50;
 
 /** Location from schema.org JSON-LD, else the "{Title} in {Place} | …" title. */
 export function locationFromTitle(title = '') {
@@ -364,26 +373,32 @@ async function readPage(ctx, url) {
   }
 }
 
-/** Read every url with a browser. Returns url -> { text, location }. */
+/**
+ * Read every url with a browser, handing each result to onEach as it lands.
+ * Nothing is collected here: holding every page's text until the pass ends is
+ * memory proportional to the backlog, and the caller already writes each one out.
+ */
 export async function browserPass(urls, onEach = () => {}) {
-  const out = new Map();
-  if (!urls.length) return out;
+  if (!urls.length) return;
   const { chromium } = await import('playwright');
   const browser = await chromium.launch();
-  const ctx = await browser.newContext({ userAgent: DEFAULT_USER_AGENT });
   try {
     const queue = [...urls];
+    // A context per worker, so a recycle never closes another worker's page in
+    // the middle of its read. browser.close() below disposes whichever are open.
     await Promise.all(Array.from({ length: BROWSER_CONCURRENCY }, async () => {
-      for (let url = queue.shift(); url; url = queue.shift()) {
-        const r = await readPage(ctx, url);
-        out.set(url, r);
-        onEach(url, r);
+      let ctx = null;
+      for (let url = queue.shift(), n = 0; url; url = queue.shift(), n++) {
+        if (n % PAGES_PER_CONTEXT === 0) {
+          await ctx?.close().catch(() => {});
+          ctx = await browser.newContext({ userAgent: DEFAULT_USER_AGENT });
+        }
+        onEach(url, await readPage(ctx, url));
       }
     }));
   } finally {
     await browser.close().catch(() => {});
   }
-  return out;
 }
 
 // ------------------------------------------------------------------- runtime
@@ -409,22 +424,75 @@ function loadFacts() {
 function writeFacts(map) {
   const out = [FACT_COLUMNS.join('\t')];
   for (const row of map.values()) out.push(FACT_COLUMNS.map(k => String(row[k] ?? '')).join('\t'));
-  writeFileSync(FACTS, out.join('\n') + '\n');
+  // Rewritten every 25 rows of a run that can be killed at any point (the OS,
+  // the stall watchdog, Task Scheduler). A plain write caught mid-flight leaves
+  // a truncated cache, and every row it lost is fetched again next run; the
+  // rename leaves either the old file or the new one.
+  writeFileAtomic(FACTS, out.join('\n') + '\n');
+}
+
+const KNOWN_FLAGS = ['--limit', '--refresh', '--reparse', '--stale', '--retry-unread',
+  '--no-browser', '--skip', '--self-test', '--help', '-h'];
+const VALUE_FLAGS = ['--limit', '--stale', '--skip'];
+
+const USAGE = `Usage:
+  node enrich-jd.mjs                 fetch everything not already cached
+  node enrich-jd.mjs --limit 20      first N uncached rows (sample a run)
+  node enrich-jd.mjs --refresh       ignore the cache
+  node enrich-jd.mjs --reparse       re-extract from the cache, no network
+  node enrich-jd.mjs --stale 30      re-fetch only facts older than N days
+  node enrich-jd.mjs --retry-unread  give rows recorded ok=0 another read
+  node enrich-jd.mjs --no-browser    fetch only, skip the browser pass
+  node enrich-jd.mjs --skip linkedin.com   leave these hosts unread (comma list)
+  node enrich-jd.mjs --self-test     extraction checks, no network
+  node enrich-jd.mjs --help|-h       print this usage block and exit`;
+
+function usageError(msg) {
+  console.error(`Error: ${msg}`);
+  process.exit(1);
+}
+
+/** A count flag's value, null when absent; anything but a positive integer is a usage error. */
+function countFlag(argv, flag) {
+  if (!hasFlag(argv, flag)) return null;
+  const n = safeIntFlag(flagValue(argv, flag), 0);
+  return n > 0 ? n : usageError(`${flag} needs a positive whole number, got "${flagValue(argv, flag)}"`);
+}
+
+/**
+ * argv -> options, exiting before any read or write on a flag it cannot honour.
+ * Every value flag here used to be read with indexOf, which never sees
+ * `--skip=linkedin.com`: the value was dropped and LinkedIn read unpaced, the
+ * one thing --skip exists to prevent (see lib/cli-flags.mjs).
+ */
+export function parseFlags(argv) {
+  validateFlags(argv, KNOWN_FLAGS, USAGE, { valueFlags: VALUE_FLAGS, requireOperand: true });
+  const skip = String(flagValue(argv, '--skip') ?? '').toLowerCase().split(',').map(s => s.trim()).filter(Boolean);
+  // requireOperand rejects `--skip=` but not `--skip=,`, which splits to no
+  // hosts, and an empty list skips nothing.
+  if (hasFlag(argv, '--skip') && !skip.length) usageError('--skip needs at least one host');
+  return {
+    selfTest: hasFlag(argv, '--self-test'),
+    refresh: hasFlag(argv, '--refresh'),
+    // --reparse re-runs extraction over what is already cached, with no network
+    // at all. Every rule change below wants this, not a re-fetch.
+    reparse: hasFlag(argv, '--reparse'),
+    retryUnread: hasFlag(argv, '--retry-unread'),
+    noBrowser: hasFlag(argv, '--no-browser'),
+    limit: countFlag(argv, '--limit') ?? Infinity,
+    staleDays: countFlag(argv, '--stale'),
+    skip,
+  };
 }
 
 async function main() {
-  const argv = process.argv.slice(2);
-  if (argv.includes('--self-test')) return selfTest();
-  const refresh = argv.includes('--refresh');
-  // --reparse re-runs extraction over what is already cached, with no network
-  // at all. Every rule change below wants this, not a re-fetch.
-  const reparse = argv.includes('--reparse');
-  const limit = Number(argv[argv.indexOf('--limit') + 1]) || Infinity;
+  const { selfTest: runSelfTest, refresh, reparse, retryUnread, noBrowser, limit, staleDays, skip } =
+    parseFlags(process.argv.slice(2));
+  if (runSelfTest) return selfTest();
   // --stale re-reads postings whose facts were captured more than N days ago.
   // A posting can be edited after it is published — a comp range added, a
   // clearance line changed — and nothing else in this script ever re-reads one.
-  const staleDays = argv.includes('--stale') ? Number(argv[argv.indexOf('--stale') + 1]) : null;
-  const staleBefore = staleDays > 0
+  const staleBefore = staleDays
     ? new Date(Date.now() - staleDays * 86400000).toISOString().slice(0, 10)
     : null;
 
@@ -437,14 +505,11 @@ async function main() {
   // be read once usually cannot be read again, and a retry costs a fetch every
   // run. --retry-unread is how a new reader (the browser pass) gets a shot at
   // the backlog it was written for.
-  const retryUnread = argv.includes('--retry-unread');
+  //
   // The scheduled run passes --skip linkedin.com: LinkedIn's guest endpoint is
   // rate limited and shared with the scan and liveness reads, which pace
   // themselves, so an unpaced read of every new card there would throttle the
   // source that feeds most of the pipeline.
-  const skip = argv.includes('--skip')
-    ? String(argv[argv.indexOf('--skip') + 1] || '').toLowerCase().split(',').filter(Boolean)
-    : [];
   const todo = rows
     .filter(r => !skipsHost(r.url, skip))
     .filter(r => refresh || reparse || !facts.has(r.url) || isStale(r.url)
@@ -511,7 +576,7 @@ async function main() {
   // Second pass: everything the fetch path could not read, read with a browser.
   // --reparse stays offline, so it never gets here.
   let browsed = 0, located = 0;
-  const blind = reparse || argv.includes('--no-browser')
+  const blind = reparse || noBrowser
     ? []
     : todo.filter(r => facts.get(r.url)?.ok !== '1');
   if (blind.length) {
@@ -581,17 +646,4 @@ function selfTest() {
   if (!process.exitCode) console.log('enrich-jd self-test OK');
 }
 
-const USAGE = `Usage:
-  node enrich-jd.mjs                 fetch everything not already cached
-  node enrich-jd.mjs --limit 20      first N uncached rows (sample a run)
-  node enrich-jd.mjs --refresh       ignore the cache
-  node enrich-jd.mjs --reparse       re-extract from the cache, no network
-  node enrich-jd.mjs --stale 30      re-fetch only facts older than N days
-  node enrich-jd.mjs --skip linkedin.com   leave these hosts unread (comma list)
-  node enrich-jd.mjs --self-test     extraction checks, no network`;
-
-if (isMainModule(import.meta.url) && process.argv.slice(2).some((a) => a === '--help' || a === '-h')) {
-  console.log(USAGE);
-  process.exit(0);
-}
 if (isMainModule(import.meta.url)) await main();

@@ -28,12 +28,15 @@ ${cards.join('\n')}`;
 const noResults = (vs) => `${hidden(vs)}<div class="alert alert-danger"><strong>No jobs found</strong>
   matching your search criteria.</div>`;
 
-/** Scripted ctx: each call shifts the next page off `pages` and records the request. */
+/** Scripted ctx: each call shifts the next page off `pages` and records the request; its clock records delays instead of waiting. */
 function scripted(pages) {
   const calls = [];
+  const slept = [];
   return {
     calls,
+    slept,
     ctx: {
+      sleep: async (ms) => { slept.push(ms); },
       fetchResponse: async (url, opts) => {
         calls.push({ url, method: opts.method, form: opts.body ? new URLSearchParams(opts.body) : null, cookie: opts.headers && opts.headers.cookie });
         const next = pages.shift();
@@ -91,6 +94,23 @@ try {
   } else {
     fail(`calcareers.fetch() small calls = ${JSON.stringify(small.calls.map(c => [c.method, c.form && c.form.get('__VIEWSTATE'), c.cookie]))}, jobs = ${got.length}`);
   }
+  if (small.slept.length && small.slept.every(ms => ms === 500)) pass('calcareers.fetch() paces 500 ms between keywords through the ctx clock');
+  else fail(`calcareers.fetch() slept ${JSON.stringify(small.slept)}`);
+
+  // makeHttpCtx() supplies no clock: pacing must still happen on a real
+  // timer, stubbed here to record the delay and fire at once.
+  const noClock = scripted([hidden('G'), noResults('S1'), noResults('S2')]);
+  delete noClock.ctx.sleep;
+  const realSetTimeout = globalThis.setTimeout;
+  const timers = [];
+  try {
+    globalThis.setTimeout = (fn, ms, ...rest) => { timers.push(ms); return realSetTimeout(fn, 0, ...rest); };
+    await cc.fetch({ name: 'C', calcareers: { keywords: ['a', 'b'] } }, noClock.ctx);
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
+  if (timers.includes(500)) pass('calcareers.fetch() still paces between keywords when ctx has no sleep');
+  else fail(`calcareers.fetch() without ctx.sleep armed timers ${JSON.stringify(timers)}`);
 
   // fetch — >100 hits: row-count postback, then sort-by-date postback
   const big = scripted([hidden('G'), results('S', 500, [card(0, '1', 'A', 'T')]), results('R', 500, [card(0, '1', 'A', 'T')]), results('D', 500, [card(0, '9', 'A', 'Newest')])]);

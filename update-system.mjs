@@ -329,6 +329,10 @@ const SYSTEM_PATHS = [
   'scripts/export-ats-text.mjs',
   'scripts/followup-sweep.sh',
   'scripts/ui-server.mjs',
+  // ui-server.mjs imports these statically; an install whose web/ predates
+  // planNextRun would fail to link it.
+  'web/src/lib/bind-host.mjs',
+  'web/src/lib/origin-guard.mjs',
   'story-provenance-check.mjs',
   'hiring-panel.mjs',
   'lib/latex-content.mjs',

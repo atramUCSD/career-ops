@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input, Select } from "@/components/ui/field";
-import { rowItem } from "@/components/ui/motion";
+import { layoutMove, rowItem } from "@/components/ui/motion";
 import { CompanyLogo } from "@/components/company-logo";
 import { CANONICAL_STATES, canonStatus, scoreNum, scoreTone } from "@/lib/format";
 import { StatusSelect } from "@/components/status-select";
@@ -171,6 +171,12 @@ export function PipelineView({
     startTransition(() => router.refresh());
   }
 
+  // Rows re-measure only when a status changes, so a status move slides and a
+  // sort, tab or search stays instant (DESIGN.md section 7, Reorder). A string,
+  // not the array: a ?sort= navigation can hand down a fresh array of the same
+  // rows. Optimistic rows, so the slide starts on the edit, not on the refresh.
+  const statusKey = useMemo(() => visibleApplications.map((a) => `${a.n}:${a.status}`).join("\n"), [visibleApplications]);
+
   return (
     <PageFrame>
       <div className="flex items-end justify-between gap-4">
@@ -305,7 +311,7 @@ export function PipelineView({
            but a table too wide for the viewport can now be scrolled to instead
            of being silently cut off. min-w keeps the columns readable rather
            than letting w-full crush them on a phone. */
-        <div className="mt-4 overflow-x-auto rounded-xl border border-border">
+        <motion.div layoutScroll className="mt-4 overflow-x-auto rounded-xl border border-border">
           <table className="w-full min-w-[44rem] text-sm">
             <thead className="bg-surface/60 text-left text-xs eyebrow text-faint">
               <tr>
@@ -353,6 +359,9 @@ export function PipelineView({
                       key={key}
                       {...rowItem}
                       data-application-key={key}
+                      layout="position"
+                      layoutDependency={statusKey}
+                      transition={{ ...rowItem.transition, layout: layoutMove }}
                       className="group transition-colors duration-150 ease-out hover:bg-surface/40"
                     >
                       <td className="w-8 px-3 py-3">
@@ -431,7 +440,7 @@ export function PipelineView({
               </tbody>
             )}
           </table>
-        </div>
+        </motion.div>
       ) : (
         <Card className="mt-4 border-dashed bg-surface/30 py-12 text-center">
           <p className="font-display text-lg">No matches</p>

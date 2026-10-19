@@ -39,6 +39,7 @@
 
 import { resolveProfileKeywords } from './_profile-keywords.mjs';
 import { intInRange } from './_config-utils.mjs';
+import { fetchJsonWithRetry, sleep } from './_http.mjs';
 
 const API_URL = 'https://api.clearancejobs.com/api/v1/jobs/search';
 const JOB_HOST = 'www.clearancejobs.com';
@@ -46,6 +47,7 @@ const PAGE_SIZE = 20;
 const RECEIVED_STEPS = [1, 3, 7, 31];
 const DEFAULT_MAX_PAGES = 10;
 const MAX_PAGES_CAP = 100;
+const INTER_PAGE_DELAY_MS = 250;
 
 /**
  * Reads and sanitizes the entry's `clearancejobs:` config block.
@@ -137,7 +139,8 @@ export default {
       for (let page = 1; page <= maxPages; page++) {
         let json;
         try {
-          json = await ctx.fetchJson(API_URL, {
+          // The POST is a read-only search, so replaying it after a 429, 5xx or timeout is safe.
+          json = await fetchJsonWithRetry(ctx, API_URL, {
             method: 'POST',
             headers: { 'content-type': 'application/json', accept: 'application/json' },
             body: JSON.stringify({ ...body, page }),
@@ -161,7 +164,7 @@ export default {
         // Short-page stop on the source's own row count, never the filtered one.
         const totalPages = Number(json.meta && json.meta.pagination && json.meta.pagination.total_pages);
         if (rows.length < PAGE_SIZE || (Number.isFinite(totalPages) && page >= totalPages)) break;
-        if (ctx.sleep) await ctx.sleep(250);
+        await sleep(INTER_PAGE_DELAY_MS, ctx);
       }
       if (pageOk) succeeded++;
     }

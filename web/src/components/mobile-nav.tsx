@@ -164,7 +164,7 @@ export function MobileNav({ followupsEnabled }: { followupsEnabled: boolean }) {
                 onClick={() => setOpen(false)}
                 aria-current={active ? "page" : undefined}
                 className={cn(
-                  "flex items-center gap-3 rounded-md px-3 py-3 text-base focus-ring-inset transition-colors duration-150 ease-out",
+                  "flex items-center gap-3 rounded-md px-3 py-2.5 text-base focus-ring-inset transition-colors duration-150 ease-out",
                   active ? "bg-brand-soft text-brand-text" : "text-muted hover:bg-surface-hover hover:text-foreground",
                 )}
               >
