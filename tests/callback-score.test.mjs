@@ -10,6 +10,7 @@ const profile = {
     archetypes: [{ name: 'Front End / Web Engineer', level: 'Mid-Senior', fit: 'primary' }],
   },
   compensation: { minimum: '$130K' },
+  scoring: { hats: true },
 };
 
 const URL = 'https://example.com/jobs/1';
@@ -95,6 +96,15 @@ assert.ok(
 );
 assert.equal(byTitle('Front End Engineer, TS/SCI with Polygraph').score, 0);
 assert.match(byTitle('Front End Engineer, TS/SCI with Polygraph').gate, /TS\/SCI/);
+
+// A profile without scoring.hats is not floored by the hats it never asked for:
+// a read, hat-less description scores on the title family, same as unread.
+const noHats = { ...profile, scoring: undefined };
+const plain = f => buildScorer({ profile: noHats, lanes: [], rows: [row], history: [], facts: f })(row);
+assert.equal(plain(facts({ hats: '' })).score, plain(new Map()).score);
+assert.ok(plain(facts({ hats: '' })).signals.some(s => s.id === 'family'));
+assert.ok(!plain(facts({ hats: '' })).signals.some(s => s.id === 'hats'));
+assert.equal(plain(facts({ clearance: 'ts_sci' })).score, 0, 'gates still read the description');
 
 // enrich-jd writes what callback-score reads.
 assert.ok(FACT_COLUMNS.includes('hats') && FACT_COLUMNS.includes('yoe'));

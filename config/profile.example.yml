@@ -169,6 +169,12 @@ language:
 # See the tier -> model mapping table in modes/_shared.md.
 spend_tier: standard
 
+# (Optional) Match score: rank read descriptions by how many of the designer /
+# developer / AI-advocate hats they demand (callback-score.mjs). Only useful if
+# that is your role model; without it the title family decides the fit.
+# scoring:
+#   hats: true
+
 # (Optional) Paper size for every generated PDF: "letter", "a4" or "auto".
 # One setting for the CV, the cover letter and the HTML body width, so they
 # cannot disagree. Absent means letter. An explicit --format flag or a payload

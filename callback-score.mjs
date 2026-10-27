@@ -72,6 +72,7 @@ export const SIGNALS = [
   { id: 'pool', label: 'Applicant-pool proxy', floor: 0.8, range: '×0.80 – ×1.00', reads: 'corridor segment as a proxy for how many people are applying' },
   { id: 'volume', label: 'Employer posting volume', floor: 0.95, range: '×0.95', reads: 'how many reqs this employer has open in the pipeline' },
   { id: 'repost', label: 'Repost pattern', floor: 0.92, range: '×0.92', reads: 'same company and title surfaced under more than one URL' },
+  { id: 'family', label: 'Title family only', floor: 1, range: '×0.15 – ×0.62', reads: 'the title against target_roles, for a profile without scoring.hats — the description still feeds the gates and modifiers' },
   { id: 'nojd', label: 'No description read', floor: 1, range: '×0.15 – ×0.62', reads: 'the fallback when the posting could not be fetched — title family only, capped below any confirmed two-hat match' },
 ];
 
@@ -220,6 +221,10 @@ export function buildScorer({ profile = {}, lanes = [], rows = [], history = [],
   const targetLevel = (profile.target_roles?.archetypes || [])[0]?.level || 'Mid-Senior';
   const fitByLane = new Map(lanes.map(l => [l.id, fitByArchetype.get(l.archetype) || 'secondary']));
   const walkAway = parseMoney(profile.compensation?.minimum);
+  // The three hats are one candidate's role model, not a property of the job.
+  // Without an opt-in, a firmware profile read every description as "no hats"
+  // and took the x0.15 floor on every row the enricher reached.
+  const useHats = profile.scoring?.hats === true;
 
   // Title matching. Built from the profile's own words — the North Star titles
   // in target_roles.primary and the archetype names — so adding a target role
@@ -278,7 +283,7 @@ export function buildScorer({ profile = {}, lanes = [], rows = [], history = [],
     }
 
     let fit;
-    if (f && f.hats !== null) {
+    if (useHats && f && f.hats !== null) {
       // The description was read: the hats decide, the title only modulates.
       const hats = f.hats;
       fit = HAT_FIT[Math.min(3, hats.length)];
@@ -295,16 +300,20 @@ export function buildScorer({ profile = {}, lanes = [], rows = [], history = [],
         : `${family} family`);
       fit *= tf;
     } else {
-      // No description: the title family is the whole of the evidence, and it
+      // No description, or no hats to read it for: the title family is the fit, and it
       // is capped below a confirmed two-hat match so a guess never outranks a
       // fact. This is the largest source of low scores today.
       fit = TITLE_ONLY_FIT[family];
-      signals.push({ id: 'nojd', mult: fit, why: `no description read — ${family === 'lane' ? row.lane + ' lane keyword' : family + ' title family'} only` });
+      const basis = family === 'lane' ? `${row.lane} lane keyword` : `${family} title family`;
+      signals.push(f
+        ? { id: 'family', mult: fit, why: `${basis} — this profile scores no hats` }
+        : { id: 'nojd', mult: fit, why: `no description read — ${basis} only` });
       // A title can still state a clearance — 'UI/UX Developer / Active Secret'
       // — and it thins the applicant pool exactly as the description would.
       // Hats are not read here: a hat needs two corroborating terms and a title
       // never carries two, so reading one would only ever return nothing.
-      if (clearanceIn(row.t) === 'secret') {
+      // A read description applies its own clearance below; don't count it twice.
+      if (!f && clearanceIn(row.t) === 'secret') {
         add('clearance', 1.12, 'Secret named in the title — held, and it thins the applicant pool');
         fit *= 1.12;
       }
