@@ -27,7 +27,7 @@
 import { existsSync, readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import * as yaml from 'js-yaml';
+import { loadYaml } from './lib/yaml-document.mjs';
 import { compileKeyword, buildTitleFilter, matchedTitleKeywords } from './scan.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)));
@@ -47,7 +47,7 @@ export const LANES_PATH = process.env.CAREER_OPS_LANES || join(ROOT, 'config', '
  */
 export function loadLanes(path = LANES_PATH) {
   if (!existsSync(path)) return [];
-  const doc = yaml.load(readFileSync(path, 'utf-8')) || {};
+  const doc = loadYaml(readFileSync(path, 'utf-8')) || {};
   const lanes = Array.isArray(doc.lanes) ? doc.lanes : [];
   const seen = new Set();
   for (const lane of lanes) {
@@ -147,7 +147,7 @@ export function checkLaneRegistration(lanes, { root = ROOT } = {}) {
   if (portalsText === null) {
     add('-', 'warning', 'portals.yml', 'not found — scan-side registration unchecked');
   } else {
-    titleFilter = (yaml.load(portalsText) || {}).title_filter || {};
+    titleFilter = (loadYaml(portalsText) || {}).title_filter || {};
   }
 
   const files = new Map(ARCHETYPE_SITES.map(([rel]) => [rel, readIfPresent(root, rel)]));

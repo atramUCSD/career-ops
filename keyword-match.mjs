@@ -271,6 +271,8 @@ const LIST_SEPARATOR_RE = /[,、，،]|\s·\s/;
 // Sentence-final punctuation a keyword may carry. The ASCII period was already
 // stripped; these are the marks the CJK and Devanagari lists close a phrase with.
 const TRAILING_PUNCT_RE = /[.。．।]+$/;
+const TRAILING_BACKTICKS_RE = /`+$/;
+const STARTING_BACKTICKS_RE = /^`+/;
 
 // The line a fence opened at `start` closes on, or -1 when it never closes.
 // A closer carries the same character, is AT LEAST as long as the opener, and
@@ -278,9 +280,32 @@ const TRAILING_PUNCT_RE = /[.。．।]+$/;
 // is what keeps a shorter run of the same character — common inside a block
 // that quotes code — from closing the fence early and letting the rest of the
 // report leak into the keyword list.
-function indexOfFenceClose(lines, start, open) {
+//
+// `indented` decides how the closer is matched, and it is the whole subtlety
+// (found by CodeRabbit on #5362). A fence indented four or more spaces is an
+// INDENTED CODE BLOCK (§4.9), not a fence, so matching the closer on a trimmed
+// line made any indented run of the same character close a real fence early —
+// and a `## ` heading after it then dropped out of the keyword list silently.
+//
+// But the two cases cannot both be served by one rule, because an indented
+// code block's own closing delimiter is indented too:
+//
+//   ```            <- real fence (0-3 spaces): closer must be 0-3 spaces
+//   SQL
+//     ```          <- indented code block delimiter, NOT a closer
+//   ## not a heading
+//
+//   ```            <- real fence
+//     SQL          <- indented code block: its closer is indented as well
+//     ```
+//
+// So the closer is matched on the same basis as the opener was: untrimmed when
+// the opener sat in the fence's own indentation range, trimmed when the opener
+// only matched after trimming (the indented-code-block case, where reading the
+// delimiters as fences is what lets the contents through at all).
+function indexOfFenceClose(lines, start, open, indented) {
   for (let i = start + 1; i < lines.length; i++) {
-    const m = FENCE_RE.exec(lines[i].trim());
+    const m = FENCE_RE.exec(indented ? lines[i].trim() : lines[i]);
     if (m && m[1][0] === open[0] && m[1].length >= open.length && !m[2].trim()) return i;
   }
   return -1;
@@ -316,7 +341,16 @@ export function extractKeywords(reportText) {
     if (THEMATIC_BREAK_RE.test(line)) return;
     const body = line.replace(BULLET_RE, '').replace(CJK_MARKER_RE, '');
     for (const part of body.split(LIST_SEPARATOR_RE)) {
-      const kw = part.trim().replace(TRAILING_PUNCT_RE, '').trim();
+      let kw = part.trim();
+      let previous;
+      do {
+        previous = kw;
+        kw = kw
+          .replace(STARTING_BACKTICKS_RE, '')
+          .replace(TRAILING_BACKTICKS_RE, '')
+          .replace(TRAILING_PUNCT_RE, '')
+          .trim();
+      } while (kw !== previous);
       if (kw) out.push(kw);
     }
   };
@@ -327,22 +361,31 @@ export function extractKeywords(reportText) {
     if (!inBlock) continue;
     if (/^##\s+/.test(line)) break;
 
-    // Tested before BULLET_RE, or `- - -` would lose its first `- ` and become
-    // the keyword "- -".
+    // Tested on the trimmed line so a `- - -` rule indented inside a fenced
+    // list is recognised the same as one at the margin.
     if (THEMATIC_BREAK_RE.test(line)) continue;
 
+    // A delimiter that matches on the RAW line sits in the fence's own 0-3
+    // space range, so its closer must too. One that only matches after trimming
+    // is an indented code block, whose closer is indented as well.
     const marker = FENCE_RE.exec(line);
     if (marker) {
+      if (/^`{3,}.+`{3,}$/.test(line)) {
+        collect(line);
+        continue;
+      }
+
       // The closer is looked up rather than tracked forward, so a fence the
       // report never closes cannot swallow every section after it: with no
-      // closer the opener stays an ordinary line and the section still ends at
+      // closer the opener is skipped and the section still ends at
       // the next heading, as it did before.
-      const close = indexOfFenceClose(lines, i, marker[1]);
+      const close = indexOfFenceClose(lines, i, marker[1], !FENCE_RE.test(lines[i]));
       if (close > i) {
         for (let k = i + 1; k < close; k++) collect(lines[k].trim());
         i = close;
         continue;
       }
+      continue;
     }
 
     collect(line);

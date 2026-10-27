@@ -26,7 +26,9 @@ export async function GET() {
 
   const env = await spawnEnv();
   const stdout = await new Promise<string>((resolve) => {
-    execFile("node", [script], { cwd: careerOpsRoot(), env, timeout: 20_000, maxBuffer: 8 << 20 }, (err, out) =>
+    // process.execPath + windowsHide: see api/doctor/route.ts — a stale inherited
+    // console kills every child with 0xC0000142 on Windows; never inherit one.
+    execFile(process.execPath, [script], { cwd: careerOpsRoot(), env, timeout: 20_000, maxBuffer: 8 << 20, windowsHide: true }, (err, out) =>
       resolve(err ? "" : out || ""),
     );
   });

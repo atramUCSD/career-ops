@@ -125,8 +125,8 @@ Değerlendirmenin tamamını `reports/{###}-{sirket-slug}-{YYYY-MM-DD}.md` olara
 ```markdown
 # Değerlendirme: {Şirket} — {Rol}
 
-**Tarih:** {YYYY-MM-DD}
-**Arketip:** {tespit edilen}
+**Date:** {YYYY-MM-DD}
+**Archetype:** {tespit edilen}
 <!-- Rol kullanıcının hedeflerinden biriyle eşleşiyorsa onun adını yaz. Hiçbiriyle
      eşleşmiyorsa bu alan boş BIRAKILMAZ ve muğlak geçilmez — boş bir alan aracın
      çalışmadığı gibi okunur, "muhtemelen X ile Y'nin hibriti" ise burada önlenmek
@@ -136,10 +136,13 @@ Değerlendirmenin tamamını `reports/{###}-{sirket-slug}-{YYYY-MM-DD}.md` olara
      Varsayılan satırı adlandırmak okuyucunun rolü konumlandırmasına yine yardım
      eder; yapmaması gereken, kullanıcının gerçekten sahip olduğu bir hedefin yerine
      geçmektir. -->
-**Puan:** {X.X}/5
+**Score:** {X/5}
+**Karar:** {Başvur | Değerlendir | Önce araştır | Geç}
 **URL:** {ilan URL'si}
 **PDF:** ✅/❌
-**Meşruiyet:** {Güvenilir | Dikkatli İlerle | Şüpheli}
+**Legitimacy:** {Güvenilir | Dikkatli İlerle | Şüpheli}
+
+{`## Karar (lead)` cümlesi, kelimesi kelimesine}
 
 ---
 
@@ -177,7 +180,17 @@ Değerlendirmenin tamamını `reports/{###}-{sirket-slug}-{YYYY-MM-DD}.md` olara
 
 ## Çıkarılan Anahtar Kelimeler
 (ATS optimizasyonu için ilandan 15-20 anahtar kelime)
+
+## Keyword Coverage
+(`node keyword-match.mjs <rapor>` tarafından üretilir — kapsam %, present, thin, missing)
+
+## Job Description (archived verbatim)
+(the posting's full text, pasted verbatim — see requirement below)
 ```
+
+**JD arşivi (zorunlu, #2789):** Her rapor, ilanın tam metnini olduğu gibi içeren bir `## Job Description (archived verbatim)` bölümü taşır; metin asla özetlenmez, asla başka sözcüklerle yeniden yazılmaz. Başlık İngilizce kalır, çünkü `check-jd-archive.mjs` bölümü adıyla arar. `**URL:**` alanı bir arşiv değildir: ilan kapandığında bağlantı çalışmaz olur ve özgün gereksinimleri geri getirmenin bir yolu kalmaz. Bölümün ilk satırı, kaynakta göründüğü haliyle yayın tarihidir (`Posted: {tarih ya da göründüğü gibi göreli ifade}`, gerçekten görünmüyorsa `Posted: not visible in source`); bu satır asla rapor dosyasının tarihiyle doldurulmaz. İlan çok uzunsa ya da tamamı alıntılanamıyorsa, `archive-posting.mjs <url> --company={sirket-slug} --report={num}` ile kaydedin ve bölüme başka hiçbir metin eklemeden **tam olarak** şu cümleyi yazın: `See jds/{filename} for the full archive (archive-posting.mjs --report={num}).` Metnin yerine başka sözcüklerle yazılmış bir özet konmaz; kuralın tamamı `modes/oferta.md` içinde (**JD archival**).
+
+Raporu kaydettikten sonra `node keyword-match.mjs reports/{###}-{sirket-slug}-{YYYY-MM-DD}.md` komutunu çalıştırın ve çıktıdaki `## Keyword Coverage` bloğunu çıkarılan anahtar kelimelerin hemen altına, `## Job Description (archived verbatim)` bölümünden önce yapıştırın. Başlık İngilizce kalır. Yalnızca tanı amaçlıdır: bir anahtar kelimeyi CV'ye ancak gerçek bir deneyime karşılık geliyorsa ekleyin.
 
 ### 2. Takipçiye Kaydet
 

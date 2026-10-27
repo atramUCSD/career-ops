@@ -34,8 +34,9 @@
 import { readFileSync, existsSync, writeFileSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
-import * as yaml from 'js-yaml';
+import { loadYaml } from './lib/yaml-document.mjs';
 import { renameSyncWithRetry } from './tracker-utils.mjs';
+import { withPipelineLock } from './pipeline-lock.mjs';
 
 import { makeHttpCtx, isRefusedRedirectError } from './providers/_http.mjs';
 import greenhouse from './providers/greenhouse.mjs';
@@ -217,7 +218,7 @@ export function parseCompanyInput(rawYaml, cliNames = []) {
   if (rawYaml && rawYaml.trim()) {
     let doc;
     try {
-      doc = yaml.load(rawYaml);
+      doc = loadYaml(rawYaml);
     } catch (err) {
       warnings.push(`input: malformed YAML — ${err.message}`);
       doc = null;
@@ -553,7 +554,7 @@ export function insertIntoTrackedCompanies(fileText, snippets) {
  */
 export function splicedCorrectly(text, expectedCount) {
   try {
-    const doc = yaml.load(text);
+    const doc = loadYaml(text);
     return Array.isArray(doc?.tracked_companies) && doc.tracked_companies.length === expectedCount;
   } catch {
     return false;
@@ -1059,7 +1060,7 @@ function runSelfTest() {
   check(inserted.startsWith('title_filter:\n  positive: [a]\n'), 'insert preserves leading bytes');
   check(inserted.includes('job_boards:\n  - name: Foo\n'), 'insert preserves trailing block');
   // idempotency via dedupe: the same board already present → nothing fresh → no insert
-  const parsed = yaml.load(inserted);
+  const parsed = loadYaml(inserted);
   const again = dedupeAgainstPortals([{ name: 'New', careers_url: 'https://jobs.lever.co/new' }], parsed.tracked_companies);
   check(again.fresh.length === 0, 'insert is idempotent through dedupe');
 
@@ -1223,45 +1224,53 @@ async function main() {
   // Advisory only: resolution and exit codes are unchanged (#4772).
   flagSmallBoards(resolved, opts.smallThreshold);
 
-  // Dedupe resolved matches against the existing tracker.
-  let existingEntries = [];
-  if (existsSync(PORTALS_PATH)) {
-    try {
-      const parsed = yaml.load(readFileSync(PORTALS_PATH, 'utf-8'));
-      existingEntries = Array.isArray(parsed?.tracked_companies) ? parsed.tracked_companies : [];
-    } catch (err) {
-      warnings.push(`portals.yml: could not parse for dedupe — ${err.message}`);
+  // Hold the portals lock across dedupe and replacement so concurrent
+  // --write runs merge their discoveries instead of overwriting each other.
+  const updatePortals = () => {
+    // Dedupe resolved matches against the existing tracker.
+    let existingEntries = [];
+    if (existsSync(PORTALS_PATH)) {
+      try {
+        const parsed = loadYaml(readFileSync(PORTALS_PATH, 'utf-8'));
+        existingEntries = Array.isArray(parsed?.tracked_companies) ? parsed.tracked_companies : [];
+      } catch (err) {
+        warnings.push(`portals.yml: could not parse for dedupe — ${err.message}`);
+      }
     }
-  }
-  const { fresh, duplicates } = dedupeAgainstPortals(resolved, existingEntries);
-  const snippets = fresh.map(renderPortalEntry);
+    const { fresh, duplicates } = dedupeAgainstPortals(resolved, existingEntries);
+    const snippets = fresh.map(renderPortalEntry);
 
-  // Data-contract rule: portals.yml is a USER-LAYER file and is NEVER written
-  // unless the user explicitly opts in with --write. The default is preview —
-  // we print the entries we WOULD add and touch nothing. This mirrors how the
-  // rest of career-ops treats user files (see DATA_CONTRACT.md).
-  let written = false;
-  if (opts.write && fresh.length && existsSync(PORTALS_PATH)) {
-    const current = readFileSync(PORTALS_PATH, 'utf-8');
-    const next = insertIntoTrackedCompanies(current, snippets);
-    if (splicedCorrectly(next, existingEntries.length + fresh.length)) {
-      // Write-to-temp-then-rename: atomic on the same filesystem, so a crash
-      // mid-write can't leave the user's portals.yml truncated.
-      const tmpPath = `${PORTALS_PATH}.tmp-${process.pid}`;
-      writeFileSync(tmpPath, next, 'utf-8');
-      renameSyncWithRetry(tmpPath, PORTALS_PATH);
-      written = true;
-    } else {
-      // A text splice cannot cover every way tracked_companies can be written.
-      // Rather than leave a portals.yml the scanner cannot parse, keep the file
-      // as it is and print the entries for the user to paste.
-      warnings.push(`--write skipped — splicing into ${PORTALS_PATH} would not leave it as valid YAML with ${existingEntries.length + fresh.length} tracked_companies entries; the file is unchanged and the entries are shown in pendingEntries to add by hand`);
+    // Data-contract rule: portals.yml is a USER-LAYER file and is NEVER written
+    // unless the user explicitly opts in with --write. The default is preview —
+    // we print the entries we WOULD add and touch nothing. This mirrors how the
+    // rest of career-ops treats user files (see DATA_CONTRACT.md).
+    let written = false;
+    if (opts.write && fresh.length && existsSync(PORTALS_PATH)) {
+      const current = readFileSync(PORTALS_PATH, 'utf-8');
+      const next = insertIntoTrackedCompanies(current, snippets);
+      if (splicedCorrectly(next, existingEntries.length + fresh.length)) {
+        // Write-to-temp-then-rename: atomic on the same filesystem, so a crash
+        // mid-write can't leave the user's portals.yml truncated.
+        const tmpPath = `${PORTALS_PATH}.tmp-${process.pid}`;
+        writeFileSync(tmpPath, next, 'utf-8');
+        renameSyncWithRetry(tmpPath, PORTALS_PATH);
+        written = true;
+      } else {
+        // A text splice cannot cover every way tracked_companies can be written.
+        // Rather than leave a portals.yml the scanner cannot parse, keep the file
+        // as it is and print the entries for the user to paste.
+        warnings.push(`--write skipped — splicing into ${PORTALS_PATH} would not leave it as valid YAML with ${existingEntries.length + fresh.length} tracked_companies entries; the file is unchanged and the entries are shown in pendingEntries to add by hand`);
+      }
+    } else if (opts.write && fresh.length && !existsSync(PORTALS_PATH)) {
+      warnings.push(`--write given but portals.yml not found at ${PORTALS_PATH} — printing entries instead`);
+    } else if (!opts.write && fresh.length) {
+      warnings.push(`preview only — ${fresh.length} new entr${fresh.length === 1 ? 'y' : 'ies'} shown in pendingEntries; re-run with --write to append them to portals.yml`);
     }
-  } else if (opts.write && fresh.length && !existsSync(PORTALS_PATH)) {
-    warnings.push(`--write given but portals.yml not found at ${PORTALS_PATH} — printing entries instead`);
-  } else if (!opts.write && fresh.length) {
-    warnings.push(`preview only — ${fresh.length} new entr${fresh.length === 1 ? 'y' : 'ies'} shown in pendingEntries; re-run with --write to append them to portals.yml`);
-  }
+    return { fresh, duplicates, snippets, written };
+  };
+  const { fresh, duplicates, snippets, written } = opts.write
+    ? await withPipelineLock(PORTALS_PATH, updatePortals)
+    : updatePortals();
 
   const metadata = {
     resolved: resolved.length,

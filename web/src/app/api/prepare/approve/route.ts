@@ -8,7 +8,6 @@
 // downgraded — while --note appends the approved marker idempotently under the
 // shared tracker lock. There is no batch approve, and nothing here (or
 // anywhere) submits an application; submission stays manual.
-import { NextResponse } from "next/server";
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -38,6 +37,7 @@ async function runSetStatus(args: string[]): Promise<CliResult> {
         cwd: careerOpsRoot(),
         timeout: CORE_SCRIPT_TIMEOUT_MS,
         env,
+        windowsHide: true,
       },
       (err, stdout, stderr) => {
         // Same three-way split as /api/status: non-zero exit, our kill
@@ -54,16 +54,16 @@ async function runSetStatus(args: string[]): Promise<CliResult> {
 
 export async function POST(req: Request) {
   const body = await readJsonObject<{ report?: unknown }>(req);
-  if (!body) return NextResponse.json({ error: "bad json" }, { status: 400 });
+  if (!body) return Response.json({ error: "bad json" }, { status: 400 });
   // Same digits-only gate as /api/status's row selector: answer a bad request
   // before paying for a process spawn and a tracker lock.
   const report = trackerRowArg(body.report);
   if (!report) {
-    return NextResponse.json({ error: "report must be a report number" }, { status: 400 });
+    return Response.json({ error: "report must be a report number" }, { status: 400 });
   }
   const script = rootScript("set-status");
   if (!fs.existsSync(script)) {
-    return NextResponse.json(
+    return Response.json(
       { error: "approval needs the career-ops scripts; this root has data only", code: "core-script-missing" },
       { status: 503 },
     );
@@ -80,13 +80,13 @@ export async function POST(req: Request) {
     return n === num;
   });
   if (!row) {
-    return NextResponse.json({ error: `No tracker row links report #${report}` }, { status: 404 });
+    return Response.json({ error: `No tracker row links report #${report}` }, { status: 404 });
   }
   const canon = canonicalizeStatus(row.status);
   if (!canon) {
     // A hand-edited Status cell set-status would reject as invalid-state; a
     // 409 tells the caller the ROW needs fixing, not the request.
-    return NextResponse.json({ error: `Row's current status "${row.status}" is not canonical — fix the tracker row first` }, { status: 409 });
+    return Response.json({ error: `Row's current status "${row.status}" is not canonical — fix the tracker row first` }, { status: 409 });
   }
 
   const today = new Date().toISOString().slice(0, 10);
@@ -106,10 +106,10 @@ export async function POST(req: Request) {
     // Child stderr is a Node stack trace carrying absolute server paths — log
     // only, never echo (same as /api/status).
     console.error(`/api/prepare/approve: set-status.mjs failed to run: ${stderr.trim()}`);
-    return NextResponse.json({ error: "approval failed to run" }, { status: 500 });
+    return Response.json({ error: "approval failed to run" }, { status: 500 });
   }
   if (timedOut) {
-    return NextResponse.json(
+    return Response.json(
       { error: "approval timed out; the marker may or may not have been applied" },
       { status: 504, headers: { "Retry-After": "5" } },
     );
@@ -123,16 +123,16 @@ export async function POST(req: Request) {
     if (!parsed && stderr.trim()) {
       console.error(`/api/prepare/approve: set-status.mjs exited ${code} without JSON: ${stderr.trim()}`);
     }
-    return NextResponse.json(
+    return Response.json(
       { error: clientErrorMessage(parsed, stderr), ...(cliCode ? { code: cliCode } : {}) },
       { status: httpStatus, ...(httpStatus === 503 ? { headers: { "Retry-After": "5" } } : {}) },
     );
   }
   if (!parsed) {
-    return NextResponse.json({ error: "approval returned no result" }, { status: 500 });
+    return Response.json({ error: "approval returned no result" }, { status: 500 });
   }
 
-  return NextResponse.json({
+  return Response.json({
     ok: true,
     status: canon,
     changed: parsed.changed === true,

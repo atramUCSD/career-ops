@@ -252,6 +252,13 @@ test("applyLineLabel: a flagged posting above the line is not Recommended", () =
   assert.equal(applyLineLabel("3.1/5", "Proceed with Caution"), "Below the apply line");
 });
 
+test("applyLineLabel: Turkish legitimacy tiers flag the posting too", () => {
+  assert.equal(applyLineLabel("4.9/5", "Dikkatli İlerle"), "Check the posting first");
+  assert.equal(applyLineLabel("4.9/5", "Şüpheli"), "Check the posting first");
+  assert.equal(applyLineLabel("4.9/5", "Güvenilir"), "Recommended");
+  assert.equal(applyCtaQuiet({ score: 4.5, legitimacy: "Şüpheli" }), true);
+});
+
 test("applyCtaQuiet: below the apply line or caution legitimacy", () => {
   assert.equal(applyCtaQuiet({ score: 4.2 }), false);
   assert.equal(applyCtaQuiet({ score: 3.3 }), true);

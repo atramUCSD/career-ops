@@ -28,7 +28,7 @@
 import { readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import * as yaml from 'js-yaml';
+import { loadYaml } from './lib/yaml-document.mjs';
 import { listProfiles, describe } from './profiles.mjs';
 import { buildModel } from './build-artifact.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
@@ -79,7 +79,7 @@ function projectedCount(root, profileRoot, name) {
 
 export function buildHubModel({ root = DATA_ROOT, now = new Date() } = {}) {
   const cfgPath = join(root, 'config/artifacts.yml');
-  const cfg = existsSync(cfgPath) ? yaml.load(readFileSync(cfgPath, 'utf-8')) || {} : {};
+  const cfg = existsSync(cfgPath) ? loadYaml(readFileSync(cfgPath, 'utf-8')) || {} : {};
   const urls = cfg.profiles || {};
 
   const entries = [{

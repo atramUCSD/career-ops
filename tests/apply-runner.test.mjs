@@ -7,8 +7,9 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import { after, before, test } from "node:test";
+import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { toolRequired } from "./required-tools.mjs";
 import { approvalHash, guardContext, interlockState, isConfirmed, retryComboboxes, soleSubmitControl } from "../apply-runner/run.mjs";
 
 const WEB = join(dirname(fileURLToPath(import.meta.url)), "..", "web");
@@ -23,10 +24,14 @@ const form = (buttons) => `<!doctype html><title>Apply</title>
 </form>
 <script>document.getElementById("name").addEventListener("input", (e) => e.target.form.requestSubmit());</script>`;
 
+// Skip without Chrome, except where the browser is required (tests/required-tools.mjs).
 let browser;
-before(async () => {
+try {
   browser = await chromium.launch({ channel: "chrome", headless: true });
-});
+} catch (e) {
+  if (toolRequired("browser")) throw e;
+}
+const skip = !browser && "Chrome cannot launch";
 after(() => browser?.close());
 
 /** A guarded context whose first route stands in for the engine's egress guard:
@@ -47,7 +52,7 @@ async function open(buttons) {
   return { context, page, posts };
 }
 
-test("unarmed, a field handler's requestSubmit is aborted and logged", async () => {
+test("unarmed, a field handler's requestSubmit is aborted and logged", { skip }, async () => {
   const { context, page, posts } = await open(SUBMIT);
   const failed = page.waitForEvent("requestfailed", (r) => r.method() === "POST");
   await page.fill("#name", "Alan");
@@ -60,7 +65,7 @@ test("unarmed, a field handler's requestSubmit is aborted and logged", async () 
   await context.close();
 });
 
-test("armed, the sole submit control reaches the endpoint and the confirmation is detected", async () => {
+test("armed, the sole submit control reaches the endpoint and the confirmation is detected", { skip }, async () => {
   const { context, page, posts } = await open(SUBMIT);
   assert.equal(await isConfirmed(page), false);
   const control = await soleSubmitControl(page.mainFrame());
@@ -71,7 +76,7 @@ test("armed, the sole submit control reaches the endpoint and the confirmation i
   await context.close();
 });
 
-test("a form with two submit controls is refused", async () => {
+test("a form with two submit controls is refused", { skip }, async () => {
   // Untyped <button> inside a form submits by HTML default.
   const { context, page } = await open(`${SUBMIT}<button>Apply now</button>`);
   await assert.rejects(soleSubmitControl(page.mainFrame()), /2 submit controls/);
@@ -119,7 +124,7 @@ const AUTOCOMPLETE = `<!doctype html>
   });
 </script>`;
 
-test("a failed combobox gets a second pass that waits for a remote autocomplete", async () => {
+test("a failed combobox gets a second pass that waits for a remote autocomplete", { skip }, async () => {
   const context = await browser.newContext();
   const page = await context.newPage();
   await page.setContent(AUTOCOMPLETE);

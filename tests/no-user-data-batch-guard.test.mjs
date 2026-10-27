@@ -33,7 +33,6 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { USER_PATHS } from '../update-system.mjs';
-import { FORK_CODE_PATHS } from './data-root-guard.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const WORKFLOW = '.github/workflows/no-user-data.yml';
@@ -188,7 +187,6 @@ const NOT_GUARDED = new Map([
   ['voice-dna.md', 'ships as a populated system default, so edits to it are legit'],
   ['.claude/settings.json', 'project harness config, not gitignored, may legitimately be committed'],
   ['.claude/hooks/', 'project harness config, not gitignored, may legitimately be committed'],
-  ...FORK_CODE_PATHS.map((p) => [p, 'fork-only code: committed on purpose, in USER_PATHS only so apply leaves it alone']),
 ]);
 
 test('the guard blocks every update-system.mjs user-layer path not allowlisted', () => {

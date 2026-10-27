@@ -30,6 +30,7 @@ import { parseApplications } from '../web/src/lib/tracker-table.mjs';
 import { buildTimeline, expiredOn, parseReportMeta, parseStatusLog, scanSighting } from '../web/src/lib/board-activity.mjs';
 import { BOARD_COLUMNS, boardColumn, isSkipDecision } from '../web/src/lib/board-columns.mjs';
 import { isReservedReportFile } from '../web/src/lib/report-files.mjs';
+import { isMainModule } from '../lib/is-main-module.mjs';
 
 const SITE = process.env.CAREER_OPS_CLOUD_URL || 'https://career-ops-4l6.pages.dev';
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -252,9 +253,12 @@ async function once() {
   console.log(`inbox: ${results.length} settled (${settled} new); copy: ${local.length} rows; pushed ${upserts.length} changed, ${deletes.length} deleted`);
 }
 
-if (process.argv.includes('--once')) {
+const USAGE = 'usage: node --env-file=.env cloud/sync-runner.mjs --once';
+if (isMainModule(import.meta.url) && (process.argv.includes('--help') || process.argv.includes('-h'))) {
+  console.log(USAGE);
+} else if (process.argv.includes('--once')) {
   await once();
-} else if (process.argv[1]?.endsWith('sync-runner.mjs')) {
-  console.error('usage: node --env-file=.env cloud/sync-runner.mjs --once');
+} else if (isMainModule(import.meta.url)) {
+  console.error(USAGE);
   process.exitCode = 2;
 }

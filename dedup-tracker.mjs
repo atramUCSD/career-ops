@@ -5,7 +5,8 @@
  * Groups by normalized company, then merges only rows whose full role title
  * matches exactly (case- and whitespace-normalized) and whose posting URLs, when
  * both rows carry one, do not conflict. Keeps entry with highest
- * score. If discarded entry had more advanced status, preserves that status.
+ * score. If discarded entry had more advanced status, preserves that status,
+ * and runs the same status hooks set-status.mjs runs (lib/status-hooks.mjs).
  * Merges notes.
  *
  * Run: node career-ops/dedup-tracker.mjs [--dry-run]
@@ -15,10 +16,12 @@ import { readFileSync, copyFileSync, existsSync, mkdirSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { getCareerOpsRoot, resolveTrackerPath } from './path-resolver.mjs';
-import { postingUrlRelation } from './url-key.mjs';
+import { postingUrlRelation, normalizeUrl } from './url-key.mjs';
 import {
   openTrackerTransaction, rebuildRow, normalizeCompany, companiesMatchIgnoringCorporateForm,
-  MIN_STEM_CHARS, loadCanonicalStates, resolveCanonicalStateId,
+  MIN_STEM_CHARS, loadCanonicalStates, resolveCanonicalStateId, resolveCanonicalState,
+  stripStatusDecoration,
+  resolveWorkspaceRoot, containedReportFile, reportUrlToken,
 } from './tracker-utils.mjs';
 import { resolveColumns, parseTrackerRow, normalizeVia, extractReqNumber, parseScore } from './tracker-parse.mjs';
 import { validateFlags } from './lib/cli-flags.mjs';
@@ -28,6 +31,9 @@ const CAREER_OPS = getCareerOpsRoot();
 // (original). CAREER_OPS_TRACKER lets tests point the script at an isolated
 // fixture so the real user tracker is never touched.
 const APPS_FILE = resolveTrackerPath(CAREER_OPS);
+// Report links resolve against the same root merge-tracker.mjs uses, so the
+// two tools read the same report for the same cell.
+const REPORTS_ROOT = resolveWorkspaceRoot(APPS_FILE);
 
 // ── CLI args ────────────────────────────────────────────────────────
 // Same shape as scan-ats-full.mjs (#1633/PR #1635) and reply-watch.mjs
@@ -208,7 +214,38 @@ function normalizeRole(role) {
  * @returns {boolean} True when both rows carry a URL and the URLs name two postings.
  */
 function urlsConflict(a, b) {
-  return postingUrlRelation(a.url, b.url) === 'distinct';
+  return postingUrlRelation(postingUrl(a), postingUrl(b)) === 'distinct';
+}
+
+const reportUrls = new Map();
+
+/**
+ * A row's posting URL for the URL guards: its URL cell, else the URL its report
+ * names.
+ *
+ * The default nine-column tracker has no URL cell, so reading the cell alone
+ * left both guards blind there: two same-company, same-title rows whose
+ * reports name two different openings (`…/jobs/1001` and `…/jobs/2002`) looked
+ * identical, and this tool deleted one of them. merge-tracker.mjs already
+ * resolved the report's URL in exactly this case — its own comment says
+ * "without the report the guards never see two same-titled postings as
+ * distinct" — so `node merge-tracker.mjs` kept both rows and `node
+ * dedup-tracker.mjs` then removed one. Both now read through
+ * reportUrlToken(), with the same path containment. A placeholder such as
+ * `N/A` needs no filtering here: postingUrlRelation() gives it no key.
+ *
+ * Read lazily and memoised: only rows that already share a company reach a
+ * guard.
+ *
+ * @param {object} row - A parsed applications.md row.
+ * @returns {string}
+ */
+function postingUrl(row) {
+  if (row.url) return row.url;
+  if (!reportUrls.has(row.report)) {
+    reportUrls.set(row.report, reportUrlToken(containedReportFile(row.report, REPORTS_ROOT)));
+  }
+  return reportUrls.get(row.report);
 }
 
 /**
@@ -224,7 +261,7 @@ function urlsConflict(a, b) {
  * @returns {boolean}
  */
 function languageOnOneSide(a, b) {
-  return postingUrlRelation(a.url, b.url) === 'one-sided-language';
+  return postingUrlRelation(postingUrl(a), postingUrl(b)) === 'one-sided-language';
 }
 
 /**
@@ -325,6 +362,14 @@ if (!existsSync(APPS_FILE)) {
 }
 
 let trackerTransaction = null;
+let statusHooks = null;
+let localToday = null;
+let committed = false;
+const releaseClaims = [];
+// Kept rows that take over a removed duplicate's more advanced status. Each is
+// a real status change for that row number, so it gets the status hooks once
+// the write has landed.
+const promotions = [];
 let COLMAP;
 if (!DRY_RUN) {
   try {
@@ -493,10 +538,20 @@ for (const [company, companyEntries] of groups) {
     if (bestStatus !== keeper.status) {
       const lineIdx = keeper.lineIdx;
       if (lineIdx !== undefined) {
+        // The donor's spelling, without its bold or trailing date. statusRank()
+        // strips both before ranking, so a legacy `Applied 2026-01-02` cell can
+        // win. Copied verbatim it put a date in the keeper's Status cell, and
+        // resolveCanonicalState() then read the promoted status as unknown: the
+        // ledger recorded `to: -`, which funnel-velocity replays as retracting
+        // the row's last real transition, and the Applied/Interview hooks below
+        // never ran.
+        const promoted = stripStatusDecoration(bestStatus);
         const parts = lines[lineIdx].split('|').map(s => s.trim());
-        parts[COLMAP.status] = bestStatus;
+        parts[COLMAP.status] = promoted;
         lines[lineIdx] = rebuildRow(parts);
-        console.log(`  📝 #${keeper.num}: status promoted to "${bestStatus}" (from #${cluster.find(e => e.status === bestStatus)?.num})`);
+        const donorNum = cluster.find(e => e.status === bestStatus)?.num;
+        console.log(`  📝 #${keeper.num}: status promoted to "${promoted}" (from #${donorNum})`);
+        promotions.push({ keeper, from: keeper.status, to: promoted, donorNum });
       }
     }
 
@@ -531,6 +586,24 @@ for (const [company, companyEntries] of groups) {
       }
     }
 
+    // Carry over a posting URL the keeper lacks. The URL cell is the
+    // deterministic dedup key (#3516): left on a deleted row it went with it,
+    // and the surviving row, often the Applied one whose status was just
+    // promoted onto it, fell back to fuzzy company+role matching from then on.
+    // Cluster members never name two different postings (urlsConflict vetoes
+    // that), so the first URL found is this posting's. The donor's raw cell is
+    // copied, so a `[label](href)` link stays a link.
+    if (COLMAP.url != null && !normalizeUrl(keeper.url) && keeper.lineIdx !== undefined) {
+      const donor = cluster.slice(1).find(e => e.lineIdx !== undefined && normalizeUrl(e.url));
+      if (donor) {
+        const parts = lines[keeper.lineIdx].split('|').map(s => s.trim());
+        parts[COLMAP.url] = lines[donor.lineIdx].split('|').map(s => s.trim())[COLMAP.url];
+        lines[keeper.lineIdx] = rebuildRow(parts);
+        keeper.url = donor.url;
+        console.log(`  🔗 #${keeper.num}: posting URL kept from #${donor.num}`);
+      }
+    }
+
     // Remove duplicates
     for (let k = 1; k < cluster.length; k++) {
       const dup = cluster[k];
@@ -555,8 +628,34 @@ console.log(`\n📊 ${removed} duplicates removed`);
 if (!DRY_RUN && removed > 0) {
   const backupPath = `${APPS_FILE}.bak`;
   copyFileSync(APPS_FILE, backupPath);
+  // Loaded only when a status moves, so a run that just drops duplicates keeps
+  // the import closure it always had.
+  if (promotions.length > 0) {
+    statusHooks = await import('./lib/status-hooks.mjs');
+    ({ localToday } = await import('./lib/local-today.mjs'));
+    for (const p of promotions) releaseClaims.push(statusHooks.claimStatusActivity(p.keeper, `dedup-tracker → ${p.to}`));
+  }
   trackerTransaction.replace(lines.join('\n'));
   console.log(`✅ Written to ${APPS_FILE} (backup: ${backupPath})`);
+  // Inside the lock window, like set-status's own append. The removed row's
+  // history stays under its old number; this row says where the kept row's
+  // status came from. dedup-tracker did not observe the transition, it found
+  // it, so funnel-velocity counts the row but keeps it out of day-math: dated
+  // today, it would otherwise read as "applied today".
+  // The keeper's own cell can be a dated legacy one too; strip it the same way
+  // so a known prior state is not logged as unknown.
+  const ledgerState = status => resolveCanonicalState(stripStatusDecoration(status), CANONICAL_STATES) ?? '-';
+  for (const p of promotions) {
+    statusHooks.appendStatusTransition(APPS_FILE, {
+      num: p.keeper.num,
+      date: localToday(),
+      from: ledgerState(p.from),
+      to: ledgerState(p.to),
+      source: 'dedup-tracker',
+      note: `from #${p.donorNum}`,
+    });
+  }
+  committed = true;
 } else if (DRY_RUN) {
   console.log('(dry-run — no changes written)');
 } else {
@@ -564,4 +663,19 @@ if (!DRY_RUN && removed > 0) {
 }
 } finally {
   trackerTransaction?.close();
+}
+
+// After the tracker lock is released: both hooks re-read the row this run
+// wrote, and the follow-up seeder takes its own lock.
+try {
+  if (committed) {
+    for (const p of promotions) {
+      const to = resolveCanonicalState(p.to, CANONICAL_STATES);
+      const keeper = { ...p.keeper, status: p.to };
+      if (to === 'Applied') await statusHooks.seedFollowupOnApplied(keeper.num, { trackerPath: APPS_FILE });
+      if (to === 'Interview') statusHooks.archiveJdOnInterview(keeper, { trackerPath: APPS_FILE });
+    }
+  }
+} finally {
+  for (const release of releaseClaims) release();
 }

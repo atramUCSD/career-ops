@@ -343,6 +343,10 @@ async function fill(engine, n, url, dir, answersFile) {
 }
 
 async function main(argv) {
+  if (argv.includes("--help") || argv.includes("-h")) {
+    console.log(USAGE);
+    return 0;
+  }
   const { positionals, values } = parseArgs({ args: argv, allowPositionals: true, options: { report: { type: "string" }, answers: { type: "string" } } });
   const [cmd, ...extra] = positionals;
   const shape = (cmd === "inspect" && !values.answers) || (cmd === "fill" && values.answers);

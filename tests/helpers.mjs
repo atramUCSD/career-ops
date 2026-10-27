@@ -10,6 +10,7 @@ import { isNestedCheckout, trackedFiles } from '../lib/mjs-files.mjs';
 import { localToday } from '../lib/local-today.mjs';
 import { getCareerOpsRoot } from '../path-resolver.mjs';
 import { describeDrift, diffSnapshots, snapshotDataRoot } from './data-root-guard.mjs';
+import { REQUIRED_TOOL_ENV, toolRequired } from './required-tools.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const ROOT = join(__dirname, '..');   // repo root (tests/ lives one level down)
@@ -250,6 +251,22 @@ export function fail(msg) { console.log(`  ❌ ${msg}`); failed++; }
  */
 export function warn(msg) { console.log(`  ⚠️  ${msg}`); warnings++; }
 
+/**
+ * Report that a tool this suite needs is missing (see tests/required-tools.mjs).
+ *
+ * A warning on a machine that simply lacks the tool, and a failure in a run
+ * that must have it (`test-all.mjs --needs <tool>`, or its variable set to 1),
+ * where a skip would turn the check green without running it.
+ *
+ * @param {'browser'|'latex'} tool
+ * @param {string} msg - What was skipped and why.
+ * @returns {void}
+ */
+export function toolUnavailable(tool, msg) {
+  if (toolRequired(tool)) fail(`${msg} — ${REQUIRED_TOOL_ENV[tool]}=1, so a missing ${tool} is a failure in this run`);
+  else warn(msg);
+}
+
 /** Current counter snapshot. */
 export function results() { return { passed, failed, warnings }; }
 
@@ -320,6 +337,13 @@ export async function importSuiteContained(file, rel) {
     // leaves no other clue how far it got.
     for (const line of String(err?.stack ?? '').split('\n').slice(1, 4)) {
       if (line.trim()) console.log(`      ${line.trim()}`);
+    }
+  } finally {
+    // A suite that sealed git (sealProcessGitEnv) hands the environment back,
+    // so the suites after it in this process do not inherit the seal.
+    if (unsealGitEnv) {
+      unsealGitEnv();
+      unsealGitEnv = null;
     }
   }
 }
@@ -466,6 +490,9 @@ export function run(cmd, args = [], opts = {}) {
     lastFailure = {
       status: e?.status ?? null,
       signal: e?.signal ?? null,
+      // 'ETIMEDOUT' when the timeout killed the child. A killed child has no
+      // exit status, so this is the only field that says it ran out of time.
+      code: e?.code ?? null,
       stdout: e?.stdout == null ? '' : String(e.stdout),
       stderr: e?.stderr == null ? '' : String(e.stderr),
     };
@@ -483,7 +510,7 @@ let lastFailure = null;
  * Cleared by a successful run so a stale record is never attributed to a later
  * command. The suite is sequential, so "most recent" is unambiguous.
  *
- * @returns {{status: number|null, signal: string|null, stdout: string, stderr: string}|null}
+ * @returns {{status: number|null, signal: string|null, code: string|null, stdout: string, stderr: string}|null}
  */
 // describeSpawn lives in helpers/describe-spawn.mjs and is re-exported here so
 // the 410 tests that already import from this file can reach it. It is a
@@ -495,6 +522,39 @@ export { describeSpawn } from './helpers/describe-spawn.mjs';
 
 export function lastRunFailure() {
   return lastFailure;
+}
+
+// A V8 stack frame as Node prints it for an uncaught exception:
+// `    at fn (/path/file.mjs:12:5)`, `    at /path/file.mjs:12:5`.
+const STACK_FRAME_RE = /^ {4}at \S.*:\d+:\d+\)?$/m;
+
+/**
+ * Run a command that is expected to refuse its input, and report whether it
+ * refused it the intended way.
+ *
+ * `run(...) === null` is not that check. run() returns null for every failure:
+ * the intended rejection, but also an uncaught TypeError (Node exits 1 for that
+ * too), a signal, and the 30 s timeout. A script that crashed on the bad input
+ * therefore read as "correctly rejected". This requires the expected exit
+ * status, no signal, the expected message on stderr, and no stack trace there,
+ * so a crash whose text happens to contain the message still fails.
+ *
+ * @param {string} cmd - Executable, resolved through the run() allowlist.
+ * @param {string[]} args - Argument vector.
+ * @param {{stderr: string|RegExp, status?: number|null}} expected - The rejection:
+ *   a substring (or pattern) stderr must contain, and the exit status (default 1).
+ *   A signal-killed child has status null; it still never passes, since any
+ *   signal is refused.
+ * @param {object} [opts={}] - Passed through to run().
+ * @returns {boolean} True only for the intended rejection. On false,
+ *   formatRunFailure() describes what the child actually did.
+ */
+export function runRejects(cmd, args, { stderr, status = 1 }, opts = {}) {
+  if (run(cmd, args, opts) !== null) return false;
+  const f = lastFailure;
+  if (!f || f.signal !== null || f.status !== status) return false;
+  if (STACK_FRAME_RE.test(f.stderr)) return false;
+  return typeof stderr === 'string' ? f.stderr.includes(stderr) : stderr.test(f.stderr);
 }
 
 /**
@@ -1526,6 +1586,78 @@ export function hermeticGitRunner(dir, { stdio } = {}) {
   const options = { cwd: dir, encoding: 'utf-8', env, ...(stdio ? { stdio } : {}) };
   return (...args) => execFileSync('git', args, options).trim();
 }
+
+/**
+ * Seal THIS process's git environment, for a suite whose fixtures run git
+ * through something that inherits process.env rather than through
+ * `hermeticGitRunner`: the updater's own `gitIn` / `gitQuietIn` and the `*In`
+ * helpers built on them, a bare `execFileSync('git', ...)`, or a CLI spawned
+ * with the parent's environment. Those inherit the environment as a real
+ * install must, so a fixture built with them is only as isolated as the
+ * contributor's shell. With `tag.gpgSign = true` in ~/.gitconfig a lightweight
+ * `git tag` becomes a signed annotated tag with no message and git dies with
+ * "no tag message?"; with `commit.gpgSign = true` every fixture commit is
+ * signed with the contributor's own key, or fails where gpg cannot sign.
+ *
+ * Sealing the process rather than one runner is what reaches the git calls
+ * the code under test makes for itself. Call it before the suite's first git
+ * command; a later `process.env` override (an identity negative control, say)
+ * still applies on top and restores back to the seal.
+ *
+ * A suite run directly, under `node --test`, or by `test-all.mjs --jobs N` has
+ * a process of its own. The serial loop (`--jobs 1`, or a single matched file)
+ * imports the suite into test-all's process instead, so the seal records every
+ * variable it changes and `importSuiteContained` puts them back once the import
+ * settles, thrown or not. The suites after it see the environment they would
+ * have seen without it.
+ *
+ * The environment is `hermeticGitEnv`'s, so the runtime-layer pins come with
+ * it, and the variables that helper and `hermeticGitRunner` drop are deleted
+ * from process.env, not merely left uncopied. The repository-location names
+ * are matched without regard to case: Windows environment names are
+ * case-insensitive, so a `Git_Dir` would otherwise survive and still point git
+ * at another repository. The config path names a file that is never created:
+ * a missing global file is simply an empty one.
+ */
+export function sealProcessGitEnv() {
+  // One directory per process: the serial loop imports several sealing suites
+  // into one, and an exit listener each would add up.
+  if (!sealDir) {
+    const dir = mkdtempSync(join(tmpdir(), 'co-sealed-git-'));
+    process.on('exit', () => _rmSync(dir, { recursive: true, force: true }));
+    sealDir = dir;
+  }
+  const sealed = hermeticGitEnv(join(sealDir, 'gitconfig'));
+  const repoLocation = new Set(REPO_LOCATION_ENV);
+  for (const name of Object.keys(sealed)) {
+    if (repoLocation.has(name.toUpperCase())) delete sealed[name];
+  }
+  const changed = new Map();
+  for (const name of Object.keys(process.env)) {
+    if (!Object.hasOwn(sealed, name)) {
+      changed.set(name, process.env[name]);
+      delete process.env[name];
+    }
+  }
+  for (const [name, value] of Object.entries(sealed)) {
+    if (process.env[name] !== value && !changed.has(name)) changed.set(name, process.env[name]);
+    process.env[name] = value;
+  }
+  // A second seal in the same suite must not record the first one's values as
+  // the originals.
+  if (!unsealGitEnv) {
+    unsealGitEnv = () => {
+      for (const [name, value] of changed) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    };
+  }
+}
+
+/** Set while a seal is in force; `importSuiteContained` calls and clears it. */
+let unsealGitEnv = null;
+let sealDir = null;
 
 /**
  * Can a directory write-deny actually stop THIS process from creating a file?

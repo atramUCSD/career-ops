@@ -24,6 +24,7 @@ import { PrepPack } from "@/components/prep-pack";
 import { GeneratePdfButton } from "@/components/generate-pdf-button";
 import { CoverDraftButton } from "@/components/cover-draft-button";
 import { ApplyButton } from "@/components/apply-button";
+import { MarkPdfReadyButton } from "@/components/mark-pdf-ready-button";
 import { DeleteFromTracker } from "@/components/delete-from-tracker";
 import { ReportMarkdown } from "@/components/report-markdown";
 import { KeywordCoverage } from "@/components/keyword-coverage";
@@ -55,6 +56,7 @@ export function ReportView({
   coverReady = false,
   backHref = "/pipeline",
   applyHref,
+  reportNum = null,
 }: {
   id: string;
   app: Application | null;
@@ -70,6 +72,7 @@ export function ReportView({
   coverReady?: boolean;
   backHref?: string;
   applyHref?: string;
+  reportNum?: number | null;
 }) {
   const meta = report ? parseReport(report) : null;
   const field = (label: string) => meta?.fields.find((f) => f.label === label)?.value;
@@ -131,6 +134,7 @@ export function ReportView({
               Apply checklist
             </Link>
           )}
+          <MarkPdfReadyButton reportNum={reportNum} ready={pdfReady} />
           {coverReady && (
             <a
               href={`/api/cover-pdf?application=${encodeURIComponent(id)}`}

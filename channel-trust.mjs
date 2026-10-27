@@ -22,7 +22,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import * as yaml from 'js-yaml';
+import { loadYaml } from './lib/yaml-document.mjs';
 import { isAtsPosting } from './liveness-api.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
@@ -152,7 +152,7 @@ export function buildChannelTrust({ root = ROOT } = {}) {
   const history = readTsv(join(root, 'data/scan-history.tsv'));
   const health = healthByCompany(readTsv(join(root, 'data/portal-health.tsv')));
   const portals = existsSync(join(root, 'portals.yml'))
-    ? yaml.load(readFileSync(join(root, 'portals.yml'), 'utf-8')) || {}
+    ? loadYaml(readFileSync(join(root, 'portals.yml'), 'utf-8')) || {}
     : {};
   const declared = aggregatorsFrom(portals);
 

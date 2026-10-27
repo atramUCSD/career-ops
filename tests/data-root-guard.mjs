@@ -80,35 +80,8 @@ export const CHECKOUT_KEY_PREFIX = '<checkout>/';
  * `CHECKOUT_GUARDED_PATHS`: a path added to the user layer later has to be put
  * in one of them, with a reason if it is this one.
  */
-// Fork-only code and templates. They sit in USER_PATHS only so `apply` leaves
-// them alone; suites edit them like any other source file. Also the
-// no-user-data guard's allowlist (no-user-data-batch-guard.test.mjs).
-export const FORK_CODE_PATHS = [
-  'swarm.mjs',
-  'lanes.mjs',
-  'channel-trust.mjs',
-  'build-hub.mjs',
-  'build-artifact.mjs',
-  'profiles.mjs',
-  'callback-score.mjs',
-  'enrich-jd.mjs',
-  'notify-email.mjs',
-  'gmail-send.mjs',
-  'gmail-replies.mjs',
-  'resume-heat.mjs',
-  'scripts/mint-gmail-token.mjs',
-  'prune-pipeline.mjs',
-  'scripts/alert.cmd',
-  'scripts/sweep.cmd',
-  'skills-lock.json',
-  'config/alerts.example.yml',
-  'config/lanes.example.yml',
-  'config/artifacts.example.yml',
-];
-
 export const UNGUARDED_USER_PATHS = {
   '.career-ops-web': "the dashboard's run logs and memory under the data root, written whenever it is in use: a suite run beside an open dashboard would report it every time",
-  ...Object.fromEntries(FORK_CODE_PATHS.map((p) => [p, 'fork-only code in the checkout, not user data: nothing in it for a suite to clobber'])),
 };
 
 /**

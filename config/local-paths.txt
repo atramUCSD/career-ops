@@ -29,3 +29,8 @@ skills-lock.json
 config/alerts.example.yml
 config/lanes.example.yml
 config/artifacts.example.yml
+expired-log.mjs
+hiring-panel.mjs
+modes/hiring-panel.md
+personalization.mjs
+web/src/lib/core/tracker-lock.ts

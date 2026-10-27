@@ -42,6 +42,7 @@ import { DEFAULT_USER_AGENT, BROWSER_LIKE_USER_AGENT } from './user-agent.mjs';
 import { classifyFullListAbsence } from './liveness-core.mjs';
 import { parseWwrFeed } from './providers/weworkremotely.mjs';
 import { isZohoRecordClosed, parseZohoDetailPage } from './providers/zoho-recruit.mjs';
+import { VEJ_KEY_MONITOR } from './providers/vdab.mjs';
 import { atsVendorOf } from './ats-vendor.mjs';
 import { linkedInJobId, linkedInGuestUrl } from './lib/linkedin-url.mjs';
 import { getCareerOpsRoot } from './path-resolver.mjs';
@@ -109,6 +110,9 @@ async function confirmGuessedBoard({ board }) {
 //                  rungs gated on a RUNTIME credential (an OAuth token, a
 //                  rotating JWT): resolving to null skips the rung cleanly —
 //                  no request, no verdict, never a throw.
+//   `method`     — HTTP method of the API request; defaults to GET.
+//   `body`       — builds the request body from the extracted params, for an
+//                  endpoint that only answers a POST (see the `meituan` entry).
 //   `interpret`  — read the response body to decide liveness (org-level APIs
 //                  where a 200 alone doesn't prove THIS posting is live, and
 //                  per-job APIs that answer 200 for a closed posting).
@@ -117,6 +121,8 @@ async function confirmGuessedBoard({ board }) {
 //                  error status carrying a recognisable body lists that status
 //                  here instead (see the `workday` entry); a 200 it leaves out
 //                  takes the default per-job reading, proof the posting is live.
+//                  A 404 or 410 listed here is read the same way, in place of
+//                  the 404 rule below (see the `nofluffjobs` entry).
 //   `api404Authoritative` — defaults to true (a 404/410 means gone). Set to
 //                  false when the provider's public API can 404 a posting that
 //                  is still genuinely live elsewhere (see the `lever` entry).
@@ -307,6 +313,10 @@ const ATS_PROVIDERS = [
     // the slug is wrong. Neither says THIS posting is gone: removal shows as a
     // 200 board that no longer lists the id (`ashby_api_unlisted`).
     api404Authoritative: false,
+    // One board answers for every posting under the org, so a caller checking
+    // several postings can pass checkLivenessViaApi a `boardCache` and fetch it
+    // once (check-liveness.mjs does, per run).
+    interpretBoard: (json, { jobId }) => classifyAshbyBoard(json, jobId),
     async interpret(res, { jobId }) {
       let json;
       try {
@@ -772,12 +782,132 @@ const ATS_PROVIDERS = [
     api: ({ slug }) => `https://nofluffjobs.com/api/posting/${slug}`,
     // Measured 2026-10-18: a live posting answers 200 with status "PUBLISHED", a
     // closed one 200 with status "EXPIRED" (and expiredBeforeDays), and a slug the
-    // board does not have 404 {"status":"DOES_NOT_EXIST"}, so the 404 is
-    // authoritative here and any other readable status stays uncertain.
+    // board does not have 404 {"status":"DOES_NOT_EXIST"}. The 404 body is read
+    // too, so only that answer closes a posting, which scan --verify records for
+    // good: a 404 saying anything else falls back to the browser.
+    interpretStatuses: [200, 404],
     async interpret(res) {
       let posting;
       try { posting = await res.json(); } catch { return null; }
-      return classifyNoFluffJobsPosting(posting);
+      return classifyNoFluffJobsPosting(posting, res.status);
+    },
+  },
+  {
+    id: 'tencent',
+    // careers.tencent.com/jobdesc.html?postId={id}, the URL providers/tencent.mjs
+    // writes. It usually copies the API's own PostURL, which is plain http (1,920
+    // of 2,250 postings on 2026-10-18). The API host is fixed, so the page's
+    // scheme is accepted, as for greenhouse-embedded.
+    //
+    // The browser reads this board wrong both ways (#4832): a live posting's
+    // 申请岗位 is not an Apply label it knows (no_apply_control, dropped by
+    // scan --verify), and a closed posting moves to /404.html served with a 200
+    // (uncertain, kept by scan --verify). The per-posting endpoint the page
+    // itself calls tells the two apart.
+    acceptsHttp: true,
+    match(u) {
+      if (u.hostname !== 'careers.tencent.com' || u.pathname !== '/jobdesc.html') return null;
+      const id = u.searchParams.get('postId');
+      return id && /^\d+$/.test(id) ? { id } : null;
+    },
+    api: ({ id }) => `https://careers.tencent.com/tencentcareer/api/post/ByPostId?postId=${id}&language=zh-cn`,
+    // Measured 2026-10-18: a live posting answers 200 {"Code":200,"Data":{…}},
+    // a closed one HTTP 500 {"Code":500,"Data":"E1005"}.
+    interpretStatuses: [200, 500],
+    api404Authoritative: false, // a closed posting has its own answer
+    throttleMs: 1_000,
+    async interpret(res, { id }) {
+      let json;
+      try { json = await res.json(); } catch { return null; }
+      return classifyTencentPost(json, id);
+    },
+  },
+  {
+    id: 'meituan',
+    // zhaopin.meituan.com/web/position/detail?jobUnionId={id}, the URL
+    // providers/meituan.mjs writes. The browser misses a live posting's 立即申请
+    // (no_apply_control, dropped by scan --verify), and a closed posting's page
+    // keeps the same button (#4832), so no Apply label can tell the two apart.
+    // The getJobDetail endpoint the page calls can, and it only answers a POST
+    // (a GET gets status 0 "请求方式不正确！").
+    match(u) {
+      if (u.hostname !== 'zhaopin.meituan.com' || u.pathname !== '/web/position/detail') return null;
+      const id = u.searchParams.get('jobUnionId');
+      return id && /^\d+$/.test(id) ? { id } : null;
+    },
+    api: () => 'https://zhaopin.meituan.com/api/official/job/getJobDetail',
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: ({ id }) => JSON.stringify({ jobUnionId: id, jobShareType: '1' }),
+    api404Authoritative: false, // a closed posting has its own answer, a 200
+    throttleMs: 1_000,
+    async interpret(res, { id }) {
+      let json;
+      try { json = await res.json(); } catch { return null; }
+      return classifyMeituanJob(json, id);
+    },
+  },
+  {
+    id: 'alibaba',
+    // talent.alibaba.com/off-campus/position-detail?positionId={id}, the URL
+    // providers/alibaba.mjs writes. The site does not deep-link (#2055): that
+    // page lands on the home page for any posting, so the browser rung cannot
+    // tell a live posting from a closed one and only this rung can.
+    match(u) {
+      if (u.hostname !== 'talent.alibaba.com' || u.pathname !== '/off-campus/position-detail') return null;
+      const id = u.searchParams.get('positionId');
+      // The id goes out as a JSON number, as the site sends it; up to 15
+      // digits it converts exactly.
+      return id && /^\d{1,15}$/.test(id) ? { id } : null;
+    },
+    api: () => 'https://talent.alibaba.com/position/detail',
+    method: 'POST',
+    // The stateless double-submit check providers/alibaba.mjs passes with a
+    // fresh UUID per run: any matching cookie and header are accepted (this
+    // constant measured 2026-10-18), so it needs no pre-request. Without the
+    // pair the endpoint answers 403, and a GET 405.
+    headers: { 'content-type': 'application/json', cookie: 'XSRF-TOKEN=career-ops', 'x-xsrf-token': 'career-ops' },
+    body: ({ id }) => JSON.stringify({ id: Number(id), channel: 'group_official_site' }),
+    api404Authoritative: false, // a closed posting has its own answer, a 200
+    throttleMs: 1_000,
+    async interpret(res, { id }) {
+      let json;
+      try { json = await res.json(); } catch { return null; }
+      return classifyAlibabaPosition(json, id);
+    },
+  },
+  {
+    id: 'vdab',
+    // www.vdab.be/vindeenjob/vacatures/{id}, the URL providers/vdab.mjs writes;
+    // older links add a title slug after the id.
+    //
+    // A closed vacancy keeps its page and its "Solliciteer nu" button, and only
+    // a banner says it is closed, "Deze vacature is niet meer gepubliceerd"
+    // (#5244). The browser reads the page while it renders: on 2026-10-22 it
+    // read 13 of 87 loads of unpublished vacancies active (the button rendered
+    // before the banner) and 5 no_apply_control, as it did 2 of 40 loads of
+    // published ones. The detail endpoint the page itself calls has no render
+    // to wait for.
+    match(u) {
+      if (u.hostname !== 'www.vdab.be' && u.hostname !== 'vdab.be') return null;
+      const m = u.pathname.match(/^\/vindeenjob\/vacatures\/(\d+)(?:\/[^/]+)?\/?$/);
+      return m ? { id: m[1] } : null;
+    },
+    api: ({ id }) => `https://www.vdab.be/rest/vindeenjob/v4/vacatures/${id}?preview=false`,
+    // Without the key the endpoint answers 403, which falls back to the browser,
+    // so a rotated key costs this rung, not the check.
+    headers: { 'vej-key-monitor': VEJ_KEY_MONITOR },
+    // Measured 2026-10-22: a published vacancy answers 200 with gepubliceerd
+    // true, an unpublished one 200 with gepubliceerd false and a status, and an
+    // id VDAB never had 404 {"code":"NOT_FOUND"}. The 404 body is read too, so
+    // a 404 saying anything else falls back to the browser instead of closing
+    // the vacancy for good, and so does a 410, which VDAB never answered.
+    interpretStatuses: [200, 404],
+    api404Authoritative: false,
+    async interpret(res, { id }) {
+      let json;
+      try { json = await res.json(); } catch { return null; }
+      return classifyVdabVacancy(json, id, res.status);
     },
   },
 ];
@@ -1060,17 +1190,24 @@ export function classifyWorkablePosting(posting) {
  * Decide liveness for one No Fluff Jobs posting from its /api/posting/{slug} answer.
  * Pure + deterministic (no I/O), mirroring classifyWorkablePosting.
  *
- * "PUBLISHED" is live and "EXPIRED" is the board's own word for closed. Any other
- * readable status is one this rung has not seen, so it stays uncertain rather than
- * falling to the browser, which reads closed postings on this board as active. An
- * unreadable body returns null so a future API change degrades to the browser
- * rung rather than to a verdict.
+ * "PUBLISHED" is live and "EXPIRED" is the board's own word for closed; on a 404,
+ * only "DOES_NOT_EXIST" says the posting is gone. Any other status on a 200 is one
+ * this rung has not seen, so it stays uncertain rather than falling to the
+ * browser, which reads most closed postings on this board as active. A body with
+ * no status, and a 404 saying anything else, return null so a future API change
+ * degrades to the browser rung rather than to a verdict.
  *
  * @param {any} posting - the parsed per-posting API response
+ * @param {number} [httpStatus=200] - the response's HTTP status (200 or 404)
  * @returns {{ result: 'active' | 'expired' | 'uncertain', code: string, reason: string } | null}
  */
-export function classifyNoFluffJobsPosting(posting) {
-  if (!posting || typeof posting !== 'object') return null;
+export function classifyNoFluffJobsPosting(posting, httpStatus = 200) {
+  if (!posting || typeof posting !== 'object' || typeof posting.status !== 'string' || !posting.status) return null;
+  if (httpStatus === 404) {
+    return posting.status === 'DOES_NOT_EXIST'
+      ? { result: 'expired', code: 'nofluffjobs_api_gone', reason: 'No Fluff Jobs has no posting under this slug (404 DOES_NOT_EXIST)' }
+      : null;
+  }
   if (posting.status === 'PUBLISHED') {
     return { result: 'active', code: 'nofluffjobs_api_published', reason: 'No Fluff Jobs reports the posting published (live)' };
   }
@@ -1082,6 +1219,163 @@ export function classifyNoFluffJobsPosting(posting) {
     result: 'uncertain',
     code: 'nofluffjobs_status_unrecognised',
     reason: `No Fluff Jobs reports status ${String(posting.status)}; not a verdict this rung can make`,
+  };
+}
+
+// True when an id read from a board's answer is THIS posting's id: the same
+// string, or a safe integer that prints as it. An array, an object, or a number
+// too large to be exact (a 19-digit Tencent id parsed as a number) never matches.
+function isSameId(value, id) {
+  if (typeof value === 'string') return value === id;
+  return Number.isSafeInteger(value) && String(value) === id;
+}
+
+/**
+ * Decide liveness for one Tencent posting from its ByPostId answer (HTTP 200 or
+ * 500). Pure + deterministic (no I/O), mirroring classifyNoFluffJobsPosting.
+ *
+ * `Code 200` carrying THIS PostId is live. `Code 500` with `Data: "E1005"` is
+ * the board's answer for a posting it no longer has; an id that never existed
+ * gets it too, and neither belongs in the pipeline. Any other readable answer,
+ * a Code 200 for another PostId included, stays uncertain rather than falling
+ * to the browser, which misreads this board both ways (#4832). An unreadable
+ * body returns null so the browser rung decides.
+ *
+ * @param {any} json - parsed ByPostId body
+ * @param {string} postId - the postId query parameter of the posting URL
+ * @returns {{ result: 'active' | 'expired' | 'uncertain', code: string, reason: string } | null}
+ */
+export function classifyTencentPost(json, postId) {
+  if (!json || typeof json !== 'object') return null;
+  if (json.Code === 200 && isSameId(json.Data?.PostId, postId)) {
+    return { result: 'active', code: 'tencent_api_active', reason: 'Tencent returns the posting (live)' };
+  }
+  if (json.Code === 500 && json.Data === 'E1005') {
+    return { result: 'expired', code: 'tencent_api_e1005', reason: 'Tencent answers E1005: posting closed or removed' };
+  }
+  // Data is a string on every non-200 answer seen; name anything else by its type.
+  const data = typeof json.Data === 'string' ? json.Data.slice(0, 80) : json.Data === null ? 'null' : typeof json.Data;
+  return {
+    result: 'uncertain',
+    code: 'tencent_answer_unrecognised',
+    reason: json.Code === 200
+      ? 'Tencent answers Code 200 without this PostId; not a verdict this rung can make'
+      : `Tencent answers Code ${String(json.Code)}, Data ${data}; not a verdict this rung can make`,
+  };
+}
+
+/**
+ * Decide liveness for one Meituan posting from its getJobDetail answer.
+ * Pure + deterministic (no I/O), mirroring classifyTencentPost.
+ *
+ * A closed posting keeps `status: 1` and its whole record; only `jobStatus`
+ * changes, from "000" (live) to "001" (closed). Any other readable answer
+ * (another jobStatus, a record for another id, or `status: 0` "职位已下线或不存在！",
+ * seen only for ids that never existed and for a wrong request method) stays
+ * uncertain rather than falling to the browser, which cannot tell live from
+ * closed on this board (#4832). An unreadable body returns null so the browser
+ * rung decides.
+ *
+ * @param {any} json - parsed getJobDetail body
+ * @param {string} jobUnionId - the jobUnionId query parameter of the posting URL
+ * @returns {{ result: 'active' | 'expired' | 'uncertain', code: string, reason: string } | null}
+ */
+export function classifyMeituanJob(json, jobUnionId) {
+  if (!json || typeof json !== 'object') return null;
+  if (json.status !== 1 || !isSameId(json.data?.jobUnionId, jobUnionId)) {
+    return {
+      result: 'uncertain',
+      code: 'meituan_answer_unrecognised',
+      reason: json.status === 1
+        ? 'Meituan answers status 1 without this jobUnionId; not a verdict this rung can make'
+        : `Meituan answers status ${String(json.status)}; not a verdict this rung can make`,
+    };
+  }
+  if (json.data.jobStatus === '000') {
+    return { result: 'active', code: 'meituan_api_open', reason: 'Meituan reports jobStatus "000" (live)' };
+  }
+  if (json.data.jobStatus === '001') {
+    return { result: 'expired', code: 'meituan_api_closed', reason: 'Meituan reports jobStatus "001" (closed)' };
+  }
+  return {
+    result: 'uncertain',
+    code: 'meituan_answer_unrecognised',
+    reason: `Meituan reports jobStatus ${String(json.data.jobStatus)}; not a verdict this rung can make`,
+  };
+}
+
+/**
+ * Decide liveness for one Alibaba posting from its position/detail answer.
+ * Pure + deterministic (no I/O), mirroring classifyTencentPost.
+ *
+ * Every measured answer was a 200 with `success: true`. A `content` carrying
+ * THIS id is live, and `content: null` is the answer for a posting the board
+ * no longer has (or never had). Any other readable answer, a failed call
+ * (`success` not true, the in-band error providers/alibaba.mjs also checks) or
+ * a record for another id, stays uncertain rather than falling to the browser,
+ * which cannot tell live from closed on this board (#2055). An unreadable body
+ * returns null so the browser rung decides.
+ *
+ * @param {any} json - parsed position/detail body
+ * @param {string} id - the positionId query parameter of the posting URL
+ * @returns {{ result: 'active' | 'expired' | 'uncertain', code: string, reason: string } | null}
+ */
+export function classifyAlibabaPosition(json, id) {
+  if (!json || typeof json !== 'object') return null;
+  if (json.success === true && json.content === null) {
+    return { result: 'expired', code: 'alibaba_api_no_content', reason: 'Alibaba returns no position for the id: closed or removed' };
+  }
+  if (json.success === true && isSameId(json.content?.id, id)) {
+    return { result: 'active', code: 'alibaba_api_active', reason: 'Alibaba returns the position (live)' };
+  }
+  return {
+    result: 'uncertain',
+    code: 'alibaba_answer_unrecognised',
+    reason: json.success === true
+      ? 'Alibaba answers success true without this position id; not a verdict this rung can make'
+      : `Alibaba answers success ${String(json.success)}, errorCode ${String(json.errorCode)}; not a verdict this rung can make`,
+  };
+}
+
+/**
+ * Decide liveness for one VDAB vacancy from its detail answer (HTTP 200 or 404).
+ * Pure + deterministic (no I/O), mirroring classifyNoFluffJobsPosting.
+ *
+ * `gepubliceerd` is what the page's closed banner reports ("Deze vacature is
+ * niet meer gepubliceerd"): true is live. An unpublished vacancy's `status`
+ * says why. PASSIEF is closed. HANGEND (pending) also covers vacancies VDAB has
+ * not published yet, so it stays uncertain: an expired verdict is one
+ * scan --verify records for good. An unpublished status this rung has not seen
+ * stays uncertain too. On a 404, only NOT_FOUND says the id is gone. A record
+ * for another vacancy, or one without the flag, returns null so the browser
+ * rung decides.
+ *
+ * @param {any} json - the parsed detail response
+ * @param {string} id - the vacancy id from the posting URL
+ * @param {number} [httpStatus=200] - the response's HTTP status (200 or 404)
+ * @returns {{ result: 'active' | 'expired' | 'uncertain', code: string, reason: string } | null}
+ */
+export function classifyVdabVacancy(json, id, httpStatus = 200) {
+  if (!json || typeof json !== 'object') return null;
+  if (httpStatus === 404) {
+    return json.code === 'NOT_FOUND'
+      ? { result: 'expired', code: 'vdab_api_gone', reason: 'VDAB has no vacancy under this id (404 NOT_FOUND)' }
+      : null;
+  }
+  if (!isSameId(json.referentie?.id, id) || typeof json.gepubliceerd !== 'boolean') return null;
+  if (json.gepubliceerd) {
+    return { result: 'active', code: 'vdab_api_published', reason: 'VDAB reports the vacancy published (live)' };
+  }
+  if (json.status === 'PASSIEF') {
+    return { result: 'expired', code: 'vdab_api_closed', reason: 'VDAB reports the vacancy no longer published (PASSIEF)' };
+  }
+  if (json.status === 'HANGEND') {
+    return { result: 'uncertain', code: 'vdab_api_pending', reason: 'VDAB reports the vacancy pending (HANGEND): not published, and not closed' };
+  }
+  return {
+    result: 'uncertain',
+    code: 'vdab_status_unrecognised',
+    reason: `VDAB reports the vacancy unpublished with status ${String(json.status)}; not a verdict this rung can make`,
   };
 }
 
@@ -1138,7 +1432,7 @@ export function classifyWorkday403(json) {
  * Map a posting URL to its ATS API URL, or null if it isn't a known ATS posting
  * (or any extracted segment fails the strict charset). Pure + deterministic.
  * @param {string} rawUrl
- * @returns {{ ats: string, apiUrl: string, parts: Record<string, string>, timeoutMs?: number, throttleMs?: number, accept?: string, headers?: Record<string, string> | ((parts: Record<string, string>) => Promise<Record<string, string> | null>), interpret?: (res: Response, parts: Record<string, string>) => Promise<{ result: 'active' | 'expired' | 'uncertain', code: string, reason: string } | null>, interpretStatuses?: number[], api404Authoritative: boolean } | null}
+ * @returns {{ ats: string, apiUrl: string, method: string, body?: string, parts: Record<string, string>, timeoutMs?: number, throttleMs?: number, accept?: string, headers?: Record<string, string> | ((parts: Record<string, string>) => Promise<Record<string, string> | null>), interpret?: (res: Response, parts: Record<string, string>) => Promise<{ result: 'active' | 'expired' | 'uncertain', code: string, reason: string } | null>, interpretStatuses?: number[], api404Authoritative: boolean } | null}
  */
 export function resolveAtsApi(rawUrl) {
   let u;
@@ -1162,6 +1456,8 @@ export function resolveAtsApi(rawUrl) {
     return {
       ats: provider.id,
       apiUrl: provider.api(parts),
+      method: provider.method || 'GET',
+      body: provider.body?.(parts),
       parts,
       timeoutMs: provider.timeoutMs,
       followEmbed: provider.followEmbed,
@@ -1173,6 +1469,7 @@ export function resolveAtsApi(rawUrl) {
       throttleMs: provider.throttleMs,
       interpretStatuses: provider.interpretStatuses,
       api404Authoritative: provider.api404Authoritative !== false,
+      interpretBoard: provider.interpretBoard,
     };
   }
   return null;
@@ -1192,21 +1489,29 @@ export function isAtsPosting(url) {
 // the same per-job Greenhouse endpoint once its embed redirect names the board.
 // Zoho Recruit has no JSON API; the posting page resolveAtsApi() points at
 // embeds the record with its HTML `Job_Description`.
+// Workable canonical and share links expose description, requirements and benefits
+// on the per-posting v2 API, after the existing guarded account-resolution hop.
 // Microsoft and LinkedIn are on ATS_PROVIDERS
 // for liveness only — their public endpoints answer search/status, never body
 // text — so they are deliberately excluded here; see fetch-jd.mjs / the
 // fetch*Jd() family in browser-extract.mjs for the per-provider fetchers.
-export const JD_TEXT_API_ATS = new Set(['greenhouse', 'greenhouse-embedded', 'lever', 'ashby', 'workday', 'smartrecruiters', 'zoho-recruit']);
+export const JD_TEXT_API_ATS = new Set(['greenhouse', 'greenhouse-embedded', 'lever', 'ashby', 'workday', 'smartrecruiters', 'zoho-recruit', 'workable', 'workable-short']);
 
 /**
  * Zero-token liveness check via the posting's ATS API.
  * @param {string} url
+ * @param {{ boardCache?: Map<string, unknown> }} [options]
+ *   boardCache: for a provider whose API is the whole board (Ashby), the parsed
+ *   board is kept here under its API URL and reused for the next posting on the
+ *   same board. Only a 200 that parsed into a board is kept; anything else is
+ *   retried next time.
+ *   Without it, every posting fetches its board, as before.
  * @returns {Promise<{ result: 'active' | 'expired' | 'uncertain', code: string, reason: string } | null>}
  *   null = not a known ATS posting, or inconclusive → caller should fall back to Playwright.
  *   `uncertain` is a conclusion in its own right: the provider reached the posting
  *   and could not read it, and no other rung would do better.
  */
-export async function checkLivenessViaApi(url) {
+export async function checkLivenessViaApi(url, { boardCache } = {}) {
   // Second rung: a careers page that embeds a Greenhouse board carries the job id
   // in ?gh_jid but not the board token, so resolveAtsApi (URL-only, SSRF-tight)
   // cannot map it. stripe.com/jobs/search?gh_jid=N is the worst case — the page
@@ -1215,12 +1520,15 @@ export async function checkLivenessViaApi(url) {
   const resolved = resolveAtsApi(url)
     ?? (() => {
       const apiUrl = greenhouseEmbed(url);
-      return apiUrl ? { ats: 'greenhouse', apiUrl, parts: {}, interpret: undefined, timeoutMs: undefined } : null;
+      return apiUrl ? { ats: 'greenhouse', apiUrl, method: 'GET', parts: {}, interpret: undefined, timeoutMs: undefined } : null;
     })();
   // Third rung: full-list providers — the tenant's whole board in one fetch,
   // where absence from a SUCCESSFUL fetch is as authoritative as a per-job 404.
   if (!resolved) return checkLivenessViaFullList(url);
-  const { ats, apiUrl, parts, interpret, interpretStatuses, interpretGone, interpretOther, accept, headers, followEmbed, timeoutMs, throttleMs, api404Authoritative } = resolved;
+  const { ats, apiUrl, method, body, parts, interpret, interpretStatuses, interpretGone, interpretOther, accept, headers, followEmbed, timeoutMs, throttleMs, api404Authoritative, interpretBoard } = resolved;
+  const cacheBoard = Boolean(boardCache && interpretBoard);
+  // Checked before the throttle: a board already in hand costs no request.
+  if (cacheBoard && boardCache.has(apiUrl)) return interpretBoard(boardCache.get(apiUrl), parts);
 
   // Resolve function-valued headers first (rungs gated on a runtime credential
   // or rotating token): null means the prerequisite is unavailable and the
@@ -1247,8 +1555,9 @@ export async function checkLivenessViaApi(url) {
     let res;
     try {
       res = await fetch(apiUrl, {
-        method: 'GET',
+        method,
         headers: { 'user-agent': DEFAULT_USER_AGENT, accept: accept || 'application/json', ...requestHeaders },
+        body,
         // Refuse server-side redirects (SSRF + ambiguity guard), except where the
         // provider reads the redirect itself to find the embedded job's API URL.
         redirect: followEmbed ? 'manual' : 'error',
@@ -1268,7 +1577,7 @@ export async function checkLivenessViaApi(url) {
       return null; // network / timeout / redirect → inconclusive, let Playwright decide
     }
 
-    if (res.status === 404 || res.status === 410) {
+    if ((res.status === 404 || res.status === 410) && !interpretStatuses?.includes(res.status)) {
       // Where the same status can mean "wrong board" as well as "posting removed",
       // the body decides — and an unreadable body stays inconclusive.
       if (interpretGone) return await interpretGone(res, parts);
@@ -1278,6 +1587,19 @@ export async function checkLivenessViaApi(url) {
     // Providers with an `interpret` step read the body of the statuses they
     // list (by default the 200: org-level Ashby, and per-job APIs whose 200 can
     // still describe a closed posting); any other 200 is proof the posting is live.
+    if (cacheBoard && res.status === 200) {
+      let json;
+      try {
+        json = await res.json();
+      } catch {
+        return null; // unparseable body → inconclusive, and not cached
+      }
+      // Kept only when it classifies: a 200 whose body is not a board (no
+      // `jobs` array) stays uncached, so the next posting retries the API.
+      const verdict = interpretBoard(json, parts);
+      if (verdict) boardCache.set(apiUrl, json);
+      return verdict;
+    }
     if (interpret && (interpretStatuses || [200]).includes(res.status)) return await interpret(res, parts);
     if (res.status === 200) {
       return { result: 'active', code: `${ats}_api_ok`, reason: 'ATS API returns the posting (live)' };

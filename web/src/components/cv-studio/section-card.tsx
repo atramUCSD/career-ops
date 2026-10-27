@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { ArrowDown, ArrowUp, Eye, EyeOff, Pencil, Plus, TriangleAlert, Undo2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Eye, EyeOff, Loader2, Pencil, Plus, Sparkles, TriangleAlert, Undo2 } from "lucide-react";
+import { readSavedCliId } from "@/lib/saved-cli";
 import { cn } from "@/lib/cn";
 import { arrange } from "@/lib/cv-studio/html-blocks.mjs";
 import { bulletShown, wordDiff, type StudioAction, type StudioBullet, type StudioEdits, type StudioItem, type StudioSection } from "@/lib/cv-studio/studio.mjs";
@@ -123,6 +124,7 @@ function BulletRow({ n, bullet, parent, siblings, first, last, movable, edits, h
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(shown.text);
   const [busy, setBusy] = useState(false);
+  const [rewriting, setRewriting] = useState(false);
 
   const saveDraft = async () => {
     if (busy) return;
@@ -201,6 +203,9 @@ function BulletRow({ n, bullet, parent, siblings, first, last, movable, edits, h
             ))}
           </div>
         )}
+        <button className={iconButton} aria-label="Rewrite with AI" aria-expanded={rewriting} onClick={() => setRewriting((v) => !v)}>
+          <Sparkles className="size-3.5" />
+        </button>
         <button
           className={iconButton}
           aria-label="Edit wording"
@@ -214,7 +219,73 @@ function BulletRow({ n, bullet, parent, siblings, first, last, movable, edits, h
         {movable && <MoveButtons parent={parent} id={bullet.id} siblings={siblings} first={first} last={last} dispatch={dispatch} label="bullet" />}
         {movable && <HideButton id={bullet.id} hidden={isHidden} dispatch={dispatch} label="bullet" />}
       </div>
+      {rewriting && <RewritePanel n={n} bullet={bullet} current={shown.text} onUse={(text, keywords) => { dispatch({ type: "use", id: bullet.id, use: { kind: "custom", text, keywords } }); setRewriting(false); }} />}
     </li>
+  );
+}
+
+type Proposal = { kind: "idle" } | { kind: "running" } | { kind: "ready"; text: string; keywords: string[]; warning: string | null } | { kind: "failed"; error: string };
+const QUICK = ["Shorter", "Lead with the result", "Plainer wording", "Use a job keyword only if it is true"];
+
+function RewritePanel({ n, bullet, current, onUse }: { n: string; bullet: StudioBullet; current: string; onUse: (text: string, keywords: string[]) => void }) {
+  const [instruction, setInstruction] = useState("");
+  const [proposal, setProposal] = useState<Proposal>({ kind: "idle" });
+  const run = async (text: string) => {
+    if (proposal.kind === "running") return;
+    const cliId = readSavedCliId();
+    if (!cliId) return setProposal({ kind: "failed", error: "No AI CLI is set up. Choose one in Config, or edit the wording by hand." });
+    setProposal({ kind: "running" });
+    try {
+      const r = await fetch(`/api/cv-studio/${encodeURIComponent(n)}/rewrite`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bulletId: bullet.id, instruction: text, cliId }) });
+      const body = (await r.json()) as { text?: string; keywords?: string[]; warning?: string | null; error?: string };
+      setProposal(r.ok && body.text ? { kind: "ready", text: body.text, keywords: body.keywords ?? [], warning: body.warning ?? null } : { kind: "failed", error: body.error ?? "The rewrite failed." });
+    } catch {
+      setProposal({ kind: "failed", error: "The rewrite failed. Is the dashboard still running?" });
+    }
+  };
+  return (
+    <div className="mt-2 rounded-lg border border-brand/30 bg-brand-soft/40 p-2.5" data-testid="rewrite-panel">
+      <form
+        className="flex gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (instruction.trim()) run(instruction.trim());
+        }}
+      >
+        <input
+          value={instruction}
+          onChange={(e) => setInstruction(e.target.value)}
+          maxLength={300}
+          placeholder="How should this bullet change?"
+          aria-label="Rewrite instruction"
+          className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground field-focus"
+        />
+        <button type="submit" disabled={proposal.kind === "running" || !instruction.trim()} className="inline-flex items-center gap-1 rounded-full bg-brand px-3 py-1 text-xs font-medium text-brand-foreground disabled:opacity-50">
+          {proposal.kind === "running" ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />} Rewrite
+        </button>
+      </form>
+      <div className="mt-1.5 flex flex-wrap gap-1">
+        {QUICK.map((q) => (
+          <button key={q} type="button" disabled={proposal.kind === "running"} onClick={() => { setInstruction(q); run(q); }} className="rounded-full border border-border bg-background px-2 py-0.5 text-2xs text-muted hover:border-brand/40 hover:text-brand disabled:opacity-50">
+            {q}
+          </button>
+        ))}
+      </div>
+      {proposal.kind === "running" && <p className="mt-2 text-xs text-muted">Your AI CLI is drafting a rewrite. This uses tokens and can take a minute.</p>}
+      {proposal.kind === "failed" && <p role="alert" className="mt-2 text-xs text-bad-text">{proposal.error}</p>}
+      {proposal.kind === "ready" && (
+        <div className="mt-2 rounded-md border border-border bg-background p-2 text-sm">
+          <p className="leading-relaxed text-foreground" aria-label="Suggested rewrite">
+            <Diff before={current} after={proposal.text} />
+          </p>
+          {proposal.warning && <p role="status" className="mt-1.5 text-xs text-warn">{proposal.warning}. It could read or change files while drafting this.</p>}
+          <div className="mt-1.5 flex gap-2">
+            <button onClick={() => onUse(proposal.text, proposal.keywords)} className="rounded-full bg-brand px-3 py-0.5 text-xs font-medium text-brand-foreground">Accept</button>
+            <button onClick={() => setProposal({ kind: "idle" })} className="rounded-full px-3 py-0.5 text-xs text-muted hover:text-foreground">Reject</button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

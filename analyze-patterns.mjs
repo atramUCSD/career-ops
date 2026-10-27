@@ -14,21 +14,35 @@
  */
 
 import { readFileSync, existsSync, realpathSync, writeFileSync, symlinkSync, rmSync } from 'fs';
-import { join, dirname, relative, sep } from 'path';
+import { join, dirname, relative, isAbsolute, sep } from 'path';
 import { fileURLToPath } from 'url';
 import { isMainModule } from './lib/is-main-module.mjs';
-import { load as yamlLoad } from 'js-yaml';
-import { resolveColumns, parseTrackerRow, normalizeVia } from './tracker-parse.mjs';
-import { getCareerOpsRoot } from './path-resolver.mjs';
-import { loadCanonicalStates, resolveCanonicalStateId, foldStatusInput } from './tracker-utils.mjs';
+import { loadYaml } from './lib/yaml-document.mjs';
+import { resolveColumns, parseTrackerRow, normalizeVia, firstLinkTarget } from './tracker-parse.mjs';
+import { getCareerOpsRoot, resolveTrackerPath } from './path-resolver.mjs';
+import { loadCanonicalStates, resolveCanonicalStateId, foldStatusInput, trackerLinkDirsFor, resolveWorkspaceRoot, resolveWorkspaceRootFor } from './tracker-utils.mjs';
 import { atsVendorOf } from './ats-vendor.mjs';
 import { flagValue, hasFlag, validateFlags } from './lib/cli-flags.mjs';
 import { localToday } from './lib/local-today.mjs';
 
 const CAREER_OPS = getCareerOpsRoot();
-const APPS_FILE = existsSync(join(CAREER_OPS, 'data/applications.md'))
-  ? join(CAREER_OPS, 'data/applications.md')
-  : join(CAREER_OPS, 'applications.md');
+const APPS_FILE = resolveTrackerPath(CAREER_OPS);
+// Report links resolve from the same directories verify-pipeline.mjs checks:
+// the tracker's folder as realpathed and as spelled (a symlinked tracker FILE
+// writes links relative to its target; a symlinked data root, or macOS's
+// /var -> /private/var tmpdir, needs the spelled form, since withinReports()
+// compares lexically), then the data root.
+const TRACKER_DIRS = trackerLinkDirsFor(CAREER_OPS);
+// A CAREER_OPS_TRACKER that points at another workspace brings that
+// workspace's reports/ with it (see resolveWorkspaceRoot): the workspace of
+// the tracker as spelled, and of its target when the tracker is a symlink into
+// another workspace. The data root's own reports/ stays allowed for a tracker
+// kept apart from its reports.
+const REPORTS_ROOTS = [...new Set([
+  join(CAREER_OPS, 'reports'),
+  join(resolveWorkspaceRootFor(CAREER_OPS), 'reports'),
+  join(resolveWorkspaceRoot(APPS_FILE), 'reports'),
+])];
 const REPORTS_DIR = join(CAREER_OPS, 'reports');
 
 const MACHINE_SUMMARY_FIELDS = new Set([
@@ -300,7 +314,7 @@ export function parseMachineSummary(content) {
   if (!raw) return null;
 
   try {
-    const parsed = yamlLoad(raw);
+    const parsed = loadYaml(raw);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
     return Object.fromEntries(
       Object.entries(parsed).filter(([key]) => MACHINE_SUMMARY_FIELDS.has(key))
@@ -327,7 +341,10 @@ function buildViaChannelAnalysis(submitted, isAdvanced, minSample = 8) {
   const isDirect = (v) => v === '—' || v === '-';
   const agencySubmitted = submitted.filter(e => { const v = viaOf(e); return v !== '' && !isDirect(v); });
   const directSubmitted = submitted.filter(e => isDirect(viaOf(e)));
-  const rate = (arr) => (arr.length > 0 ? Math.round((arr.filter(isAdvanced).length / arr.length) * 100) : 0);
+  // null, not 0, for a channel nothing went through, as decidedRate is: a
+  // "direct 0 apps 0% advance" line reads as a channel that was tried and
+  // failed, for a user who simply applies through agencies.
+  const rate = (arr) => (arr.length > 0 ? Math.round((arr.filter(isAdvanced).length / arr.length) * 100) : null);
 
   const byAgency = new Map();
   for (const e of agencySubmitted) {
@@ -777,6 +794,11 @@ requirement_importance:
     if (withinReports(escape)) failures.push('containment: traversal path escaped reports/ (path-traversal guard broken)');
     const sibling = join(CAREER_OPS, 'reports-evil', 'x.md');
     if (withinReports(sibling)) failures.push('containment: reports-prefixed sibling dir wrongly accepted');
+    // The same lexical guard against a workspace's reports root (REPORTS_ROOTS).
+    const otherRoot = join(CAREER_OPS, 'workspace', 'reports');
+    if (withinReports(join(otherRoot, '..', '..', 'reports', 'x.md'), otherRoot)) failures.push('containment: traversal escaped a workspace reports root');
+    if (withinReports(join(otherRoot, '..', 'reports-evil', 'x.md'), otherRoot)) failures.push('containment: sibling of a workspace reports root wrongly accepted');
+    if (withinReports(otherRoot, otherRoot)) failures.push('containment: a reports root itself wrongly accepted as a report');
   }
 
   // Symlink-escape + missing-file graceful degradation (#2655). realpath
@@ -850,23 +872,24 @@ function parseTracker(appsFile = APPS_FILE) {
 }
 
 // Canonical reports-root containment. A tracker link resolves to a candidate
-// path; accept it only if it stays inside the repo's reports/ directory. Two
+// path; accept it only if it stays inside a reports/ directory (the data
+// root's by default; see REPORTS_ROOTS for the others). Two
 // layers: a cheap lexical traversal guard (no stat) rejects a crafted link like
-// reports/../../etc/passwd, which join() collapses to a repo-relative path that
-// no longer starts with reports/; then realpath canonicalization rejects a
+// reports/../../etc/passwd, which join() collapses to a path that is no longer
+// under reports/; then realpath canonicalization rejects a
 // symlink whose target escapes reports/ (a lexical-only check would follow it).
 // realpathSync throws ENOENT/ENOTDIR for a not-yet-created candidate or a
 // missing reports root — both are non-fatal: a missing candidate falls through
 // to the downstream read (which returns null, preserving prior semantics), a
 // missing root means there are simply no reports. Only genuinely unexpected
-// errors rethrow, matching readTextIfExists. Identical to the guard in
-// upskill.mjs so both sites behave the same.
-function withinReports(candidate, root = CAREER_OPS) {
-  const repoRelative = relative(root, candidate).split(sep).join('/');
-  if (!repoRelative.startsWith('reports/') || repoRelative.includes('..')) return false;
+// errors rethrow, matching readTextIfExists. The same guard as upskill.mjs's,
+// with the reports root as a parameter.
+function withinReports(candidate, reportsRoot = join(CAREER_OPS, 'reports')) {
+  const rootRelative = relative(reportsRoot, candidate);
+  if (!rootRelative || isAbsolute(rootRelative) || rootRelative.includes('..')) return false;
   let realRoot;
   try {
-    realRoot = realpathSync(join(root, 'reports'));
+    realRoot = realpathSync(reportsRoot);
   } catch (err) {
     if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return false;
     throw err;
@@ -1154,7 +1177,7 @@ const DISCARD_REASONS_FILE = join(dirname(fileURLToPath(import.meta.url)), 'temp
  */
 export function loadDiscardReasonVocabulary(file = DISCARD_REASONS_FILE) {
   try {
-    const parsed = yamlLoad(readFileSync(file, 'utf8'));
+    const parsed = loadYaml(readFileSync(file, 'utf8'));
     const reasons = Array.isArray(parsed?.reasons) ? parsed.reasons : [];
     const ids = reasons.map(reason => reason?.id).filter(id => typeof id === 'string' && id);
     return ids.length > 0 ? new Set(ids) : null;
@@ -1325,8 +1348,9 @@ function buildPatternSignals(enriched) {
 export function analyze(input = {}) {
   const { minThreshold = 5, minVendorN = 8, root = CAREER_OPS, entries: given } =
     Array.isArray(input) ? { entries: input } : input;
-  const appsFile = existsSync(join(root, 'data/applications.md'))
-    ? join(root, 'data/applications.md')
+  // The default root keeps APPS_FILE, which honours CAREER_OPS_TRACKER and the workspace tracker.
+  const appsFile = root === CAREER_OPS ? APPS_FILE
+    : existsSync(join(root, 'data/applications.md')) ? join(root, 'data/applications.md')
     : join(root, 'applications.md');
   const entries = given ?? parseTracker(appsFile);
 
@@ -1338,20 +1362,24 @@ export function analyze(input = {}) {
 
   // Enrich entries with report data and classification
   const enriched = entries.map(e => {
-    const reportMatch = e.report.match(/\]\(([^)]+)\)/);
+    const reportTarget = firstLinkTarget(e.report);
     // Tracker links are relative to the tracker file's own directory (see
-    // merge-tracker.mjs link normalization); fall back to repo root for
-    // legacy root-relative links. Each candidate is guarded to reports/
-    // before the read is attempted; parseReport returns null for a missing
-    // file, so no pre-flight existsSync is needed (#2385).
+    // merge-tracker.mjs link normalization, and TRACKER_DIRS); fall back to
+    // repo root for legacy root-relative links. Each candidate is guarded to
+    // a reports/ root before the read is attempted; parseReport returns null
+    // for a missing file, so no pre-flight existsSync is needed (#2385).
     let reportData = null;
-    if (reportMatch) {
+    if (reportTarget != null) {
       const candidates = new Set([
-        join(dirname(appsFile), reportMatch[1]),
-        join(root, reportMatch[1]),
+        join(dirname(appsFile), reportTarget),
+        ...TRACKER_DIRS.map((dir) => join(dir, reportTarget)),
+        join(root, reportTarget),
+        join(CAREER_OPS, reportTarget),
       ]);
+      // An explicit root (a profile's tree) brings its own reports/ along.
+      const reportsRoots = root === CAREER_OPS ? REPORTS_ROOTS : [join(root, 'reports'), ...REPORTS_ROOTS];
       for (const candidate of candidates) {
-        if (!withinReports(candidate, root)) continue;
+        if (!reportsRoots.some((r) => withinReports(candidate, r))) continue;
         reportData = parseReport(candidate);
         if (reportData) break;
       }
@@ -1746,8 +1774,10 @@ function printSummary(result) {
   if (via && (via.breakdown.length > 0 || via.directSubmitted > 0)) {
     console.log('\nVIA CHANNEL ANALYSIS (agency vs direct, #1596)');
     console.log('-'.repeat(40));
-    console.log(`  direct  ${String(via.directSubmitted).padStart(3)} apps  ${String(via.directAdvanceRate).padStart(3)}% advance`);
-    console.log(`  agency  ${String(via.agencySubmitted).padStart(3)} apps  ${String(via.agencyAdvanceRate).padStart(3)}% advance`);
+    // A channel with no submissions has no rate; "—" keeps the column aligned.
+    const pct = (r) => (r == null ? '   —' : `${String(r).padStart(3)}%`);
+    console.log(`  direct  ${String(via.directSubmitted).padStart(3)} apps  ${pct(via.directAdvanceRate)} advance`);
+    console.log(`  agency  ${String(via.agencySubmitted).padStart(3)} apps  ${pct(via.agencyAdvanceRate)} advance`);
     if (via.unknownVia > 0) {
       console.log(`  unknown ${String(via.unknownVia).padStart(3)} apps  (no Via recorded — not counted in either channel)`);
     }

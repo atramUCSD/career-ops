@@ -114,7 +114,9 @@ export const APPLY_LINE = 4.0;
 /** @param {unknown} legitimacy */
 function flaggedPosting(legitimacy) {
   const s = String(legitimacy ?? "").toLowerCase();
-  return /caut|precau|suspic|sospech|scam|fake/.test(s);
+  // Turkish reports (modes/tr/is-ilani.md) write the tier in Turkish:
+  // Dikkatli İlerle (caution), Şüpheli (suspicious).
+  return /caut|precau|suspic|sospech|scam|fake|dikkatli|şüpheli/.test(s);
 }
 
 /**

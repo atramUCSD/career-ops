@@ -102,7 +102,9 @@ export function spawnGeneratePdf({ spawnFn, execPath, root, env, html, finalPdf,
       // hard-fail every web-triggered render — same bypass a human already
       // applies manually via the CLI when this diverges.
       [path.join(root, "generate-pdf.mjs"), html, finalPdf, `--format=${format}`, `--report=${reportNum}`, "--allow-reorder"],
-      { cwd: root, env },
+      // windowsHide: see api/doctor/route.ts — a stale inherited console
+      // kills every child with 0xC0000142 on Windows; never inherit one.
+      { cwd: root, env, windowsHide: true },
     );
     let stderr = "";
     child.stderr.on("data", (d) => { stderr += d.toString(); });
@@ -116,12 +118,13 @@ export function spawnGeneratePdf({ spawnFn, execPath, root, env, html, finalPdf,
  * JSON stdout when present (mark-pdf-ready.mjs prints a JSON payload even on
  * a failure exit when --json is passed) so a caller can surface the specific
  * reason (not-found / ambiguous / lock-timeout / ...) rather than raw stderr.
+ * `code` is the exit code, or null when the child never started.
  * @param {{spawnFn: Function, execPath: string, root: string, env?: object, reportNum: string}} args
- * @returns {Promise<{ok: boolean, data: {error?: string} | null, stderr: string}>}
+ * @returns {Promise<{ok: boolean, code: number | null, data: {error?: string} | null, stderr: string}>}
  */
 export function markTrackerReady({ spawnFn, execPath, root, env, reportNum }) {
   return new Promise((resolve) => {
-    const child = spawnFn(execPath, [path.join(root, "mark-pdf-ready.mjs"), reportNum, "--json"], { cwd: root, env });
+    const child = spawnFn(execPath, [path.join(root, "mark-pdf-ready.mjs"), reportNum, "--json"], { cwd: root, env, windowsHide: true });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d) => { stdout += d.toString(); });
@@ -129,9 +132,9 @@ export function markTrackerReady({ spawnFn, execPath, root, env, reportNum }) {
     child.on("close", (code) => {
       let data = null;
       try { data = JSON.parse(stdout); } catch { /* not JSON, or exited before printing any */ }
-      resolve({ ok: code === 0, data, stderr: stderr.trim() });
+      resolve({ ok: code === 0, code, data, stderr: stderr.trim() });
     });
-    child.on("error", (e) => resolve({ ok: false, data: null, stderr: `mark-pdf-ready.mjs failed to start: ${e.message}` }));
+    child.on("error", (e) => resolve({ ok: false, code: null, data: null, stderr: `mark-pdf-ready.mjs failed to start: ${e.message}` }));
   });
 }
 

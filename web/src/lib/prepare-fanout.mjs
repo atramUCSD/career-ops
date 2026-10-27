@@ -306,7 +306,7 @@ export function parseReservedRange(stdout) {
  */
 export function runNodeScript({ spawnFn, execPath, args, cwd, env, timeoutMs = CORE_SCRIPT_TIMEOUT_MS }) {
   return new Promise((resolve) => {
-    const child = spawnFn(execPath, args, { cwd, env });
+    const child = spawnFn(execPath, args, { cwd, env, windowsHide: true });
     let stdout = "";
     let stderr = "";
     let timedOut = false;

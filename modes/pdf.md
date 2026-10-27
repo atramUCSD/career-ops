@@ -6,6 +6,8 @@ Optional passes:
 
 ## Full pipeline
 
+**Locked Sections:** If `cv.locked_sections` is defined in `profile.yml`, NEVER remove, shorten, or paraphrase those sections during CV generation or tailoring. They must appear verbatim.
+
 ## Application-scoped artifacts
 
 When a CV is reused or lightly tailored for an existing application, initialize a bundle with `npm run application:init -- --report {report-number} --company "{company}" --role "{role}" --version 1`. Keep the current JD at `jd/current.md`, the comparison JD at `jd/previous.md`, the source CV at `cv/source/original.html`, the tailored CV at `cv/tailored/v001/cv.html`, the PDF at `cv/tailored/v001/cv.pdf`, the change notes at `cv/tailored/v001/changes.md`, and the reuse decision at `decision/reuse.json` under the printed bundle root. Resolve the application/report first with `node find.mjs {report-or-tracker-number}` so the bundle uses the report number, not an ambiguous tracker row.
@@ -14,6 +16,7 @@ Run `npm run jd:similarity -- {bundle-root}/jd/current.md {bundle-root}/jd/previ
 
 1. Read `cv.md` as the source of truth
 2. Ask the user for the JD if it is not in context (text or URL)
+   For a new posting (no tracker row yet), run `node precheck-duplicate.mjs --company "$COMPANY" --title "$TITLE" [--url "$URL"] [--req "$REQ"]` once first (read-only, advisory; pass `--url` when the JD came as a URL and `--req` when the posting shows a requisition ID; set each variable from the posting with single quotes or pass an argument array, never paste posting text into the command string) and surface any hit before drafting.
 3. Extract 15-20 keywords from the JD
 4. Run the zero-LLM skill-gap check before drafting anything: **always** write the JD to `jds/{slug}.md` first — required, not conditional, even when a report for this application already exists — then `node jd-skill-gap.mjs jds/{slug}.md --summary`. This classifies the JD's explicit requirements against `cv.md` into three buckets — never surface `result.gap` items as if the candidate has them:
    - **JD archival (required, #2789):** this write doubles as the JD archive for this application. A `**URL:**` header alone is a live pointer, not an archive — it rots once the posting closes. When this run is part of a full `oferta` evaluation, the report's own `## Job Description (archived verbatim)` section is the primary archive and this `jds/{slug}.md` write is a secondary copy; when `pdf` is run standalone (no report), this file IS the archive, so prefer naming/keying it to the report with `archive-posting.mjs --report={num}` when a report number exists. `check-jd-archive.mjs` validates every report has one form or the other. Never paraphrase the posting under the verbatim heading: if you cannot quote it in full, use `archive-posting.mjs <url>` for a standalone run, or `archive-posting.mjs <url> --company={company-slug} --report={num}` when a report number exists (the slug from the report filename), and use the resulting archive reference instead. If a posting date is visible anywhere in the source — URL-scraped page text, pasted JD text, or a screenshot being transcribed — include it as the first line of the file: `Posted: {date or relative string as shown}`, or `Posted: not visible in source` when absent. Never substitute the report file's own filesystem mtime/creation time for this — it records when the candidate processed the JD, not when the employer posted it.
@@ -151,7 +154,7 @@ Examples of legitimate reformulation:
 
 ## Template HTML
 
-**Before generating: read `modes/_custom.md` (if it exists) and apply its formatting/content house rules to every CV in this session — including every item of a batch.** Rules recorded there (date formats, section-order preferences, content to always/never include) are persistent user instructions, not suggestions; if the user corrects the same thing twice in conversation, write it into `modes/_custom.md` so it stops drifting.
+**Before generating: read `modes/_custom.md` (if it exists) and apply its formatting/content house rules to every CV in this session — including every item of a batch.** Rules recorded there (date formats, section-order preferences, content to always/never include) are persistent user instructions, not suggestions; in an interactive session, if the user corrects the same thing twice in conversation, propose it through the `retro` mode (`modes/retro.md`), which writes to `modes/_custom.md` only the rules the user accepts. A batch or delegated worker never writes `modes/_custom.md`, `modes/_profile.md`, or `config/profile.yml`. It reports the preference to its parent instead.
 
 ### Selecting the template
 
@@ -237,7 +240,7 @@ Write a JSON file with this structure, then run `node build-cv-html.mjs <input.j
 | `page_format` | string | `letter` → `8.5in` page width, `a4` → `210mm`. Omit it and both the body width and the sheet fall back to `config/profile.yml` `page_format`, then to `letter`. Set it and you should pass the SAME value to `generate-pdf.mjs --format`, so the body and the sheet match. |
 | `country` | string | Optional. The employer's ISO 3166-1 alpha-2 code (e.g. `DE`). Read only when the effective `page_format` is `auto`; otherwise ignored. |
 | `candidate.name` | string | From `profile.yml`. |
-| `candidate.title` | string | Optional professional headline shown directly under the name (e.g. "Senior Backend Engineer"). Read it from `candidate.title` in `config/profile.yml`. An ATS reads this first to place the candidate; a CV with no title forces the reader to infer the role. Omit or leave empty → no title element, byte-identical to before. Tailor it to the JD's own title wording when the candidate's real level supports it (never inflate). |
+| `candidate.title` | string | Optional professional headline shown directly under the name (e.g. "Senior Backend Engineer"). Read it from `candidate.title` in `config/profile.yml`. An ATS reads this first to place the candidate; a CV with no title forces the reader to infer the role. Omit or leave empty → no title element, byte-identical to before. Tailor it to the JD's own title wording when the candidate's real level supports it (never inflate). Keep it to about 60 characters or fewer: a job title plus two or three keywords, not a sentence. Some application portals reject longer values, and `generate-pdf.mjs` prints a non-blocking warning above 64. Keep the output PDF filename similarly short (64 characters or fewer). |
 | `candidate.phone` | string | Optional — **omit or leave empty** to drop the `tel:` link and its separator (no empty cell). |
 | `candidate.email` | string | From `profile.yml`. |
 | `candidate.linkedin` | `{url, display}` | Optional — omit to drop the item and its separator. |
@@ -264,6 +267,7 @@ Write a JSON file with this structure, then run `node build-cv-html.mjs <input.j
 - **Missing or blank required field → hard error, non-zero exit, no HTML written.** Required: `company` + `role` for experience, `name` for projects, `title` for education, certifications and awards, `items` for skills (a non-blank string or a non-empty array of them; `category` stays optional).
 - **A key no builder reads → warning on stderr and in the report's `warnings[]`;** the build proceeds and the key is ignored.
 - **A top-level section name the builder does not read → warning**, naming the nearest known key. A payload with `educations` instead of `education` used to validate clean and drop the section silently; it now says so.
+- **A populated section the chosen template has no slot for → warning**, naming the template. Of the shipped templates only `cv-template.html` renders `interests`, and the ATS and `zh-minimal` templates have no `consent` footer; pick a template that has the section, or leave it out.
 
 Do **not** substitute the LaTeX builder's vocabulary — `institution`/`degree`/`dates`/`coursework` is the `modes/latex.md` education schema, **not** this one — nor `employer` for a company or `name` for a certification. Such an entry used to render as an empty block while the report still said `"valid": true`, and CVs went out with no education section at all. It is now rejected by name. When in doubt, check `counts.educationEntries` (and its siblings) in the JSON report: a zero there means the section is empty in the PDF.
 
@@ -294,7 +298,7 @@ The `{{PHOTO}}` slot is **off by default** and intentionally market-specific:
 
 When set, the photo floats into the top corner (mirrored for RTL/Arabic) and the header/summary text wraps beside it; `.cv-photo` in `cv-template.html` controls its size and framing.
 
-Local photo paths may be absolute or relative to the career-ops project root. The builder reads a local path only when the payload's `candidate.photo` equals the value in `config/profile.yml`; any other local path is refused, because the payload is written from an untrusted posting. `data:` and `http(s)` values are unaffected.
+Local photo paths may be absolute or relative to the data root, where the user-layer files live: the career-ops project root, unless `CAREER_OPS_ROOT`, `CAREER_OPS_DATA_DIR` or a `.career-ops-data` marker moves them. A relative path not found there is also tried against the checkout. The builder reads a local path only when the payload's `candidate.photo` equals the value in `config/profile.yml`; any other local path is refused, because the payload is written from an untrusted posting. `data:` and `http(s)` values are unaffected.
 The builder validates PNG, JPEG, WebP, and GIF inputs and inlines them as data
 URLs so the saved HTML remains portable. To inspect the result before PDF
 generation, run:

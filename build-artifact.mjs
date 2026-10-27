@@ -24,7 +24,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import * as yaml from 'js-yaml';
+import { loadYaml } from './lib/yaml-document.mjs';
 import { parsePendingRows, classifyRows } from './swarm.mjs';
 import { loadLanes, LANES_PATH } from './lanes.mjs';
 import { matchedTitleKeywords, buildTitleFilter } from './scan.mjs';
@@ -385,7 +385,7 @@ function loadPatterns(root) {
 export function buildModel({ root = ROOT, now = new Date(), profileRoot = null, profileName = null, statusLog = null } = {}) {
   // Only the two intent files move; every data read below stays on `root`.
   const intentRoot = profileRoot || root;
-  const portals = yaml.load(readFileSync(join(root, 'portals.yml'), 'utf-8')) || {};
+  const portals = loadYaml(readFileSync(join(root, 'portals.yml'), 'utf-8')) || {};
   const positives = portals.title_filter?.positive || [];
   const maxAge = portals.max_posting_age_days || 45;
   const bands = freshnessBands(maxAge);
@@ -435,7 +435,7 @@ export function buildModel({ root = ROOT, now = new Date(), profileRoot = null, 
   // signals — how many reqs a company has open, how often a company+title pair
   // has been seen — are properties of the pipeline, not of a single row.
   const profile = existsSync(getProfilePath(intentRoot))
-    ? yaml.load(readFileSync(getProfilePath(intentRoot), 'utf-8')) || {}
+    ? loadYaml(readFileSync(getProfilePath(intentRoot), 'utf-8')) || {}
     : {};
   const scoreRow = buildScorer({ profile, lanes, rows, history: history.added, facts: jdFacts });
   for (const r of rows) {

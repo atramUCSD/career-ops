@@ -40,9 +40,9 @@ async function runAction(action: unknown): Promise<Response> {
   // Gmail token; the server never holds it.
   return new Promise((resolve) => {
     execFile(
-      "node",
+      process.execPath,
       [rootScript("notify-email"), flag, "--root", userRoot()],
-      { cwd: careerOpsRoot(), env, timeout: 60_000 },
+      { cwd: careerOpsRoot(), env, timeout: 60_000, windowsHide: true },
       (error, stdout, stderr) => {
         if (!error) return resolve(Response.json({ ok: true, message: lastLine(stdout) }));
         const message = error.killed ? "Timed out after 60 seconds." : lastLine(stderr) || lastLine(stdout) || error.message;

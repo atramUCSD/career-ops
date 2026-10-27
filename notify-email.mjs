@@ -33,7 +33,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import * as yaml from 'js-yaml';
+import { loadYaml } from './lib/yaml-document.mjs';
 import { buildModel } from './build-artifact.mjs';
 import { BANDS } from './callback-score.mjs';
 import { sendRaw } from './gmail-send.mjs';
@@ -71,7 +71,7 @@ export const DEFAULTS = {
 export function loadConfig(root = ROOT) {
   const path = join(root, 'config/alerts.yml');
   if (!existsSync(path)) return { ...DEFAULTS };
-  const parsed = yaml.load(readFileSync(path, 'utf-8')) || {};
+  const parsed = loadYaml(readFileSync(path, 'utf-8')) || {};
   const cfg = { ...DEFAULTS, ...(parsed.alerts || parsed) };
   // min_reply_odds was the pre-rewrite name on a 0-100 additive scale. An
   // existing config keeps working rather than going quiet, but it is read as

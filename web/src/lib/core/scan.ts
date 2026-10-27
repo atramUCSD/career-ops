@@ -11,6 +11,7 @@ import { resolveScanTimeoutMs, scanTimeoutMessage } from "./scan-timeout.mjs";
 import { ATS_LABEL, ATS_SOURCES, type AtsSource, type DiscoveredOffer, type ExploreFilters, type FitBand, type ScanEvent } from "@/lib/explore";
 import { mergeScanResults, timedOutMessage } from "./scan-merge.mjs";
 import { parseScanJsonStdout } from "./scan-json.mjs";
+import { scannerArgs } from "./scan-args.mjs";
 
 export type { DiscoveredOffer, ScanEvent, AtsSource } from "@/lib/explore";
 export { ATS_SOURCES } from "@/lib/explore";
@@ -198,19 +199,15 @@ function runScanner(
   return new Promise((resolve) => {
     const args = [
       rootScript("scan-ats-full"),
-      "--dry-run",
-      "--since",
-      String(Math.max(1, filters.sinceDays || 7)),
-      "--ats",
-      ats.join(","),
-      "--limit",
-      String(Math.max(1, filters.limitPerAts || 150)),
+      ...scannerArgs({ ats, json: useJson, sinceDays: filters.sinceDays, limitPerAts: filters.limitPerAts }),
     ];
-    if (useJson) args.push("--json");
 
     const child = spawn(process.execPath, args, {
       cwd: careerOpsRoot(),
       env,
+      // windowsHide: see api/doctor/route.ts — a stale inherited console kills
+      // every child with 0xC0000142 on Windows; never inherit one.
+      windowsHide: true,
     });
 
     const { offers, seen } = sink;

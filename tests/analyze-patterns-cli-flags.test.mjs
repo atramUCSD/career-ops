@@ -53,7 +53,7 @@ function runAnalyze(...args) {
 test('analyze-patterns rejects an unrecognized flag and lists the valid flags', () => {
   const result = runAnalyze('--no-such-flag');
 
-  assert.equal(result.status, 1, `exited ${result.status}, want 1`);
+  assert.equal(result.status, 1, describeSpawn(result, `exited ${result.status}, want 1`));
   assert.match(result.all, /unrecognized flag\(s\): --no-such-flag/i);
   for (const flag of VALID_FLAGS) {
     assert.ok(result.all.includes(flag), `valid flag ${flag} was not listed`);
@@ -74,7 +74,7 @@ test('analyze-patterns help exits before reading application data', () => {
 test('analyze-patterns rejects an unrecognized flag before handling help', () => {
   const result = runAnalyze('--help', '--no-such-flag');
 
-  assert.equal(result.status, 1, `exited ${result.status}, want 1`);
+  assert.equal(result.status, 1, describeSpawn(result, `exited ${result.status}, want 1`));
   assert.match(result.all, /unrecognized flag\(s\): --no-such-flag/i);
   assert.doesNotMatch(result.stdout, /Usage:/i, 'help hid the unrecognized flag error');
 });
