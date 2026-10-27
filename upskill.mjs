@@ -23,6 +23,7 @@
  */
 
 import { readFileSync, existsSync, statSync, realpathSync, writeFileSync, symlinkSync, rmSync } from 'fs';
+import { launchHeadless } from './lib/chromium-launch-error.mjs';
 import { join, dirname, relative, resolve, sep } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { loadYaml } from './lib/yaml-document.mjs';
@@ -890,7 +891,7 @@ if (isMain) {
         try {
           const secureUrl = await validateUrlSecurity(inputSource);
           const { chromium } = await import('playwright');
-          browser = await chromium.launch({ headless: true });
+          browser = await launchHeadless(chromium);
           const page = await browser.newPage();
 
           await page.route('**/*', async (route) => {

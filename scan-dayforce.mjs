@@ -63,6 +63,7 @@
  */
 
 import { chromium } from 'playwright';
+import { launchHeadless } from './lib/chromium-launch-error.mjs';
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { loadYaml } from './lib/yaml-document.mjs';
@@ -592,7 +593,7 @@ export async function scanBoard(page, boardCfg, filters = {}, { debug = false } 
  */
 export async function scanBoardWithRetry(boardCfg, filters, {
   debug = false,
-  launch = () => chromium.launch({ headless: true }),
+  launch = () => launchHeadless(chromium),
   retryDelayMs = RETRY_DELAY_MS,
 } = {}) {
   let lastError = null;

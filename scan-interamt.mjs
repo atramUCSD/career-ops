@@ -19,6 +19,7 @@
  */
 
 import { chromium } from 'playwright';
+import { launchHeadless } from './lib/chromium-launch-error.mjs';
 import { readFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { loadYaml } from './lib/yaml-document.mjs';
@@ -298,7 +299,7 @@ async function main() {
   // blacklist, location or date skip that is meant to be revisited later.
   const handledThisRun = new Set();
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = await launchHeadless(chromium);
   const context = await browser.newContext({ locale: 'de-DE', timezoneId: 'Europe/Berlin' });
   const page = await context.newPage();
 

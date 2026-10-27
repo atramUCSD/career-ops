@@ -19,6 +19,7 @@
  */
 
 import fs from 'node:fs';
+import { launchHeadless } from './lib/chromium-launch-error.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import readline from 'node:readline';
@@ -539,7 +540,7 @@ async function fetchJobPage(url) {
     let browser;
     let unreadable = null;
     try {
-      browser = await chromium.launch({ headless: true });
+      browser = await launchHeadless(chromium);
       const page = await browser.newPage();
       const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
       await page.waitForTimeout(2000); // wait for SPA render

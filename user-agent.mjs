@@ -20,7 +20,7 @@ export const DEFAULT_USER_AGENT = 'Mozilla/5.0 (compatible; career-ops/1.0; +htt
  * independently per file.
  */
 export const BROWSER_LIKE_USER_AGENT =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36';
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36';
 
 /**
  * macOS browser User-Agent for providers whose WAF rejects the shared Windows

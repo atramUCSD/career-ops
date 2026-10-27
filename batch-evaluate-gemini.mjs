@@ -13,6 +13,7 @@
  */
 
 import { readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync } from 'fs';
+import { launchHeadless } from './lib/chromium-launch-error.mjs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { chromium } from 'playwright';
@@ -439,7 +440,7 @@ async function main() {
     return;
   }
   console.log(`Found ${pendingIndices.length} pending offers.`);
-  const browser = await chromium.launch({ headless: true });
+  const browser = await launchHeadless(chromium);
   
   const results = await processPipelineBatch(pendingIndices, CONCURRENCY, (lineIdx, runIdx) => {
     return processOffer(browser, pipelineLines[lineIdx], runIdx);

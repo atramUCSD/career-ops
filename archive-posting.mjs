@@ -24,6 +24,7 @@
  */
 
 import { chromium } from 'playwright';
+import { launchHeadless } from './lib/chromium-launch-error.mjs';
 import { open, unlink, readFile } from 'fs/promises';
 import { createHash } from 'crypto';
 import { existsSync, mkdirSync } from 'fs';
@@ -498,7 +499,7 @@ async function main() {
     }
   } else {
     // Sequential — project convention: never Playwright in parallel
-    const browser = await chromium.launch({ headless: true });
+    const browser = await launchHeadless(chromium);
     try {
       for (const { url, company, role } of targets) {
         try {

@@ -4926,7 +4926,7 @@ if (!existsSync(openrouterRunnerPath)) {
   const openrouterRunner = readFile('openrouter-runner.mjs');
   if (
     openrouterRunner.includes('// Job page content fetcher (Playwright-first, plain fetch fallback)') &&
-    openrouterRunner.includes('browser = await chromium.launch({ headless: true })') &&
+    openrouterRunner.includes('browser = await launchHeadless(chromium)') &&
     openrouterRunner.includes('falling back to plain fetch.') &&
     openrouterRunner.includes('if (browser) await browser.close().catch(() => {})')
   ) {

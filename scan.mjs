@@ -53,6 +53,7 @@ import {
   writeFileSync,
 } from 'fs';
 import { randomUUID } from 'crypto';
+import { launchHeadless } from './lib/chromium-launch-error.mjs';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { loadYaml } from './lib/yaml-document.mjs';
@@ -3919,7 +3920,7 @@ export async function verifyOffers(offers, { headedFallback = false, throttleBas
         );
       }
       try {
-        browser = await chromium.launch({ headless: true });
+        browser = await launchHeadless(chromium);
       } catch (err) {
         throw new Error(
           `--verify could not launch Chromium (run "npx playwright install chromium" or re-run without --verify): ${err.message}`,

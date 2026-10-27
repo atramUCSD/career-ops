@@ -43,6 +43,7 @@
  */
 
 import { readFileSync, existsSync } from 'fs';
+import { launchHeadless } from './lib/chromium-launch-error.mjs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { loadYaml } from './lib/yaml-document.mjs';
@@ -1112,7 +1113,7 @@ async function main() {
 
   let browser;
   try {
-    browser = await chromium.launch({ headless: true });
+    browser = await launchHeadless(chromium);
     const context = await browser.newContext(LIVENESS_CONTEXT_OPTIONS);
     // Block every request (main navigation, redirect hop, or subresource) to a
     // private/loopback/link-local or non-http(s) host. Guarding only the initial

@@ -25,9 +25,23 @@ const EXPECTED_UA = 'Mozilla/5.0 (compatible; career-ops/1.0; +https://github.co
 if (DEFAULT_USER_AGENT === EXPECTED_UA) pass('DEFAULT_USER_AGENT matches the pinned literal');
 else fail(`DEFAULT_USER_AGENT drifted from the pinned literal: got ${DEFAULT_USER_AGENT}`);
 
-const EXPECTED_BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36';
+const EXPECTED_BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36';
 if (BROWSER_LIKE_USER_AGENT === EXPECTED_BROWSER_UA) pass('BROWSER_LIKE_USER_AGENT matches the pinned literal');
 else fail(`BROWSER_LIKE_USER_AGENT drifted from the pinned literal: got ${BROWSER_LIKE_USER_AGENT}`);
+
+// The headless launcher's real browser sends sec-ch-ua with its own major; a
+// UA claiming another major is a mismatch any bot check can see. A Playwright
+// bump moves the bundled Chromium, so this fails until the constant follows.
+{
+  const browsersJson = join(ROOT, 'node_modules/playwright-core/browsers.json');
+  const { readFileSync, existsSync } = await import('node:fs');
+  if (existsSync(browsersJson)) {
+    const bundled = JSON.parse(readFileSync(browsersJson, 'utf8')).browsers.find((b) => b.name === 'chromium')?.browserVersion;
+    const major = (v) => String(v).match(/Chrome\/(\d+)|^(\d+)/)?.slice(1).find(Boolean);
+    if (bundled && major(BROWSER_LIKE_USER_AGENT) === major(bundled)) pass(`BROWSER_LIKE_USER_AGENT claims the bundled Chromium major (${major(bundled)})`);
+    else fail(`BROWSER_LIKE_USER_AGENT claims Chrome ${major(BROWSER_LIKE_USER_AGENT)} but Playwright bundles Chromium ${bundled}`);
+  }
+}
 
 const EXPECTED_MACOS_BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
 if (MACOS_BROWSER_LIKE_USER_AGENT === EXPECTED_MACOS_BROWSER_UA) pass('MACOS_BROWSER_LIKE_USER_AGENT matches the pinned literal');

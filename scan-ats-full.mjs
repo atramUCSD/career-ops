@@ -51,6 +51,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync, unlinkSync } from 'fs';
+import { launchHeadless } from './lib/chromium-launch-error.mjs';
 import { createHash } from 'crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -1175,7 +1176,7 @@ async function filterLive(offers) {
     );
   }
   console.error(`\nVerifying liveness of ${offers.length} match(es) with Playwright (sequential)...`);
-  const browser = await chromium.launch({ headless: true });
+  const browser = await launchHeadless(chromium);
   const live = [];
   try {
     const page = await newLivenessPage(browser);

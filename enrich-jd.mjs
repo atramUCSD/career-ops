@@ -28,6 +28,7 @@
  *   node enrich-jd.mjs --self-test     extraction checks, no network
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { launchHeadless } from './lib/chromium-launch-error.mjs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { parsePendingRows } from './swarm.mjs';
@@ -381,7 +382,7 @@ async function readPage(ctx, url) {
 export async function browserPass(urls, onEach = () => {}) {
   if (!urls.length) return;
   const { chromium } = await import('playwright');
-  const browser = await chromium.launch();
+  const browser = await launchHeadless(chromium);
   try {
     const queue = [...urls];
     // A context per worker, so a recycle never closes another worker's page in
