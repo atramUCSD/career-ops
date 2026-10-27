@@ -1,3 +1,4 @@
+# Template: copy to wrangler.toml (gitignored) and fill in your own IDs.
 # Pages project config (ADR-001 step 1). Pages Functions go in cloud/functions/;
 # there is no separate Worker. Deploy from cloud/:
 #   npx wrangler pages deploy
@@ -7,14 +8,16 @@ compatibility_date = "2026-10-01"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "career-ops-alan"
-database_id = "6aebf3a5-fbb4-4c3a-b1f4-a9406cd2dea6"
+database_name = "<your-d1-database-name>"
+database_id = "<your-d1-database-id>"
 
 # Access JWT check in the Functions: issuer is the team domain, audience is the production app's AUD.
-# Not secrets; previews (*.career-ops-4l6.pages.dev) carry a different AUD and are rejected by design.
+# Not secrets; previews (*.<project>.pages.dev) carry a different AUD and are rejected by design.
 [vars]
-TEAM_DOMAIN = "https://career-ops-av.cloudflareaccess.com"
-POLICY_AUD = "7e198de8194a2faea888021330b047ca2dea645bf1cfc5d8dc7fab47051a5eae"
+TEAM_DOMAIN = "https://<team>.cloudflareaccess.com"
+POLICY_AUD = "<access-application-aud>"
+# Read by sync-runner.mjs when CAREER_OPS_CLOUD_URL is unset.
+SITE_URL = "https://<project>.pages.dev"
 
 # Set as Pages secrets, not here, because this repo is a public fork:
 #   PEOPLE            comma-separated emails allowed to read this profile's copy

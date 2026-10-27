@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { identify, localDevIdentity, verifyAccessJwt } from './lib/access.mjs';
 import { parseAction } from './lib/inbox.mjs';
-import { canonicalState, chunkRows, diffRows, drainInbox, moveOutcome } from './sync-runner.mjs';
+import { canonicalState, chunkRows, diffRows, drainInbox, moveOutcome, siteUrl } from './sync-runner.mjs';
 import { loadCanonicalStates } from '../tracker-utils.mjs';
 
 const TEAM = 'https://team.cloudflareaccess.com';
@@ -60,7 +60,7 @@ assert.deepEqual(chunkRows([], 1000), [[]], 'an empty push still posts once');
 const req = (url, headers = {}) => new Request(url, { headers });
 assert.deepEqual(localDevIdentity(req('http://127.0.0.1:8788/api/copy'), 'me@local'), { email: 'me@local' });
 assert.deepEqual(localDevIdentity(req('http://localhost:8788/api/inbox', { 'CF-Access-Client-Id': 'x' }), 'me@local'), { runner: true });
-assert.equal(localDevIdentity(req('https://career-ops-4l6.pages.dev/api/copy'), 'me@local'), null, 'production host');
+assert.equal(localDevIdentity(req('https://example.pages.dev/api/copy'), 'me@local'), null, 'production host');
 assert.equal(localDevIdentity(req('http://127.0.0.1:8788/api/copy'), undefined), null, 'variable unset');
 
 const U = '0b9f6a52-3c1e-4d2a-9f7e-1a2b3c4d5e6f';
@@ -107,6 +107,17 @@ try {
   assert.equal(JSON.parse(lines[0]).text, 'called back');
 } finally {
   fs.rmSync(root, { recursive: true, force: true });
+}
+
+// The env var beats wrangler.toml; a missing file names the fix instead of posting to a default.
+const toml = path.join(os.tmpdir(), `site-url-${process.pid}.toml`);
+fs.writeFileSync(toml, 'name = "x"\n[vars]\nSITE_URL = "https://from-toml.example"\n');
+try {
+  assert.equal(siteUrl({ CAREER_OPS_CLOUD_URL: 'http://127.0.0.1:8788' }, toml), 'http://127.0.0.1:8788');
+  assert.equal(siteUrl({}, toml), 'https://from-toml.example');
+  assert.throws(() => siteUrl({}, toml + '.missing'), /wrangler\.example\.toml/);
+} finally {
+  fs.rmSync(toml, { force: true });
 }
 
 console.log('cloud check: ok');

@@ -1,3 +1,5 @@
 # wrangler pages dev: local D1 state and test-only vars (LOCAL_DEV_IDENTITY).
 .wrangler/
 .dev.vars
+# Real account IDs; wrangler.example.toml is the tracked template.
+wrangler.toml

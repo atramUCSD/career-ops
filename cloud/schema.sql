@@ -1,6 +1,6 @@
--- ADR-001 store for one profile (career-ops-alan). The PC is the only writer
+-- ADR-001 store for one profile (the database_name in wrangler.toml). The PC is the only writer
 -- of copy_rows and sync_meta; the hosted page only INSERTs into inbox.
--- Apply: npx wrangler d1 execute career-ops-alan --remote --file cloud/schema.sql
+-- Apply: npx wrangler d1 execute <database_name> --remote --file cloud/schema.sql
 
 -- Read copy pushed by the sync runner. The runner hashes each row and
 -- upserts only changed ones, so `hash` is what it compares against.

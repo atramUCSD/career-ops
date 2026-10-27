@@ -9,8 +9,8 @@
 // a local server (from cloud/, with LOCAL_DEV_IDENTITY in .dev.vars and any non-empty
 // CF_ACCESS_CLIENT_ID/SECRET for the runner). pages dev does not pick up the D1
 // binding from wrangler.toml, so it is passed explicitly:
-//   npx wrangler d1 execute career-ops-alan --local --persist-to .wrangler/state --file schema.sql
-//   npx wrangler pages dev public --d1 DB=6aebf3a5-fbb4-4c3a-b1f4-a9406cd2dea6 --port 8788 --persist-to .wrangler/state
+//   npx wrangler d1 execute <database_name> --local --persist-to .wrangler/state --file schema.sql
+//   npx wrangler pages dev public --d1 DB=<database_id> --port 8788 --persist-to .wrangler/state
 //
 // The card rows are what the local /board page and its card panel read
 // (web/src/app/board/page.tsx, web/src/app/api/board/[n]/route.ts), built from the
@@ -32,9 +32,17 @@ import { BOARD_COLUMNS, boardColumn, isSkipDecision } from '../web/src/lib/board
 import { isReservedReportFile } from '../web/src/lib/report-files.mjs';
 import { isMainModule } from '../lib/is-main-module.mjs';
 
-const SITE = process.env.CAREER_OPS_CLOUD_URL || 'https://career-ops-4l6.pages.dev';
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const STATES_FILE = path.join(REPO, 'templates/states.yml');
+// The deployed site's URL lives in the gitignored wrangler.toml with the other account
+// IDs, because this repo is public. Resolved per request so --help and imports work
+// on a checkout that has no wrangler.toml.
+export function siteUrl(env = process.env, tomlFile = path.join(REPO, 'cloud/wrangler.toml')) {
+  if (env.CAREER_OPS_CLOUD_URL) return env.CAREER_OPS_CLOUD_URL;
+  const m = readIf(tomlFile).match(/^SITE_URL\s*=\s*"([^"]+)"/m);
+  if (m) return m[1];
+  throw new Error('No site URL: set CAREER_OPS_CLOUD_URL or SITE_URL in cloud/wrangler.toml (see wrangler.example.toml)');
+}
 // D1 caps a bound string at 2 MB, and each POST binds its whole rowset as one string.
 const CHUNK_BYTES = 1_000_000;
 
@@ -218,7 +226,7 @@ export async function drainInbox(root, pending) {
 }
 
 async function api(route, method, body) {
-  const res = await fetch(`${SITE}${route}`, {
+  const res = await fetch(`${siteUrl()}${route}`, {
     method,
     headers: {
       'CF-Access-Client-Id': process.env.CF_ACCESS_CLIENT_ID,

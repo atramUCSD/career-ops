@@ -10,7 +10,7 @@ type Profile = { name: string; pending: number };
 const OWNER = "";
 const NEW = "\u0000new";
 
-/** "vivian-chiong" -> "VC", "alex" -> "AL". */
+/** "jane-doe" -> "JD", "alex" -> "AL". */
 export function initials(name: string): string {
   const parts = name.split(/[-._\s]+/).filter(Boolean);
   return (parts.length > 1 ? parts[0][0] + parts[1][0] : name.slice(0, 2)).toUpperCase();
