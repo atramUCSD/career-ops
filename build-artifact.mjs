@@ -382,6 +382,26 @@ function loadPatterns(root) {
   } catch { return null; }
 }
 
+/**
+ * Whether apply-runner/run.mjs can take a posting, given its board's
+ * `auto_apply` flag in portals.yml. The runner fills Greenhouse forms only and
+ * parks anything whose form frame is off greenhouse.io, so a company-hosted
+ * page from a Greenhouse board is `embedded`: it works only when the page
+ * frames the Greenhouse form.
+ *
+ * @param {{ u: string, portal?: string }} row
+ * @param {boolean|undefined} flag
+ * @returns {'ready'|'embedded'|'unsupported'|'off'|null} null when the board sets no flag.
+ */
+export function autoApplyState(row, flag) {
+  if (flag === undefined) return null;
+  if (flag === false) return 'off';
+  let host = '';
+  try { host = new URL(row.u).hostname; } catch { /* unparseable URL is not Greenhouse */ }
+  if (host === 'greenhouse.io' || host.endsWith('.greenhouse.io')) return 'ready';
+  return /^greenhouse-/.test(row.portal || '') ? 'embedded' : 'unsupported';
+}
+
 export function buildModel({ root = ROOT, now = new Date(), profileRoot = null, profileName = null, statusLog = null } = {}) {
   // Only the two intent files move; every data read below stays on `root`.
   const intentRoot = profileRoot || root;
@@ -430,6 +450,14 @@ export function buildModel({ root = ROOT, now = new Date(), profileRoot = null, 
       score: app?.score ? Number(app.score) : null,
     };
   });
+  const autoApplyFlags = new Map();
+  for (const e of [...(portals.tracked_companies || []), ...(portals.job_boards || [])]) {
+    if (e?.name && typeof e.auto_apply === 'boolean') autoApplyFlags.set(String(e.name).toLowerCase(), e.auto_apply);
+  }
+  for (const r of rows) {
+    const aa = autoApplyState(r, autoApplyFlags.get(r.c.toLowerCase()));
+    if (aa) r.aa = aa;
+  }
 
   // Response-likelihood prior. Runs after rows exist because two of its
   // signals — how many reqs a company has open, how often a company+title pair
@@ -524,6 +552,8 @@ export function buildModel({ root = ROOT, now = new Date(), profileRoot = null, 
     // reader is being served. `hydrationState` needs the time, not the day.
     built: now.toISOString(),
     hasTrust,
+    // The column is opt-in: it appears only for a portals.yml that flags a board.
+    hasAutoApply: autoApplyFlags.size > 0,
     maxAge,
     bands,
     lanes: laneMeta,
@@ -1168,6 +1198,7 @@ ul.chartnote{padding-left:18px}
     <th class="sortable" data-k="age">Age<span class="car">▲</span></th>
     <th class="sortable" data-k="seg">Segment<span class="car">▼</span></th>
     <th class="sortable" data-k="trust" id="thtrust">Trust<span class="car">▼</span></th>
+    <th class="sortable" data-k="aa" id="thaa">Auto-apply<span class="car">▼</span></th>
   </tr></thead>
   <tbody id="rows"></tbody>
 </table>
@@ -1339,6 +1370,13 @@ el('colist').innerHTML = [...new Set(rows.map(r=>r.c))].sort()
   .map(c=>\`<option value="\${esc(c)}">\`).join('');
 
 if (!M.hasTrust) el('thtrust').remove();
+if (!M.hasAutoApply) el('thaa').remove();
+const AA = {
+  ready: ['Greenhouse', 'apply-runner can fill this form', 3],
+  embedded: ['Greenhouse · embedded', 'Company-hosted page; the runner parks it unless the page frames the Greenhouse form', 2],
+  off: ['off', 'auto_apply: false on this board', 1],
+  unsupported: ['not Greenhouse', 'auto_apply is set, but apply-runner only fills Greenhouse forms', 0],
+};
 
 let sortKey = 'cb', sortDir = 1;
 
@@ -1380,6 +1418,7 @@ function render(){
     if (sortKey === 'cb') x = b.cb - a.cb || (a.age ?? 1e9) - (b.age ?? 1e9);
     else if (sortKey === 'age') x = (a.age ?? 1e9) - (b.age ?? 1e9);
     else if (sortKey === 'trust') x = (b.trust ?? -1) - (a.trust ?? -1);
+    else if (sortKey === 'aa') x = (AA[b.aa]?.[2] ?? -1) - (AA[a.aa]?.[2] ?? -1) || b.cb - a.cb;
     else if (sortKey === 'status') x = (b.score ?? -1) - (a.score ?? -1) || a.status.localeCompare(b.status);
     else if (sortKey === 'company') x = a.c.localeCompare(b.c) || a.t.localeCompare(b.t);
     else if (sortKey === 'lane') x = a.lane.localeCompare(b.lane) || (a.age ?? 1e9) - (b.age ?? 1e9);
@@ -1403,6 +1442,7 @@ function render(){
       <span class="fl">\${r.p || 'no date'}</span></td>
     <td style="font-size:12.5px;white-space:nowrap">\${esc(r.seg)}</td>
     \${M.hasTrust?\`<td class="trust">\${r.trust===null?'<span class="fl">—</span>':r.trust+(r.flags?\`<span class="fl">\${esc(r.flags)}</span>\`:'')}</td>\`:''}
+    \${M.hasAutoApply?\`<td style="font-size:12.5px;white-space:nowrap">\${AA[r.aa]?\`<span title="\${esc(AA[r.aa][1])}"\${AA[r.aa][2]<2?' class="fl"':''}>\${AA[r.aa][0]}</span>\`:'<span class="fl">—</span>'}</td>\`:''}
   </tr>\`).join('');
   el('more').hidden = f.length <= limit;
   el('more').innerHTML = f.length > limit
@@ -1527,7 +1567,7 @@ el('q').addEventListener('input', e => { state.q = e.target.value.toLowerCase().
 document.querySelectorAll('th.sortable').forEach(th => {
   th.addEventListener('click', () => {
     const k = th.dataset.k;
-    if (sortKey === k) sortDir *= -1; else { sortKey = k; sortDir = (k === 'age' || k === 'cb' || k === 'company' || k === 'seg' || k === 'lane') ? 1 : -1; }
+    if (sortKey === k) sortDir *= -1; else { sortKey = k; sortDir = (k === 'age' || k === 'cb' || k === 'company' || k === 'seg' || k === 'lane' || k === 'aa') ? 1 : -1; }
     document.querySelectorAll('th.sortable').forEach(x => x.removeAttribute('aria-sort'));
     th.setAttribute('aria-sort', sortDir === 1 ? 'ascending' : 'descending');
     th.querySelector('.car').textContent = sortDir === 1 ? '▲' : '▼';

@@ -8,7 +8,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { pass, fail } from './helpers.mjs';
-import { buildModel, renderHtml, segmentFor, publicSectorReason, freshnessBands, bandFor, keywordYield } from '../build-artifact.mjs';
+import { buildModel, renderHtml, segmentFor, publicSectorReason, freshnessBands, bandFor, keywordYield, autoApplyState } from '../build-artifact.mjs';
 
 console.log('\nartifact — generated pipeline page');
 
@@ -46,6 +46,16 @@ const react = y.find(k => k.keyword === 'React');
 react.added === 2 && react.unique === 1 && react.sample === 'Rapid Reaction Lead'
   ? pass('unique yield isolates what only one keyword caught, substring noise included')
   : fail(`bad yield: ${JSON.stringify(react)}`);
+
+// apply-runner fills Greenhouse forms only; a company page from a Greenhouse
+// board works only if it frames the form, and a board without the flag says nothing.
+const gh = { u: 'https://job-boards.greenhouse.io/acme/jobs/1', portal: 'greenhouse-api' };
+const ghEmbed = { u: 'https://acme.com/careers?gh_jid=1', portal: 'greenhouse-full' };
+const lever = { u: 'https://jobs.lever.co/acme/1', portal: 'lever-api' };
+[autoApplyState(gh, true), autoApplyState(ghEmbed, true), autoApplyState(lever, true),
+  autoApplyState(gh, false), autoApplyState(gh, undefined)].join(',') === 'ready,embedded,unsupported,off,'
+  ? pass('auto-apply state follows the board flag and the Greenhouse form host')
+  : fail('auto-apply state is wrong');
 
 // ── the model, over a fixture repo ───────────────────────────────────────────
 
@@ -118,6 +128,10 @@ model.rows[0].score === 4.2 && model.rows[0].status === 'applied'
 model.rows[2].status === 'pending' && model.rows[2].score === null
   ? pass('an unevaluated posting reads pending with no score')
   : fail('an unevaluated posting was given a score');
+
+!model.hasAutoApply && !model.rows.some(r => r.aa)
+  ? pass('the auto-apply column stays off when no board sets auto_apply')
+  : fail('auto-apply column appeared without a flag');
 
 model.rows[2].seg === 'Other / unknown' && model.processed === 1
   ? pass('off-corridor rows and the processed count are carried')
