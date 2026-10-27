@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>career-ops board</title>
+<style>
+  :root { color-scheme: light dark; --bg: #f6f6f3; --fg: #1c1c1a; --muted: #6d6c66; --card: #fff; --line: #e1e0da; --accent: #2d6a4c; --warn: #9a3b1b; --wait: #8a6d1a; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #141413; --fg: #ebeae5; --muted: #9b9a93; --card: #1f1f1d; --line: #30302c; --accent: #82c4a2; --warn: #f0a07f; --wait: #e2c26b; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--fg); }
+  header { padding: 16px; display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; }
+  h1 { margin: 0; font-size: 18px; }
+  #status { color: var(--muted); font-size: 13px; }
+  #board { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; padding: 0 16px 40px; align-items: start; }
+  h2 { margin: 0 0 8px; font-size: 12px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+  .empty { color: var(--muted); font-size: 13px; margin: 0; }
+  details.card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px; }
+  details.card > summary { list-style: none; cursor: pointer; padding: 10px 12px; }
+  details.card > summary::-webkit-details-marker { display: none; }
+  .co { font-weight: 600; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .pending { color: var(--wait); font-size: 13px; }
+  .failed { color: var(--warn); font-size: 13px; }
+  .body { padding: 0 12px 12px; border-top: 1px solid var(--line); font-size: 14px; }
+  .body p { margin: 10px 0 0; overflow-wrap: anywhere; }
+  .body a { color: var(--accent); }
+  form { display: flex; gap: 8px; margin-top: 10px; }
+  select, textarea, button { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+  select, textarea { flex: 1; min-width: 0; }
+  textarea { resize: vertical; min-height: 2.4em; }
+  button { cursor: pointer; }
+  ol { margin: 10px 0 0; padding-left: 18px; }
+  li { margin-bottom: 4px; }
+  li time { color: var(--muted); font-size: 12px; display: block; }
+  details.more > summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 4px 0 8px; }
+</style>
+</head>
+<body>
+<header><h1>career-ops board</h1><span id="status">Loading…</span></header>
+<main id="board"></main>
+<script>
+  // View of the copy the PC pushes (ADR-001 step 2), plus the inbox (step 5): moves
+  // and comments queue in the store, draw as pending, and settle when the PC's runner
+  // reports back. Built with DOM nodes, never innerHTML: tracker notes and report
+  // headers are text from job postings.
+  const el = (tag, attrs, ...kids) => {
+    const n = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs ?? {})) if (v != null && v !== false) n.setAttribute(k, v === true ? '' : v);
+    n.append(...kids.filter((k) => (typeof k === 'string' ? k !== '' : k instanceof Node)));
+    return n;
+  };
+  const ago = (iso) => {
+    const mins = Math.round((Date.now() - Date.parse(iso)) / 60000);
+    const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+    return mins < 60 ? rtf.format(-mins, 'minute') : mins < 2880 ? rtf.format(-Math.round(mins / 60), 'hour') : rtf.format(-Math.round(mins / 1440), 'day');
+  };
+  const httpUrl = (u) => (/^https?:\/\//.test(u ?? '') ? u : null);
+  const open = new Set(); // cards the user expanded survive a re-render
+  let states = [];
+  let actions = [];
+  let lastDrawn = '';
+
+  // A rejection stays on its card for a day: long enough to be seen on the next
+  // look, short enough not to pile up. Stale means the desk moved the card first.
+  const DAY = 86_400_000;
+  function outcomeText(a) {
+    const what = a.type === 'move' ? `Move to ${a.payload.to}` : 'Comment';
+    if (a.status === 'pending') return `${what}: waiting for the PC`;
+    const r = a.result ?? {};
+    if (r.reason === 'stale') return `${what} not applied: the card is at ${r.current ?? 'another state'} now, not ${r.expected}.`;
+    return `${what} not applied: ${r.message ?? r.reason ?? 'rejected'}`;
+  }
+
+  async function send(body) {
+    const res = await fetch('/api/inbox', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
+    actions = [await res.json(), ...actions];
+    draw();
+  }
+
+  function moveForm(app) {
+    const current = states.find((s) => s.label.toLowerCase() === String(app.status).toLowerCase());
+    const select = el('select', { 'aria-label': 'Move to' }, ...states.map((s) => el('option', { value: s.label, selected: s === current }, s.label)));
+    const form = el('form', null, select, el('button', null, 'Move'));
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      const to = states.find((s) => s.label === select.value);
+      if (!to || to === current) return;
+      if (to.terminal && !confirm(`Move ${app.company} to ${to.label}?`)) return;
+      send({ uuid: crypto.randomUUID(), type: 'move', payload: { n: app.n, to: to.label }, precondition: { from: app.status } })
+        .catch((err) => alert(`Could not queue the move: ${err.message}`));
+    };
+    return form;
+  }
+
+  function commentForm(app) {
+    const text = el('textarea', { 'aria-label': 'Comment', maxlength: 2000, rows: 1, placeholder: 'Comment' });
+    const form = el('form', null, text, el('button', null, 'Add'));
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      if (!text.value.trim()) return;
+      send({ uuid: crypto.randomUUID(), type: 'comment', payload: { n: app.n, text: text.value } })
+        .then(() => (text.value = ''), (err) => alert(`Could not queue the comment: ${err.message}`));
+    };
+    return form;
+  }
+
+  function card({ app, meta, timeline }) {
+    const url = httpUrl(app.url) ?? httpUrl(meta.header.URL);
+    const sub = [app.score, app.status, app.date].filter(Boolean).join(' · ');
+    const mine = actions.filter((a) => a.payload?.n === app.n);
+    const notes = mine.filter((a) => a.status === 'pending' || (a.status === 'rejected' && Date.now() - Date.parse(a.resolvedAt) < DAY));
+    const d = el('details', { class: 'card', open: open.has(app.n) },
+      el('summary', null, el('div', { class: 'co' }, app.company), el('div', null, app.role), el('div', { class: 'sub' }, sub),
+        ...notes.map((a) => el('div', { class: a.status === 'pending' ? 'pending' : 'failed', role: 'status' }, outcomeText(a)))),
+      el('div', { class: 'body' },
+        moveForm(app),
+        commentForm(app),
+        url && el('p', null, el('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, 'Posting')),
+        app.location && el('p', null, app.location),
+        app.followUp && el('p', null, `Follow up: ${app.followUp}`),
+        app.notes && el('p', null, app.notes),
+        timeline.length && el('ol', null, ...timeline.map((e) =>
+          el('li', null, el('time', null, e.dated ? e.at : new Date(e.at).toLocaleString()), e.title, e.detail ? ` (${e.detail})` : null))),
+      ),
+    );
+    d.ontoggle = () => (d.open ? open.add(app.n) : open.delete(app.n));
+    return d;
+  }
+
+  let copy = { pushedAt: null, rows: [] };
+  function draw() {
+    // Skip identical redraws so a poll never resets a half-typed comment.
+    const key = JSON.stringify([copy, actions]);
+    if (key === lastDrawn) return;
+    lastDrawn = key;
+    const byId = Object.fromEntries(copy.rows.map((r) => [r.id, r.data]));
+    states = byId.states ?? [];
+    const cards = copy.rows.filter((r) => r.kind === 'card').map((r) => r.data).sort((a, b) => b.app.date.localeCompare(a.app.date));
+    const off = cards.filter((c) => !c.lane).length;
+    const waiting = actions.filter((a) => a.status === 'pending').length;
+    document.getElementById('status').textContent = [
+      copy.pushedAt ? `Copy from ${ago(copy.pushedAt)}` : 'Nothing pushed yet',
+      waiting ? `${waiting} waiting for the PC` : '',
+      off ? `${off} discarded or skipped off the board` : '',
+    ].filter(Boolean).join(' · ');
+    const board = document.getElementById('board');
+    board.replaceChildren();
+    for (const col of byId.columns ?? []) {
+      const mine = cards.filter((c) => c.lane === col.id);
+      const live = col.id === 'rejected' ? [] : mine.filter((c) => !c.skip);
+      const parked = col.id === 'rejected' ? mine : mine.filter((c) => c.skip);
+      board.append(el('section', null,
+        el('h2', null, `${col.label} ${mine.length}`),
+        ...live.map(card),
+        !mine.length && el('p', { class: 'empty' }, 'None'),
+        parked.length && el('details', { class: 'more' },
+          el('summary', null, col.id === 'rejected' ? `Show ${parked.length}` : `${parked.length} the evaluator marked Skip`),
+          ...parked.map(card)),
+      ));
+    }
+  }
+
+  async function load() {
+    const [c, i] = await Promise.all([fetch('/api/copy', { cache: 'no-store' }), fetch('/api/inbox', { cache: 'no-store' })]);
+    if (!c.ok) return void (document.getElementById('status').textContent = `Could not load the copy (HTTP ${c.status}).`);
+    copy = await c.json();
+    actions = i.ok ? await i.json() : actions;
+    draw();
+  }
+
+  // Poll faster while something is waiting, so a settled move shows up soon after the runner reports it.
+  async function tick() {
+    await load().catch((err) => (document.getElementById('status').textContent = `Could not load the copy: ${err.message}`));
+    setTimeout(tick, actions.some((a) => a.status === 'pending') ? 10_000 : 60_000);
+  }
+  tick();
+</script>
+</body>
+</html>

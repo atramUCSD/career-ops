@@ -1,0 +1,260 @@
+// ADR-001 steps 2 and 5: apply the page's queued actions, then rebuild the read copy
+// from this profile's files and push only the rows whose hash changed. The files stay
+// canonical and this PC stays their only writer; the copy in D1 is derived, and the
+// server never edits it.
+//
+//   node --env-file=.env cloud/sync-runner.mjs --once
+//
+// CAREER_OPS_CLOUD_URL points it at another site, e.g. http://127.0.0.1:8788 under
+// a local server (from cloud/, with LOCAL_DEV_IDENTITY in .dev.vars and any non-empty
+// CF_ACCESS_CLIENT_ID/SECRET for the runner). pages dev does not pick up the D1
+// binding from wrangler.toml, so it is passed explicitly:
+//   npx wrangler d1 execute career-ops-alan --local --persist-to .wrangler/state --file schema.sql
+//   npx wrangler pages dev public --d1 DB=6aebf3a5-fbb4-4c3a-b1f4-a9406cd2dea6 --port 8788 --persist-to .wrangler/state
+//
+// The card rows are what the local /board page and its card panel read
+// (web/src/app/board/page.tsx, web/src/app/api/board/[n]/route.ts), built from the
+// same web/src/lib modules, so the hosted page shows what the local one shows.
+
+import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { getCareerOpsRoot, resolveTrackerPath } from '../path-resolver.mjs';
+import { acquireTrackerLock, loadCanonicalStates, resolveCanonicalState, trackerLockDirFor } from '../tracker-utils.mjs';
+import { localToday } from '../lib/local-today.mjs';
+import { parseCliJson } from '../web/src/lib/status-cli.mjs';
+import { readTrackerFile } from '../web/src/lib/core/tracker-files.mjs';
+import { parseApplications } from '../web/src/lib/tracker-table.mjs';
+import { buildTimeline, expiredOn, parseReportMeta, parseStatusLog, scanSighting } from '../web/src/lib/board-activity.mjs';
+import { BOARD_COLUMNS, boardColumn, isSkipDecision } from '../web/src/lib/board-columns.mjs';
+import { isReservedReportFile } from '../web/src/lib/report-files.mjs';
+
+const SITE = process.env.CAREER_OPS_CLOUD_URL || 'https://career-ops-4l6.pages.dev';
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const STATES_FILE = path.join(REPO, 'templates/states.yml');
+// D1 caps a bound string at 2 MB, and each POST binds its whole rowset as one string.
+const CHUNK_BYTES = 1_000_000;
+
+const readIf = (file) => {
+  try {
+    return fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    if (err.code === 'ENOENT') return '';
+    throw err;
+  }
+};
+
+const jsonl = (text) =>
+  text.split('\n').flatMap((line) => {
+    try {
+      return line.trim() ? [JSON.parse(line)] : [];
+    } catch {
+      return []; // torn final line from a crash mid-append
+    }
+  });
+
+export function buildCopy(root) {
+  const read = (rel) => readIf(path.join(root, rel));
+  const apps = parseApplications(readTrackerFile(root) ?? '', root, REPO);
+  let reports = [];
+  try {
+    reports = fs.readdirSync(path.join(root, 'reports')).filter((f) => f.endsWith('.md') && !isReservedReportFile(f));
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  }
+  const events = jsonl(read('data/board-activity.jsonl'));
+  const ledger = read('data/status-log.tsv');
+  const scans = read('data/scan-history.tsv');
+  const expired = read('data/expired-jobs.md');
+
+  const rows = apps.map((app) => {
+    // ponytail: matches reports by number only; the web reader prefers the tracker's
+    // report link first. They differ only if a link points at another number's file.
+    const file = reports.find((f) => parseInt(f, 10) === Number(app.n));
+    const meta = parseReportMeta(file ? read(`reports/${file}`) : '');
+    const url = meta.header.URL ?? '';
+    const timeline = buildTimeline({
+      app,
+      ledger: parseStatusLog(ledger, app.n),
+      sighting: scanSighting(scans, url),
+      expired: expiredOn(expired, url),
+      events: events.filter((e) => e.n === app.n),
+    });
+    const skip = isSkipDecision(meta.summary?.final_decision);
+    return { id: `card:${app.n}`, kind: 'card', data: { app, lane: boardColumn(app.status), skip, meta, timeline } };
+  });
+  // The page offers the states the PC accepts, read from states.yml, never hard-coded.
+  rows.push({ id: 'states', kind: 'meta', data: loadCanonicalStates(STATES_FILE) });
+  rows.push({ id: 'columns', kind: 'meta', data: BOARD_COLUMNS });
+  return rows.map(({ id, kind, data }) => {
+    const json = JSON.stringify(data);
+    return { id, kind, hash: createHash('sha256').update(json).digest('hex'), json };
+  });
+}
+
+export function diffRows(local, remoteHashes) {
+  const ids = new Set(local.map((r) => r.id));
+  return {
+    upserts: local.filter((r) => remoteHashes[r.id] !== r.hash),
+    deletes: Object.keys(remoteHashes).filter((id) => !ids.has(id)),
+  };
+}
+
+export function chunkRows(rows, limit = CHUNK_BYTES) {
+  const chunks = [[]];
+  let size = 0;
+  for (const row of rows) {
+    const n = row.json.length + row.id.length + 100;
+    if (size + n > limit && chunks.at(-1).length) {
+      chunks.push([]);
+      size = 0;
+    }
+    chunks.at(-1).push(row);
+    size += n;
+  }
+  return chunks;
+}
+
+// ── inbox (step 5) ────────────────────────────────────────────────
+
+const rejected = (reason, message, extra = {}) => ({ status: 'rejected', result: { reason, message, ...extra } });
+
+/** A state name from states.yml as its canonical label, or null. The store checks shape only. */
+export function canonicalState(value, states) {
+  return typeof value === 'string' && !/[|*\r\n]/.test(value) ? resolveCanonicalState(value, states) : null;
+}
+
+/**
+ * set-status's verdict as an inbox outcome. null means "busy, try next run": the
+ * action stays pending and nothing is logged, so the retry is a fresh attempt.
+ */
+export function moveOutcome(exitCode, out, { to, from }) {
+  if (exitCode === 0) return { status: 'applied', result: { changed: Boolean(out?.changed), to } };
+  if (exitCode === 4) return null;
+  if (exitCode === 5) return rejected('stale', out?.error ?? 'the card moved since', { current: out?.current, expected: from });
+  return rejected(out?.code ?? 'error', out?.error ?? `set-status exited ${exitCode}`);
+}
+
+/** Apply one pending action to the profile's files. Returns an outcome, or null to retry later. */
+export async function applyAction(root, action, states) {
+  const n = String(action.payload?.n ?? '');
+  if (!/^\d+$/.test(n)) return rejected('invalid', 'no tracker row number');
+
+  if (action.type === 'move') {
+    const to = canonicalState(action.payload.to, states);
+    const from = canonicalState(action.precondition?.from, states);
+    if (!to || !from) return rejected('invalid', 'states must come from states.yml');
+    // The day the user moved the card, on this PC's calendar; clamped so phone clock
+    // skew can never hand set-status a future --on, which it refuses.
+    const day = localToday(new Date(action.createdAt));
+    const on = day > localToday() ? localToday() : day;
+    // A child process, not an import: set-status owns the tracker lock, the ledger
+    // row and Applied follow-up seeding, and its exit code is the contract.
+    const r = spawnSync(
+      process.execPath,
+      [path.join(REPO, 'set-status.mjs'), '--row', n, to, '--expect', from, '--source', 'remote', '--on', on, '--json'],
+      { cwd: REPO, env: process.env, encoding: 'utf8', timeout: 120_000, windowsHide: true },
+    );
+    if (r.error) throw r.error;
+    return moveOutcome(r.status, parseCliJson(r.stdout), { to, from });
+  }
+
+  if (action.type === 'comment') {
+    const text = typeof action.payload.text === 'string' ? action.payload.text.trim() : '';
+    if (!text || text.length > 2000) return rejected('invalid', 'a comment needs 1 to 2000 characters');
+    if (!parseApplications(readTrackerFile(root) ?? '', root, REPO).some((app) => app.n === n)) {
+      return rejected('not-found', `No tracker row #${n}`);
+    }
+    // Same lock the web board route takes for its own appends.
+    const tracker = resolveTrackerPath(root);
+    let lock;
+    try {
+      lock = await acquireTrackerLock(trackerLockDirFor(tracker), { timeoutMs: 10_000, tracker });
+    } catch (err) {
+      if (err.code === 'LOCK_TIMEOUT') return null;
+      throw err;
+    }
+    try {
+      const file = path.join(root, 'data', 'board-activity.jsonl');
+      // The uuid makes the append idempotent across a crash before the log line.
+      if (!jsonl(readIf(file)).some((e) => e.uuid === action.uuid)) {
+        fs.appendFileSync(file, JSON.stringify({ at: action.createdAt, n, kind: 'comment', text, uuid: action.uuid, source: 'remote' }) + '\n');
+      }
+    } finally {
+      await lock.release();
+    }
+    return { status: 'applied', result: {} };
+  }
+
+  return rejected('invalid', `unknown action type "${action.type}"`);
+}
+
+/**
+ * Pull, validate, apply and record every pending action; returns the outcomes to
+ * acknowledge. The log is written before the acknowledgement, so an action already
+ * in it is never applied twice: its recorded outcome is sent again instead.
+ */
+export async function drainInbox(root, pending) {
+  if (!pending.length) return [];
+  const logFile = path.join(root, 'data', 'inbox-log.jsonl');
+  const logged = new Map(jsonl(readIf(logFile)).map((e) => [e.uuid, e]));
+  const states = loadCanonicalStates(STATES_FILE);
+  const results = [];
+  for (const action of pending) {
+    let entry = logged.get(action.uuid);
+    if (!entry) {
+      const outcome = await applyAction(root, action, states);
+      if (!outcome) continue;
+      entry = { uuid: action.uuid, seq: action.seq, type: action.type, payload: action.payload, sender: action.sender, ...outcome, at: new Date().toISOString() };
+      fs.mkdirSync(path.dirname(logFile), { recursive: true });
+      fs.appendFileSync(logFile, JSON.stringify(entry) + '\n');
+    }
+    results.push({ uuid: entry.uuid, status: entry.status, result: entry.result });
+  }
+  return results;
+}
+
+async function api(route, method, body) {
+  const res = await fetch(`${SITE}${route}`, {
+    method,
+    headers: {
+      'CF-Access-Client-Id': process.env.CF_ACCESS_CLIENT_ID,
+      'CF-Access-Client-Secret': process.env.CF_ACCESS_CLIENT_SECRET,
+      'content-type': 'application/json',
+    },
+    body: body && JSON.stringify(body),
+    // A rejected token gets a 302 to the Access login, which fetch would follow to a 200 HTML page.
+    redirect: 'manual',
+  });
+  if (!res.ok) throw new Error(`${method} ${route}: HTTP ${res.status}`);
+  return res.json();
+}
+
+async function once() {
+  if (!process.env.CF_ACCESS_CLIENT_ID || !process.env.CF_ACCESS_CLIENT_SECRET) {
+    throw new Error('CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET unset; run with node --env-file=.env');
+  }
+  const root = getCareerOpsRoot();
+  const results = await drainInbox(root, await api('/api/inbox', 'GET'));
+
+  const local = buildCopy(root);
+  const { upserts, deletes } = diffRows(local, await api('/api/sync', 'GET'));
+  // Always POST, even with nothing changed: the pushed_at bump tells the page the PC is current.
+  const chunks = chunkRows(upserts);
+  for (const [i, rows] of chunks.entries()) {
+    await api('/api/sync', 'POST', { upserts: rows, deletes: i === chunks.length - 1 ? deletes : [] });
+  }
+  // Acknowledge after the push, so a settled move never shows on the page before
+  // the copy that has the card in its new lane.
+  const { settled = 0 } = results.length ? await api('/api/inbox', 'PUT', { results }) : {};
+  console.log(`inbox: ${results.length} settled (${settled} new); copy: ${local.length} rows; pushed ${upserts.length} changed, ${deletes.length} deleted`);
+}
+
+if (process.argv.includes('--once')) {
+  await once();
+} else if (process.argv[1]?.endsWith('sync-runner.mjs')) {
+  console.error('usage: node --env-file=.env cloud/sync-runner.mjs --once');
+  process.exitCode = 2;
+}
