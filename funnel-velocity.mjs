@@ -79,10 +79,12 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 // reconstructed afterwards. Only the door differs.
 // `reply-watch` is the same class: the user confirms the update interactively;
 // the transition is observed at that moment, not reconstructed later.
-const VALID_SOURCES = new Set(['set-status', 'web', 'correction', 'backfill', 'manual', 'reply-watch']);
+// `remote` is a move made on the cloud page and applied later by the runner;
+// the runner passes the phone-side date as --on, so the day is still observed.
+const VALID_SOURCES = new Set(['set-status', 'web', 'correction', 'backfill', 'manual', 'reply-watch', 'remote']);
 // Sources whose dates are trusted for day-math. backfill/manual are parsed and
 // counted but excluded: they are reconstructed after the fact, not observed.
-const DAY_MATH_SOURCES = new Set(['set-status', 'web', 'correction', 'reply-watch']);
+const DAY_MATH_SOURCES = new Set(['set-status', 'web', 'correction', 'reply-watch', 'remote']);
 
 // The hops a candidate can measure from their own tracker. Applied→Rejected is
 // tracked separately from the forward hops — a "days to terminal" number that

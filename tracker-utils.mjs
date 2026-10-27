@@ -862,7 +862,7 @@ export function resolveCanonicalStateId(input, states) {
  * so a new script can't drift from the numbering an existing one already
  * commits to (callers/CI may depend on these exact values).
  */
-export const CLI_EXIT = { OK: 0, USAGE: 1, NOT_FOUND: 2, AMBIGUOUS: 3, LOCK_TIMEOUT: 4 };
+export const CLI_EXIT = { OK: 0, USAGE: 1, NOT_FOUND: 2, AMBIGUOUS: 3, LOCK_TIMEOUT: 4, STALE: 5 };
 
 /**
  * Build a failWith(exitCode, code, message, extra) bound to a --json flag,

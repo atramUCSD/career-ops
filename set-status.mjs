@@ -54,7 +54,8 @@
  * Exit codes: 0 success (including no-op re-runs) · 1 usage error,
  * non-canonical state, unreadable states.yml, or non-retryable lock/write failure ·
  * 2 row not found or unreadable tracker · 3 ambiguous company match ·
- * 4 tracker lock timeout (busy — retry later).
+ * 4 tracker lock timeout (busy — retry later) · 5 stale: --expect named a
+ * state the row is no longer in (and it is not already at the target).
  *
  * When the new status is Applied, the JSON output carries
  * `"followupSeedCandidate": true` — the hook point for seeding
@@ -137,7 +138,7 @@ const JD_ARCHIVE_TIMEOUT_MS = Math.min(
 
 // LOCK_TIMEOUT is not destructured here — that exit path is raised inside
 // acquireTrackerLockForCli() itself (tracker-utils.mjs), via CLI_EXIT.LOCK_TIMEOUT.
-const { OK: EXIT_OK, USAGE: EXIT_USAGE, NOT_FOUND: EXIT_NOT_FOUND, AMBIGUOUS: EXIT_AMBIGUOUS } = CLI_EXIT;
+const { OK: EXIT_OK, USAGE: EXIT_USAGE, NOT_FOUND: EXIT_NOT_FOUND, AMBIGUOUS: EXIT_AMBIGUOUS, STALE: EXIT_STALE } = CLI_EXIT;
 
 const USAGE = `Usage: node set-status.mjs <report#|company> <state> [--note "..."] [--role "..."] [--on YYYY-MM-DD] [--force] [--dry-run] [--json]
        node set-status.mjs --row N <state> [...]        (explicit tracker row ID)
@@ -156,8 +157,10 @@ const USAGE = `Usage: node set-status.mjs <report#|company> <state> [--note "...
   --role "..."       Disambiguate when several rows share the company (fuzzy match)
   --on YYYY-MM-DD    Real event date for the status-log entry (defaults to today —
                      pass it when the transition happened earlier than it's recorded)
-  --source NAME      Attribution for the transition ledger: set-status (default)
-                     or web (a caller delegating to this script)
+  --source NAME      Attribution for the transition ledger: set-status (default),
+                     web, reply-watch or remote (callers delegating to this script)
+  --expect STATE     Move only if the row is still at STATE (checked under the lock);
+                     already at the target is a no-op success, anything else exits 5
   --expect-tracker HASH  Require the tracker's exact UTF-8 content to match this
                      lowercase SHA-256 hash; checked under the writer lock
   --force            Allow a numeric selector despite a report-link mismatch, or despite a
@@ -214,8 +217,8 @@ function renderStatesSection() {
 
 const rawArgs = process.argv.slice(2);
 const positional = [];
-const flags = { note: null, replaceNote: null, role: null, on: null, row: null, report: null, reportLink: null, source: null, force: false, dryRun: false, repairStatusLog: false, repairFollowup: false, json: false, expectTracker: null };
-const VALUE_FLAGS = { '--note': 'note', '--replace-note': 'replaceNote', '--role': 'role', '--on': 'on', '--row': 'row', '--report': 'report', '--report-link': 'reportLink', '--source': 'source', '--expect-tracker': 'expectTracker' };
+const flags = { note: null, replaceNote: null, role: null, on: null, row: null, report: null, reportLink: null, source: null, force: false, dryRun: false, repairStatusLog: false, repairFollowup: false, json: false, expectTracker: null, expect: null };
+const VALUE_FLAGS = { '--note': 'note', '--replace-note': 'replaceNote', '--role': 'role', '--on': 'on', '--row': 'row', '--report': 'report', '--report-link': 'reportLink', '--source': 'source', '--expect-tracker': 'expectTracker', '--expect': 'expect' };
 
 /**
  * Is the caller asking for help, rather than passing "--help" as a VALUE?
@@ -251,7 +254,7 @@ if (wantsHelp(rawArgs)) {
 // allow-list, so an unrecognized label would be persisted here and then
 // silently dropped there. Rejecting it at the boundary keeps the two ends from
 // disagreeing about what a valid source is.
-const WRITER_SOURCES = new Set(['set-status', 'web', 'reply-watch']);
+const WRITER_SOURCES = new Set(['set-status', 'web', 'reply-watch', 'remote']);
 
 // Before the parse loop: failUsage runs on the first bad token, and a const
 // is not hoisted the way the previous function declaration was.
@@ -357,6 +360,10 @@ const newStatus = resolveCanonicalState(stateInput, states);
 if (!newStatus) {
   const valid = states.map(s => s.label).join(' · ');
   failWith(EXIT_USAGE, 'invalid-state', `"${stateInput}" is not a canonical state. Valid states: ${valid}`);
+}
+const expectStatus = flags.expect === null ? null : resolveCanonicalState(flags.expect, states);
+if (flags.expect !== null && !expectStatus) {
+  failWith(EXIT_USAGE, 'invalid-expect', `--expect "${flags.expect}" is not a canonical state`);
 }
 
 // ── tracker access ───────────────────────────────────────────────
@@ -624,6 +631,18 @@ if (flags.role && !flags.force && !roleMatchesTarget) {
   );
 }
 const oldStatus = target.status;
+// --expect is a per-card compare-and-set for writers acting on an old view of
+// the tracker (the cloud inbox: a phone move can sit for hours before the
+// runner applies it). Already at the target means the same intent landed by
+// another door, so it succeeds; any other state means the desk moved the card
+// since, and overwriting it would silently undo that change.
+if (expectStatus !== null) {
+  const current = resolveCanonicalState(oldStatus, states);
+  if (current !== expectStatus && current !== newStatus) {
+    failWith(EXIT_STALE, 'stale', `Tracker #${target.num} is at "${oldStatus}", not "${expectStatus}"`,
+      { trackerNum: target.num, current: oldStatus, expected: expectStatus });
+  }
+}
 if (flags.reportLink !== null && !resolveCanonicalState(oldStatus, states)) {
   failWith(EXIT_USAGE, 'invalid-current-state', `Tracker #${target.num} has an unrecognized current status: "${oldStatus}"`);
 }
