@@ -1213,9 +1213,6 @@ async function deleteApp(args, ctx) {
 
 const COMMANDS = { sync, query, history, export: exportMd, delete: deleteApp };
 
-const TOP_LEVEL_USAGE = 'Usage: node tracker.mjs <sync|query|history|export|delete> [flags]\n'
-  + 'See the header comment of this file for examples, or docs/SCRIPTS.md.';
-
 // Every flag each subcommand accepts, from the header comment (lines 24-32).
 // #4602: unvalidated flags let a mistyped `--dryrun` (missing the hyphen)
 // fall through `delete`'s `args.includes('--dry-run')` check unseen, so the
@@ -1258,6 +1255,12 @@ const SUBCOMMAND_FLAGS = {
       + '  remove one application row from applications.md + reindex',
   },
 };
+
+const TOP_LEVEL_USAGE = [
+  'Usage: node tracker.mjs <sync|query|history|export|delete> [flags]',
+  ...Object.values(SUBCOMMAND_FLAGS).map(({ usage }) => usage),
+  'node tracker.mjs <command> --help prints one command. More examples: docs/SCRIPTS.md.',
+].join('\n\n');
 
 /**
  * Run one tracker.mjs command against the paths given, in-process.

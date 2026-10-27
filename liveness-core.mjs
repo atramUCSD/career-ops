@@ -127,9 +127,10 @@ const SOFT_EXPIRED_PATTERNS = [
 // Anti-bot interstitials (Cloudflare "Just a moment...", hCaptcha walls, etc.)
 // render a tiny challenge page instead of the posting. Headless Playwright trips
 // these on portals like pracuj.pl. They must NOT be read as expired: the body is
-// short and lacks an apply control, so without this guard they fall through to
-// `insufficient_content` → expired, and scan --verify would write live jobs to
-// scan-history and permanently filter them out. Treat as uncertain instead.
+// short and lacks an apply control, so without this guard they fell through to
+// `insufficient_content`, which then read as expired, and scan --verify wrote
+// live jobs to scan-history and permanently filtered them out. Treat as
+// uncertain, with a code that names the wall.
 // Exported so browser scanners (scan-dayforce.mjs) recognise the same walls.
 export const BOT_CHALLENGE_PATTERNS = [
   /just a moment/i,
@@ -297,7 +298,7 @@ export function classifyLiveness({ status = 0, requestedUrl = '', finalUrl = '',
   // 429 belongs with 403/503: rate limiting is the board throttling US, never
   // evidence the posting is gone. Its body is a short "Too Many Requests", well
   // under MIN_CONTENT_CHARS, so without this it fell through to
-  // insufficient_content and read as `expired` — and an expired result is
+  // insufficient_content, which then read as `expired` — and an expired result is
   // written to scan-history as skipped_expired, whose URL every later scan
   // dedup-skips (indefinitely, unless scan_history.recheck_after_days is set).
   // Scanning harder is exactly what earns a 429, so this compounds.
@@ -372,20 +373,17 @@ export function classifyLiveness({ status = 0, requestedUrl = '', finalUrl = '',
     return { result: 'expired', code: 'listing_page', reason: `pattern matched: ${listingPage.source}` };
   }
 
+  // A short page with no closure notice, no 404/410 and no apply control has
+  // not said the posting is closed: a client-rendered posting that has not
+  // painted, or a slow single-page app, reads the same way. Every closure this
+  // classifier trusts was checked above, so this is uncertain, not expired.
+  // AGENTS.md calls a loading placeholder unconfirmed, not closed, and an
+  // `expired` here was written to scan-history as skipped_expired by
+  // scan --verify, dedup-filtering a live posting out of later scans. The code
+  // stays `insufficient_content`: liveness-browser.mjs keys its hydration poll
+  // and retries on it, and isUnreadableVerdict() reads it.
   if (bodyText.trim().length < MIN_CONTENT_CHARS) {
-    // A body this short means the posting was not RENDERED, which is not evidence
-    // that it was removed. iCIMS serves the job detail inside an iframe, so headless
-    // Playwright reads nav/footer only and every live careers-peraton.icims.com
-    // posting scored `expired` — 14 of them on one run, whose URLs the same day's
-    // scan had just pulled from the live iCIMS feed. Purging on that verdict deletes
-    // open roles.
-    //
-    // This is the failure the BOT_CHALLENGE_PATTERNS comment above already argues
-    // against, met a second time with no pattern available to match on: absence of
-    // readable content cannot be distinguished from absence of the posting. So it
-    // resolves the way the weaker no_apply_control signal below does — uncertain,
-    // left for an API check or a human to settle.
-    return { result: 'uncertain', code: 'insufficient_content', reason: 'insufficient content — likely nav/footer only (page may not have rendered)' };
+    return { result: 'uncertain', code: 'insufficient_content', reason: 'insufficient content — likely nav/footer only, or not rendered yet' };
   }
 
   return { result: 'uncertain', code: 'no_apply_control', reason: 'content present but no visible apply control found' };
@@ -463,10 +461,10 @@ const EXPIRED_HISTORY_STATUS = /expired/i;
 /**
  * True when a verdict means "the posting body could not be read", not "the
  * posting is closed": `code: 'insufficient_content'` (nav/footer only, or a
- * body that sits in an unreadable iframe). classifyLiveness now returns it as
- * `uncertain`, but logged verdicts from before carry `expired`. Consumers that must not treat such
- * a verdict as closure call this instead of repeating the code string.
- * Detection only: it does not change what classifyLiveness returns.
+ * body that sits in an unreadable iframe). classifyLiveness returns it as
+ * `uncertain`; consumers that may also see an older or hand-built verdict
+ * labelled `expired` with that code call this instead of repeating the code
+ * string. Detection only: it does not change what classifyLiveness returns.
  */
 export function isUnreadableVerdict(verdict) {
   return verdict?.code === 'insufficient_content';
@@ -475,11 +473,13 @@ export function isUnreadableVerdict(verdict) {
 /**
  * Does this verdict prove the posting is CLOSED?
  *
- * `expired` alone does not: an `insufficient_content` verdict is also
- * `expired`, and it means the body could not be read — a page still
- * hydrating, a client-side render that never landed — not that the posting
- * is gone (#5408). AGENTS.md is explicit that "an unreadable JD, loading
- * placeholder, or login/error page is unconfirmed, not closed".
+ * `expired` alone does not. classifyLiveness now returns an
+ * `insufficient_content` verdict as `uncertain`, but an older or hand-built
+ * verdict can still carry that code under `expired`, and it means the body
+ * could not be read — a page still hydrating, a client-side render that never
+ * landed — not that the posting is gone (#5408). AGENTS.md is explicit that
+ * "an unreadable JD, loading placeholder, or login/error page is unconfirmed,
+ * not closed".
  *
  * One definition, because the rule used to be COPIED. The scan-history record
  * planner and batch-evaluate-gemini.mjs each spelled it out as
@@ -514,6 +514,8 @@ export function discardableExpiredUrls(verdicts) {
   for (const v of verdicts ?? []) {
     if (!v?.url) continue;
     if (isClosureEvidence(v)) closed.push(v.url);
+    // Not gated on `expired`: classifyLiveness returns an unreadable page as
+    // `uncertain`, and the user still needs to hear why that row stayed open.
     else if (isUnreadableVerdict(v)) unreadable.push(v.url);
   }
   return { closed, unreadable };
@@ -528,12 +530,12 @@ export function discardableExpiredUrls(verdicts) {
  *   - **Only `expired`.** `uncertain` is a timeout or a bot wall, never a death
  *     certificate; recording it would bury a live posting behind a network
  *     hiccup, a strictly worse failure than the one this closes.
- *   - **Not an unrendered page.** The browser rung reads a page under 300
- *     characters with no closure notice and no apply control as
- *     `insufficient_content`, which is mostly a page that had not rendered yet.
- *     AGENTS.md calls a loading placeholder unconfirmed, not closed, and
- *     batch-evaluate-gemini.mjs skips the same code. A dead posting that reads
- *     this way gets no row, as it did before this recorder existed.
+ *   - **Not an unrendered page.** A page under 300 characters with no
+ *     closure notice and no apply control reads as `insufficient_content`,
+ *     which is mostly a page that had not rendered yet. classifyLiveness
+ *     returns it as `uncertain`, and the code is skipped here too, so a
+ *     verdict built elsewhere with `expired` and that code still writes no
+ *     row. AGENTS.md calls a loading placeholder unconfirmed, not closed.
  *   - **Only URLs the history already knows.** A liveness sweep is not a
  *     discovery channel: a URL scan-history never saw has no row to retire, and
  *     inventing one would put a posting nothing surfaced into the dedup set.
