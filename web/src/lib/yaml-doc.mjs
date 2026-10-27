@@ -26,9 +26,14 @@ export class ConfigError extends Error {
   }
 }
 
-/** 409 for a user file the user has to repair, 500 for anything else. */
+/**
+ * 409 for a user file the user has to repair or another writer holds
+ * (FileBusyError from core/file-lock.ts, matched by name so this stays plain
+ * JS), 500 for anything else.
+ */
 export function configErrorResponse(error) {
-  const status = error instanceof ConfigError && error.kind === "invalid-user-config" ? 409 : 500;
+  const status = (error instanceof ConfigError && error.kind === "invalid-user-config")
+    || error?.name === "FileBusyError" ? 409 : 500;
   return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status });
 }
 

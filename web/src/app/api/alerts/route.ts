@@ -3,6 +3,7 @@ import path from "node:path";
 import { careerOpsRoot, coreModule, rootScript, spawnEnv, userRoot, type NotifyModule } from "@/lib/career-ops";
 import { alertsPatch } from "@/lib/alerts-config.mjs";
 import { atomicWriteWithBackup } from "@/lib/core/safe-write";
+import { withFileLock } from "@/lib/core/file-lock";
 import { configErrorResponse, loadYamlDoc, setIn, toYaml } from "@/lib/yaml-doc.mjs";
 import { readJsonObject } from "@/lib/json-body";
 
@@ -60,12 +61,14 @@ export async function POST(req: Request) {
   if ("error" in result) return Response.json({ error: result.error }, { status: 400 });
   const file = path.join(userRoot(), "config", "alerts.yml");
   try {
-    const template = path.join(careerOpsRoot(), "config", "alerts.example.yml");
-    const { doc, src, seeded } = loadYamlDoc(file, template, "config/alerts.yml");
-    // notify-email reads `alerts:` when present and the top level otherwise.
-    setIn(doc, doc.has("alerts") ? ["alerts"] : [], result.patch);
-    atomicWriteWithBackup(file, toYaml(doc, src));
-    return Response.json({ ok: true, seeded });
+    return await withFileLock(file, () => {
+      const template = path.join(careerOpsRoot(), "config", "alerts.example.yml");
+      const { doc, src, seeded } = loadYamlDoc(file, template, "config/alerts.yml");
+      // notify-email reads `alerts:` when present and the top level otherwise.
+      setIn(doc, doc.has("alerts") ? ["alerts"] : [], result.patch);
+      atomicWriteWithBackup(file, toYaml(doc, src));
+      return Response.json({ ok: true, seeded });
+    });
   } catch (error) {
     return configErrorResponse(error);
   }

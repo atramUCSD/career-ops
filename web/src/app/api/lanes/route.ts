@@ -1,6 +1,7 @@
 import path from "node:path";
 import { careerOpsRoot, userRoot } from "@/lib/career-ops";
 import { atomicWriteWithBackup } from "@/lib/core/safe-write";
+import { withFileLock } from "@/lib/core/file-lock";
 import { words } from "@/lib/portals-config.mjs";
 import { configErrorResponse, loadYamlDoc, setIn, toYaml } from "@/lib/yaml-doc.mjs";
 import { readJsonObject } from "@/lib/json-body";
@@ -32,16 +33,18 @@ export async function POST(req: Request) {
 
   const file = path.join(userRoot(), "config", "lanes.yml");
   try {
-    const { doc, src, seeded } = loadYamlDoc(file, path.join(careerOpsRoot(), "config", "lanes.example.yml"), "config/lanes.yml");
-    if (seeded) return Response.json({ error: "config/lanes.yml does not exist" }, { status: 404 });
-    const lanes = doc.toJS().lanes;
-    for (const [id, list] of Object.entries(keywords)) {
-      const i = Array.isArray(lanes) ? lanes.findIndex((l) => l?.id === id) : -1;
-      if (i < 0) return Response.json({ error: `no lane "${id}" in config/lanes.yml` }, { status: 404 });
-      setIn(doc, ["lanes", i, "title_keywords"], list);
-    }
-    atomicWriteWithBackup(file, toYaml(doc, src));
-    return Response.json({ ok: true });
+    return await withFileLock(file, () => {
+      const { doc, src, seeded } = loadYamlDoc(file, path.join(careerOpsRoot(), "config", "lanes.example.yml"), "config/lanes.yml");
+      if (seeded) return Response.json({ error: "config/lanes.yml does not exist" }, { status: 404 });
+      const lanes = doc.toJS().lanes;
+      for (const [id, list] of Object.entries(keywords)) {
+        const i = Array.isArray(lanes) ? lanes.findIndex((l) => l?.id === id) : -1;
+        if (i < 0) return Response.json({ error: `no lane "${id}" in config/lanes.yml` }, { status: 404 });
+        setIn(doc, ["lanes", i, "title_keywords"], list);
+      }
+      atomicWriteWithBackup(file, toYaml(doc, src));
+      return Response.json({ ok: true });
+    });
   } catch (error) {
     return configErrorResponse(error);
   }

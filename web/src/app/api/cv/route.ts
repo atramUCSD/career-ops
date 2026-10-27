@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { userRoot } from "@/lib/career-ops";
 import { atomicWriteWithBackup } from "@/lib/core/safe-write";
+import { withFileLock, FileBusyError } from "@/lib/core/file-lock";
 import { readJsonObject } from "@/lib/json-body";
 
 function cvPath() {
@@ -31,9 +32,10 @@ export async function POST(req: Request) {
   // DATA_CONTRACT: cv.md is user-layer and gitignored (no git recovery). Never
   // blind-overwrite — snapshot the prior CV to a .bak first, write atomically.
   try {
-    const bak = atomicWriteWithBackup(cvPath(), body.content);
+    const bak = await withFileLock(cvPath(), () => atomicWriteWithBackup(cvPath(), body.content as string));
     return NextResponse.json({ ok: true, backedUp: !!bak });
-  } catch {
+  } catch (error) {
+    if (error instanceof FileBusyError) return NextResponse.json({ error: error.message }, { status: 409 });
     return NextResponse.json({ error: "write failed" }, { status: 500 });
   }
 }

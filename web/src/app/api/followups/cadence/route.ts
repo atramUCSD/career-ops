@@ -4,6 +4,7 @@ import path from "node:path";
 import * as yaml from "js-yaml";
 import { careerOpsRoot, rootScript, spawnEnv, userRoot } from "@/lib/career-ops";
 import { atomicWriteWithBackup } from "@/lib/core/safe-write";
+import { withFileLock } from "@/lib/core/file-lock";
 import { getProfilePath } from "@/lib/core/profile-path.mjs";
 import { PROFILE_CADENCE_KEYS, type ProfileCadenceKey } from "@/lib/followups";
 import { configErrorResponse, loadYamlDoc, setIn, toYaml } from "@/lib/yaml-doc.mjs";
@@ -124,14 +125,16 @@ export async function POST(req: Request) {
 
   const file = getProfilePath(userRoot());
   try {
-    // First create seeds from the example, so a profile is never cadence-only.
-    const template = path.join(careerOpsRoot(), "config", "profile.example.yml");
-    const { doc, src } = loadYamlDoc(file, template, "config/profile.yml");
-    setIn(doc, ["followup_cadence"], cadence);
-    if (enabled !== undefined) setIn(doc, ["follow_ups", "enabled"], enabled);
-    atomicWriteWithBackup(file, toYaml(doc, src));
-    const saved = doc.toJS();
-    return Response.json({ ok: true, followup_cadence: saved.followup_cadence, follow_ups: saved.follow_ups });
+    return await withFileLock(file, () => {
+      // First create seeds from the example, so a profile is never cadence-only.
+      const template = path.join(careerOpsRoot(), "config", "profile.example.yml");
+      const { doc, src } = loadYamlDoc(file, template, "config/profile.yml");
+      setIn(doc, ["followup_cadence"], cadence);
+      if (enabled !== undefined) setIn(doc, ["follow_ups", "enabled"], enabled);
+      atomicWriteWithBackup(file, toYaml(doc, src));
+      const saved = doc.toJS();
+      return Response.json({ ok: true, followup_cadence: saved.followup_cadence, follow_ups: saved.follow_ups });
+    });
   } catch (error) {
     return configErrorResponse(error);
   }

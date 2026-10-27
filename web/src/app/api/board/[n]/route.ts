@@ -3,6 +3,8 @@ import path from "node:path";
 import { findApplication, readReport, userRoot } from "@/lib/career-ops";
 import { trackerRowArg } from "@/lib/status-cli.mjs";
 import { readJsonObject } from "@/lib/json-body";
+import { withTrackerLock, TrackerBusyError } from "@/lib/core/tracker-lock";
+import { resolveTrackerPath } from "@/lib/core/tracker-files.mjs";
 import {
   buildTimeline,
   expiredOn,
@@ -83,8 +85,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ n: stri
   } else {
     return Response.json({ error: "kind must be comment, move or open" }, { status: 400 });
   }
-  // ponytail: no lock; one short appendFileSync line per request from a single
-  // local server process. Add the tracker lock if a CLI writer ever appends here.
-  fs.appendFileSync(dataFile("board-activity.jsonl"), JSON.stringify(event) + "\n");
+  // The cloud inbox runner appends here too (remote comments), so both doors
+  // take the tracker lock: two unserialized appends can interleave a line.
+  try {
+    await withTrackerLock(resolveTrackerPath(userRoot()), () =>
+      fs.appendFileSync(dataFile("board-activity.jsonl"), JSON.stringify(event) + "\n"),
+    );
+  } catch (e) {
+    if (e instanceof TrackerBusyError) return Response.json({ error: e.message }, { status: 409 });
+    throw e;
+  }
   return Response.json({ ok: true, event });
 }

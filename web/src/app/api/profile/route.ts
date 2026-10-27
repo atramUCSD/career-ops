@@ -1,6 +1,7 @@
 import path from "node:path";
 import { careerOpsRoot, userRoot } from "@/lib/career-ops";
 import { atomicWriteWithBackup } from "@/lib/core/safe-write";
+import { withFileLock } from "@/lib/core/file-lock";
 import { configErrorResponse, loadYamlDoc, setIn, toYaml } from "@/lib/yaml-doc.mjs";
 import { getProfilePath } from "@/lib/core/profile-path.mjs";
 import { profilePatchError } from "@/lib/profile-patch.mjs";
@@ -80,11 +81,13 @@ export async function POST(req: Request) {
 
   const file = getProfilePath(userRoot());
   try {
-    const template = path.join(careerOpsRoot(), "config", "profile.example.yml");
-    const { doc, src, seeded } = loadYamlDoc(file, template, "config/profile.yml");
-    for (const [keys, value] of edits) setIn(doc, keys, value);
-    atomicWriteWithBackup(file, toYaml(doc, src));
-    return Response.json({ ok: true, seeded });
+    return await withFileLock(file, () => {
+      const template = path.join(careerOpsRoot(), "config", "profile.example.yml");
+      const { doc, src, seeded } = loadYamlDoc(file, template, "config/profile.yml");
+      for (const [keys, value] of edits) setIn(doc, keys, value);
+      atomicWriteWithBackup(file, toYaml(doc, src));
+      return Response.json({ ok: true, seeded });
+    });
   } catch (error) {
     return configErrorResponse(error);
   }
