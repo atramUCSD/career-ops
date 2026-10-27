@@ -4431,6 +4431,7 @@ async function main() {
   let failedTargets = 0;
   const emptyTargets = [];
   const unverifiedZeroTargets = [];
+  const truncatedTargets = [];
 
   // Arm the failure-path row (#2643) now that the sweep is about to start and
   // every counter it reads is in scope. new_added is hardcoded 0 on a failed
@@ -4525,6 +4526,8 @@ async function main() {
         throw new Error(`${provider.id}: fetch() did not return an array`);
       }
       totalFound += jobs.length;
+      // Providers tag a short read as <provider>Truncated on the array.
+      if (Object.keys(jobs).some(k => k.endsWith('Truncated') && jobs[k])) truncatedTargets.push(company.name);
       if (!company._isBoard && jobs.length === 0) {
         if (emptyTargetStatus(observation) === 'empty') emptyTargets.push(company.name);
         else unverifiedZeroTargets.push(company.name);
@@ -5131,6 +5134,9 @@ async function main() {
   if (emptyTargets.length > 0) {
     console.log(`🟡 ${emptyTargets.length} target(s) live but empty: ${emptyTargets.join(', ')}`);
   }
+  if (truncatedTargets.length > 0) {
+    console.log(`⚠️  ${truncatedTargets.length} target(s) stopped early and returned a partial board: ${truncatedTargets.join(', ')}`);
+  }
   if (unverifiedZeroTargets.length > 0) {
     console.log(`⚠️  ${unverifiedZeroTargets.length} target(s) returned zero jobs without a successful HTTP response: ${unverifiedZeroTargets.join(', ')}`);
   }
@@ -5211,6 +5217,7 @@ async function main() {
       added_urls: verifiedOffers.map(offer => offer.url),
       errors: errors.map(({ company, error }) => ({ company, error })),
       unverified_zero: unverifiedZeroTargets,
+      truncated: truncatedTargets,
       dry_run: dryRun,
     }, errors.length > 0 ? 2 : 0);
   }

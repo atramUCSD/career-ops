@@ -17,9 +17,9 @@ import { sleep } from './_http.mjs';
 //     and lets scan.mjs's location_filter do the filtering.
 //   - `start` pages in steps of 10. An empty `positions` array ends the board.
 //   - Boards rate-limit aggressively: Microsoft 429s after ~9 rapid queries.
-//     Retries below use escalating backoff rather than dropping the tenant,
-//     because a silent 429 truncation looks identical to an empty board — so
-//     exhausting the retries throws instead of returning a short board.
+//     Retries below use escalating backoff rather than dropping the tenant.
+//     Exhausting them returns what was read, tagged eightfoldPcsxTruncated so
+//     scan.mjs reports a partial board instead of a complete (or failed) one.
 //
 // Config shape in portals.yml — either form auto-detects:
 //   careers_url: https://careers.qualcomm.com/careers
@@ -105,7 +105,8 @@ export default {
     /** @type {Map<string, object>} */
     const seen = new Map();
 
-    for (const q of queries) {
+    let truncated = null;
+    terms: for (const q of queries) {
       for (let page = 0; page < maxPages; page++) {
         const url = `${cfg.origin}/api/pcsx/search?domain=${encodeURIComponent(cfg.domain)}&query=${encodeURIComponent(q)}&start=${page * PAGE_SIZE}&sort_by=relevance`;
         let json = null;
@@ -125,11 +126,11 @@ export default {
             throw err;
           }
         }
-        // Retries exhausted: throw rather than break. Breaking here would end
-        // the term on a short board and report a truncated scan as a complete
-        // one — the exact failure the backoff exists to prevent.
+        // Retries exhausted: the host stays angry for minutes, so later terms
+        // would only burn more backoff. Keep the jobs read so far and tag them.
         if (rateLimited) {
-          throw new Error(`eightfold-pcsx: ${entry.name} rate-limited on "${q}" page ${page + 1} after ${MAX_RETRIES} attempts — ${rateLimited.message}`);
+          truncated = { reason: `rate-limited on "${q}" page ${page + 1} after ${MAX_RETRIES} attempts` };
+          break terms;
         }
         const positions = json?.data?.positions;
         if (!Array.isArray(positions) || positions.length === 0) break;
@@ -157,6 +158,8 @@ export default {
         await sleep(PAGE_DELAY_MS, ctx);
       }
     }
-    return [...seen.values()];
+    const jobs = [...seen.values()];
+    if (truncated) /** @type {any} */ (jobs).eightfoldPcsxTruncated = truncated;
+    return jobs;
   },
 };

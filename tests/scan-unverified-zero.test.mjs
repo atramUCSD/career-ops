@@ -107,3 +107,39 @@ test('scan records a swallowed first-page HTTP failure as unverified_zero', () =
     rmSync(dataRoot, { recursive: true, force: true });
   }
 });
+
+test('scan lists a provider-tagged short read as truncated and keeps the board healthy', () => {
+  const dataRoot = mkdtempSync(join(tmpdir(), 'career-ops-truncated-'));
+  try {
+    mkdirSync(join(dataRoot, 'config'));
+    writeFileSync(join(dataRoot, 'config', 'profile.yml'), '{}\n');
+    writeFileSync(join(dataRoot, 'portals.yml'), [
+      'tracked_companies:',
+      '  - name: Partial Board',
+      '    provider: builtin',
+      'job_boards: []',
+      '',
+    ].join('\n'));
+    const preload = join(dataRoot, 'stub-provider.mjs');
+    writeFileSync(preload, [
+      `import provider from ${JSON.stringify(new URL('../providers/builtin.mjs', import.meta.url).href)};`,
+      `provider.fetch = async () => Object.assign(`,
+      `  [{ title: 'Engineer', url: 'https://builtin.com/job/1', company: 'Partial Board', location: '' }],`,
+      `  { builtinTruncated: { reason: 'rate-limited' } });`,
+    ].join('\n'));
+    const result = spawnSync(process.execPath, [
+      '--import', pathToFileURL(preload).href, fileURLToPath(new URL('../scan.mjs', import.meta.url)), '--json', '--quiet', '--dry-run',
+    ], {
+      cwd: dataRoot,
+      env: { ...process.env, CAREER_OPS_ROOT: dataRoot, CAREER_OPS_PORTALS: join(dataRoot, 'portals.yml') },
+      encoding: 'utf8',
+      timeout: 30000,
+    });
+    assert.equal(result.status, 0, describeSpawn(result));
+    const receipt = JSON.parse(result.stdout);
+    assert.deepEqual(receipt.truncated, ['Partial Board']);
+    assert.deepEqual(receipt.unverified_zero, []);
+  } finally {
+    rmSync(dataRoot, { recursive: true, force: true });
+  }
+});

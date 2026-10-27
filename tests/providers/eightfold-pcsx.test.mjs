@@ -161,20 +161,19 @@ try {
   if (recovered.length === 1 && attempts === 3) pass('eightfold.fetch() backs off through a 429 and keeps the page');
   else fail(`eightfold.fetch() after transient 429: ${recovered.length} jobs in ${attempts} attempts`);
 
-  // Exhausted retries must throw. Returning what it had would report a
-  // truncated board as a complete one — indistinguishable from a real board
-  // that shrank, which is how a dead scan looks like a quiet week.
-  let threw = null;
-  try {
-    await eightfold.fetch({ ...QUALCOMM, queries: ['engineer'] }, mkCtx(async () => { throw new Error('HTTP 429 Too Many Requests'); }));
-  } catch (e) {
-    threw = e;
-  }
-  if (threw && /rate-limited/.test(threw.message)) pass('eightfold.fetch() throws when retries are exhausted rather than truncating');
-  else fail(`eightfold.fetch() should throw on exhausted retries, got ${threw ? threw.message : 'no error'}`);
+  // Exhausted retries keep what was read and tag the board, so scan.mjs reports
+  // it as partial; an untagged short board would read as a quiet week.
+  let n = 0;
+  const partial = await eightfold.fetch({ ...QUALCOMM, queries: ['engineer', 'designer'] }, mkCtx(async () => {
+    if (++n === 1) return pageOf(Array.from({ length: 10 }, (_, i) => position(`t${i}`)));
+    throw new Error('HTTP 429 Too Many Requests');
+  }));
+  if (partial.length === 10 && /rate-limited on "engineer" page 2/.test(partial.eightfoldPcsxTruncated?.reason) && n === 5)
+    pass('eightfold.fetch() returns a tagged partial board when retries are exhausted');
+  else fail(`eightfold.fetch() on exhausted retries: ${partial.length} jobs, tag ${JSON.stringify(partial.eightfoldPcsxTruncated)}, ${n} calls`);
 
   // A non-429 error is not a rate limit and must not be retried into silence.
-  threw = null;
+  let threw = null;
   try {
     await eightfold.fetch({ ...QUALCOMM, queries: ['engineer'] }, mkCtx(async () => { throw new Error('HTTP 403 Forbidden'); }));
   } catch (e) {
