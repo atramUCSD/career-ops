@@ -3,3 +3,29 @@
 .cursor/rules/caveman.mdc
 .opencode/AGENTS.md
 .windsurf/rules/caveman.md
+# Greenhouse apply runner: fork-only, drives web/ from outside and is never shipped by update-system
+apply-runner/
+# ADR-001 cloud inbox (Pages + D1 for one profile): fork-only infra, never shipped by update-system
+cloud/
+# Corridor dashboard: scanner swarm, match scorer, JD fact layer, mailer. Fork-only;
+# these were inline in update-system.mjs USER_PATHS, which upstream rewrites and apply overwrites
+swarm.mjs
+lanes.mjs
+channel-trust.mjs
+build-hub.mjs
+build-artifact.mjs
+profiles.mjs
+callback-score.mjs
+enrich-jd.mjs
+notify-email.mjs
+gmail-send.mjs
+gmail-replies.mjs
+resume-heat.mjs
+scripts/mint-gmail-token.mjs
+prune-pipeline.mjs
+scripts/alert.cmd
+scripts/sweep.cmd
+skills-lock.json
+config/alerts.example.yml
+config/lanes.example.yml
+config/artifacts.example.yml
