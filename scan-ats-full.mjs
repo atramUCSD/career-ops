@@ -1891,7 +1891,12 @@ async function main() {
     // appendToPipeline assumes the file exists (onboarding creates it) — cover fresh setups.
     if (!existsSync(PIPELINE_PATH)) {
       mkdirSync(path.dirname(PIPELINE_PATH), { recursive: true });
-      writeFileSync(PIPELINE_PATH, '# Pipeline\n\n## Pendientes\n', 'utf-8');
+      // wx: another writer that created it since the existsSync check keeps its rows.
+      try {
+        writeFileSync(PIPELINE_PATH, '# Pipeline\n\n## Pendientes\n', { encoding: 'utf-8', flag: 'wx' });
+      } catch (err) {
+        if (err?.code !== 'EEXIST') throw err;
+      }
     }
     await appendToPipeline(offers);
     await appendToScanHistory(offers, date);

@@ -1139,9 +1139,12 @@ function checkPipelineFile() {
   }
   try {
     mkdirSync(dirname(filePath), { recursive: true });
-    writeFileSync(filePath, PIPELINE_SKELETON, 'utf-8');
+    // wx: a scan that created it since the existsSync above keeps its rows.
+    writeFileSync(filePath, PIPELINE_SKELETON, { encoding: 'utf-8', flag: 'wx' });
     return { pass: true, label: `${shown} ready (auto-created)` };
-  } catch {
+  } catch (err) {
+    // syscall: a file squatting on data/ also throws EEXIST, from mkdir.
+    if (err?.code === 'EEXIST' && err.syscall === 'open') return { pass: true, label: `${shown} ready` };
     return {
       pass: false,
       label: `${shown} could not be created`,
