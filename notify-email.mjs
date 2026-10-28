@@ -39,6 +39,7 @@ import { BANDS } from './callback-score.mjs';
 import { sendRaw } from './gmail-send.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
 import { flagValue, hasFlag, validateFlags } from './lib/cli-flags.mjs';
+import { writeFileAtomic } from './tracker-utils.mjs';
 
 // The scheduled path (scripts/alert.cmd under Task Scheduler) runs with a
 // minimal environment and sources nothing, so without this the three GMAIL_*
@@ -98,7 +99,9 @@ export function loadState(root = ROOT) {
 export function saveState(state, root = ROOT) {
   const path = join(root, STATE_PATH);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(state, null, 2) + '\n');
+  // Atomic: a run killed mid-write leaves the corrupt file that loadState reads
+  // as a first run, re-mailing every alert.
+  writeFileAtomic(path, JSON.stringify(state, null, 2) + '\n');
 }
 
 /**
