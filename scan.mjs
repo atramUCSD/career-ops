@@ -95,6 +95,13 @@ try {
   // checkout reads them beside the configured data root rather than from the
   // caller's cwd (which may be the code checkout or an unrelated directory).
   config({ path: path.join(DATA_ROOT, '.env'), quiet: true });
+  // A profile under this checkout (profiles/<name>) usually has no .env of its
+  // own; the checkout's fills only keys still unset (dotenv never overrides), so
+  // the profile's own win. Scoped to profiles/ so a temp or foreign data root
+  // (tests, split installs) never inherits the checkout owner's keys.
+  if (/^profiles[\\/][^\\/]+$/.test(path.relative(CODE_ROOT, DATA_ROOT))) {
+    config({ path: path.join(CODE_ROOT, '.env'), quiet: true });
+  }
 } catch {
   // dotenv is optional — fall back to process.env if not installed
 }
