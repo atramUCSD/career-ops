@@ -31,6 +31,7 @@ import { buildTimeline, expiredOn, parseReportMeta, parseStatusLog, scanSighting
 import { BOARD_COLUMNS, boardColumn, isSkipDecision } from '../web/src/lib/board-columns.mjs';
 import { isReservedReportFile } from '../web/src/lib/report-files.mjs';
 import { isMainModule } from '../lib/is-main-module.mjs';
+import { buildModel } from '../build-artifact.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const STATES_FILE = path.join(REPO, 'templates/states.yml');
@@ -64,6 +65,25 @@ const jsonl = (text) =>
     }
   });
 
+// Scanned postings nobody has evaluated yet, as compact cards with only the fields
+// a phone list needs. Age is left out (the page derives it from p) so a row changes
+// only when its score steps at one of freshScore's age boundaries, not every day.
+// Gated rows, rows past the window, descriptions and jd facts stay on the PC.
+const POSTING_WINDOW_DAYS = 45;
+export function postingRows(root, now = new Date()) {
+  if (!fs.existsSync(path.join(root, 'data/pipeline.md'))) return [];
+  const cutoff = new Date(now - POSTING_WINDOW_DAYS * 864e5).toISOString().slice(0, 10);
+  const byId = new Map(); // the pipeline can list one URL twice; the first row wins
+  for (const r of buildModel({ root, now }).rows) {
+    if (r.status !== 'pending' || r.gate || (r.p && r.p < cutoff)) continue;
+    const id = `posting:${createHash('sha1').update(r.u).digest('hex')}`;
+    if (!byId.has(id)) {
+      byId.set(id, { id, kind: 'posting', data: { u: r.u, c: r.c, t: r.t, l: r.l, p: r.p, lane: r.lane, cb: r.cb, band: r.cbBand, gov: r.gov ?? null } });
+    }
+  }
+  return [...byId.values()];
+}
+
 export function buildCopy(root) {
   const read = (rel) => readIf(path.join(root, rel));
   const apps = parseApplications(readTrackerFile(root) ?? '', root, REPO);
@@ -94,6 +114,7 @@ export function buildCopy(root) {
     const skip = isSkipDecision(meta.summary?.final_decision);
     return { id: `card:${app.n}`, kind: 'card', data: { app, lane: boardColumn(app.status), skip, meta, timeline } };
   });
+  rows.push(...postingRows(root));
   // The page offers the states the PC accepts, read from states.yml, never hard-coded.
   rows.push({ id: 'states', kind: 'meta', data: loadCanonicalStates(STATES_FILE) });
   rows.push({ id: 'columns', kind: 'meta', data: BOARD_COLUMNS });

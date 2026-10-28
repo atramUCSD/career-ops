@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { identify, localDevIdentity, verifyAccessJwt } from './lib/access.mjs';
 import { parseAction } from './lib/inbox.mjs';
-import { buildCopy, canonicalState, chunkRows, diffRows, drainInbox, moveOutcome, siteUrl } from './sync-runner.mjs';
+import { buildCopy, canonicalState, chunkRows, diffRows, drainInbox, moveOutcome, postingRows, siteUrl } from './sync-runner.mjs';
 import { loadCanonicalStates } from '../tracker-utils.mjs';
 
 const TEAM = 'https://team.cloudflareaccess.com';
@@ -116,6 +116,21 @@ try {
   const tracker = path.join(root, 'data/applications.md');
   fs.writeFileSync(tracker, fs.readFileSync(tracker, 'utf8').replace('| Applied |', '| Interview |'));
   assert.deepEqual(diffRows(buildCopy(root), pushed).upserts.map((r) => r.id), ['card:1']);
+
+  // Postings: pending rows inside the window, one per URL, no age field to churn daily.
+  const day = (n) => new Date(Date.UTC(2026, 9, 28) - n * 864e5).toISOString().slice(0, 10);
+  fs.writeFileSync(path.join(root, 'portals.yml'), 'title_filter:\n  positive: [Engineer]\n');
+  fs.writeFileSync(path.join(root, 'data/pipeline.md'), [
+    '## Pending',
+    `- [ ] https://jobs.example/a | Acme | Frontend Engineer | Remote | posted: ${day(2)}`,
+    `- [ ] https://jobs.example/a | Acme | Frontend Engineer | Remote | posted: ${day(2)}`,
+    `- [ ] https://jobs.example/old | Acme | Platform Engineer | Remote | posted: ${day(60)}`,
+    '- [ ] https://jobs.example/undated | Beta | UI Engineer | Austin, TX',
+  ].join('\n') + '\n');
+  const posts = postingRows(root, new Date('2026-10-28T12:00:00Z'));
+  assert.deepEqual(posts.map((r) => r.data.u), ['https://jobs.example/a', 'https://jobs.example/undated']);
+  assert.equal(posts[0].kind, 'posting');
+  assert.ok(!('age' in posts[0].data) && typeof posts[0].data.cb === 'number');
 } finally {
   fs.rmSync(root, { recursive: true, force: true });
 }
