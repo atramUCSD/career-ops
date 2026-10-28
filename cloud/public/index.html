@@ -36,11 +36,21 @@
   li { margin-bottom: 4px; }
   li time { color: var(--muted); font-size: 12px; display: block; }
   details.more > summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 4px 0 8px; }
+  #status.stale { color: var(--warn); }
+  #status a { color: var(--accent); }
+  #postings { padding: 0 16px 40px; max-width: 760px; }
+  #postings input { width: 100%; font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; }
+  .post { display: block; padding: 8px 0; border-bottom: 1px solid var(--line); color: inherit; text-decoration: none; }
 </style>
 </head>
 <body>
 <header><h1>career-ops board</h1><span id="status">Loading…</span></header>
 <main id="board"></main>
+<section id="postings" hidden>
+  <h2 id="postings-h"></h2>
+  <input id="q" type="search" placeholder="Filter by company, title or location" aria-label="Filter postings">
+  <div id="postings-list"></div>
+</section>
 <script>
   // View of the copy the PC pushes (ADR-001 step 2), plus the inbox (step 5): moves
   // and comments queue in the store, draw as pending, and settle when the PC's runner
@@ -131,22 +141,76 @@
     return d;
   }
 
+  // The last copy and inbox this phone saw live in Cache Storage, so the page opens on
+  // them at once and keeps showing them while offline or after the Access session
+  // lapses (sw.js serves the shell in both cases). A revalidation swaps the copy only
+  // on a 200; a 304 just refreshes how recently the PC pushed.
+  const SNAP = 'snapshot-v1';
+  const STALE_MS = 12 * 3_600_000;
   let copy = { pushedAt: null, rows: [] };
-  function draw() {
-    // Skip identical redraws so a poll never resets a half-typed comment.
-    const key = JSON.stringify([copy, actions]);
-    if (key === lastDrawn) return;
-    lastDrawn = key;
-    const byId = Object.fromEntries(copy.rows.map((r) => [r.id, r.data]));
-    states = byId.states ?? [];
-    const cards = copy.rows.filter((r) => r.kind === 'card').map((r) => r.data).sort((a, b) => b.app.date.localeCompare(a.app.date));
-    const off = cards.filter((c) => !c.lane).length;
+  let etag = null;
+  let copyRev = 0;
+  let checkedAt = null; // when this phone last reached the server
+  let mode = 'loading'; // live | offline | signed-out | error
+  let modeDetail = '';
+
+  async function snapshot(key, text, headers) {
+    if (!('caches' in self)) return;
+    try {
+      await (await caches.open(SNAP)).put(key, new Response(text, { headers }));
+    } catch {} // storage full or blocked: the page still works, it just opens empty offline
+  }
+
+  async function restore() {
+    if (!('caches' in self)) return;
+    const cache = await caches.open(SNAP);
+    const [c, i, m] = await Promise.all(['/api/copy', '/api/inbox', '/meta'].map((k) => cache.match(k)));
+    if (c) {
+      copy = await c.json();
+      etag = c.headers.get('etag');
+      copyRev++;
+    }
+    if (i) actions = await i.json();
+    if (m) {
+      const meta = await m.json(); // newer than the copy's own pushedAt after any 304
+      copy.pushedAt = meta.pushedAt ?? copy.pushedAt;
+      checkedAt = meta.checkedAt;
+    }
+  }
+
+  function drawStatus() {
+    const s = document.getElementById('status');
+    const cards = copy.rows.filter((r) => r.kind === 'card');
+    const off = cards.filter((r) => !r.data.lane).length;
     const waiting = actions.filter((a) => a.status === 'pending').length;
-    document.getElementById('status').textContent = [
-      copy.pushedAt ? `Copy from ${ago(copy.pushedAt)}` : 'Nothing pushed yet',
+    const stale = copy.pushedAt && Date.now() - Date.parse(copy.pushedAt) > STALE_MS;
+    const lead = {
+      live: '',
+      loading: copyRev ? 'Snapshot, checking for a newer copy' : 'Loading…',
+      offline: copyRev ? `Offline, showing the snapshot checked ${checkedAt ? ago(checkedAt) : 'earlier'}` : 'Offline and no snapshot yet',
+      'signed-out': copyRev ? `Signed out, showing the snapshot checked ${checkedAt ? ago(checkedAt) : 'earlier'}` : 'Signed out',
+      error: `Could not load the copy (${modeDetail})`,
+    }[mode];
+    s.className = stale || mode !== 'live' ? 'stale' : '';
+    s.replaceChildren(...[
+      lead,
+      copy.pushedAt ? `PC last pushed ${ago(copy.pushedAt)}` : copyRev ? 'Nothing pushed yet' : '',
       waiting ? `${waiting} waiting for the PC` : '',
       off ? `${off} discarded or skipped off the board` : '',
-    ].filter(Boolean).join(' · ');
+    ].filter(Boolean).join(' · '));
+    // ?signin skips sw.js, so the navigation reaches Access and its login page.
+    if (mode === 'signed-out') s.append(' · ', el('a', { href: '/?signin' }, 'Sign in'));
+  }
+
+  function draw() {
+    drawStatus();
+    // Skip identical redraws so a poll never resets a half-typed comment.
+    const key = JSON.stringify([copyRev, actions]);
+    if (key === lastDrawn) return;
+    lastDrawn = key;
+    const byId = Object.fromEntries(copy.rows.filter((r) => r.kind !== 'posting').map((r) => [r.id, r.data]));
+    states = byId.states ?? [];
+    const cards = copy.rows.filter((r) => r.kind === 'card').map((r) => r.data).sort((a, b) => b.app.date.localeCompare(a.app.date));
     const board = document.getElementById('board');
     board.replaceChildren();
     for (const col of byId.columns ?? []) {
@@ -162,22 +226,78 @@
           ...parked.map(card)),
       ));
     }
+    drawPostings();
   }
 
+  // Thousands of postings: draw the best-scored matches only, never the whole list.
+  const POSTINGS_SHOWN = 50;
+  const daysSince = (day) => Math.floor((Date.now() - Date.parse(`${day}T00:00:00Z`)) / 86_400_000);
+  function drawPostings() {
+    const all = copy.rows.filter((r) => r.kind === 'posting').map((r) => r.data);
+    document.getElementById('postings').hidden = !all.length;
+    const q = document.getElementById('q').value.trim().toLowerCase();
+    const hits = (q ? all.filter((p) => `${p.c} ${p.t} ${p.l}`.toLowerCase().includes(q)) : all).sort((a, b) => (b.cb ?? 0) - (a.cb ?? 0));
+    document.getElementById('postings-h').textContent = q ? `Pending postings ${hits.length} of ${all.length}` : `Pending postings ${all.length}`;
+    document.getElementById('postings-list').replaceChildren(...hits.slice(0, POSTINGS_SHOWN).map((p) => {
+      const url = httpUrl(p.u);
+      const sub = [p.l, p.p ? `posted ${daysSince(p.p)}d ago` : 'no posted date', p.band && `${p.band} ${p.cb}`, p.gov && 'public sector'].filter(Boolean).join(' · ');
+      return el(url ? 'a' : 'div', { class: 'post', href: url, target: url && '_blank', rel: url && 'noopener noreferrer' },
+        el('div', null, el('span', { class: 'co' }, p.c), ` ${p.t}`), el('div', { class: 'sub' }, sub));
+    }), hits.length > POSTINGS_SHOWN ? el('p', { class: 'empty' }, `${hits.length - POSTINGS_SHOWN} more; filter to narrow`) : '');
+  }
+  document.getElementById('q').oninput = drawPostings;
+
+  // redirect: 'manual' because a lapsed Access session answers with a 302 to its login
+  // page; followed, that is a cross-origin HTML page and the fetch fails as if offline.
   async function load() {
-    const [c, i] = await Promise.all([fetch('/api/copy', { cache: 'no-store' }), fetch('/api/inbox', { cache: 'no-store' })]);
-    if (!c.ok) return void (document.getElementById('status').textContent = `Could not load the copy (HTTP ${c.status}).`);
-    copy = await c.json();
-    actions = i.ok ? await i.json() : actions;
+    let c, i;
+    try {
+      [c, i] = await Promise.all([
+        fetch('/api/copy', { cache: 'no-store', redirect: 'manual', headers: etag ? { 'If-None-Match': etag } : {} }),
+        fetch('/api/inbox', { cache: 'no-store', redirect: 'manual' }),
+      ]);
+    } catch {
+      mode = 'offline';
+      return draw();
+    }
+    if (c.type === 'opaqueredirect' || c.status === 401 || c.status === 403) {
+      mode = 'signed-out';
+      return draw();
+    }
+    if (c.status === 304) {
+      copy.pushedAt = c.headers.get('x-pushed-at') || copy.pushedAt;
+    } else if (c.ok) {
+      const text = await c.text();
+      copy = JSON.parse(text);
+      etag = c.headers.get('etag');
+      copyRev++;
+      await snapshot('/api/copy', text, etag ? { etag } : {});
+    } else {
+      [mode, modeDetail] = ['error', `HTTP ${c.status}`];
+      return draw();
+    }
+    if (i.ok) {
+      const text = await i.text();
+      actions = JSON.parse(text);
+      await snapshot('/api/inbox', text);
+    }
+    mode = 'live';
+    checkedAt = new Date().toISOString();
+    await snapshot('/meta', JSON.stringify({ pushedAt: copy.pushedAt, checkedAt }));
     draw();
   }
 
   // Poll faster while something is waiting, so a settled move shows up soon after the runner reports it.
   async function tick() {
-    await load().catch((err) => (document.getElementById('status').textContent = `Could not load the copy: ${err.message}`));
+    await load().catch((err) => ([mode, modeDetail] = ['error', err.message], draw()));
     setTimeout(tick, actions.some((a) => a.status === 'pending') ? 10_000 : 60_000);
   }
-  tick();
+  // A phone reopening the tab should not wait out the poll interval.
+  document.addEventListener('visibilitychange', () => document.hidden || load().catch(() => {}));
+  addEventListener('online', () => load().catch(() => {}));
+  if (location.search.includes('signin')) history.replaceState(null, '', '/');
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+  restore().catch(() => {}).then(() => (draw(), tick()));
 </script>
 </body>
 </html>
