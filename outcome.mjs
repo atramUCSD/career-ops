@@ -36,6 +36,7 @@ import {
   resolvePdfIndexPath,
   resolveTrackerPath,
   resolveWorkspaceRoot,
+  CLI_EXIT,
 } from './tracker-utils.mjs';
 import { getCareerOpsRoot } from './path-resolver.mjs';
 import { localToday } from './lib/local-today.mjs';
@@ -56,10 +57,7 @@ const NODE = process.execPath;
 const SET_STATUS_SCRIPT = join(CODE_ROOT, 'set-status.mjs');
 const ARCHIVE_POSTING_SCRIPT = join(CODE_ROOT, 'archive-posting.mjs');
 
-const EXIT_OK = 0;
-const EXIT_USAGE = 1;
-const EXIT_NOT_FOUND = 2;
-const EXIT_AMBIGUOUS = 3;
+const { OK: EXIT_OK, USAGE: EXIT_USAGE, NOT_FOUND: EXIT_NOT_FOUND, AMBIGUOUS: EXIT_AMBIGUOUS } = CLI_EXIT;
 
 function slugify(text) {
   return String(text ?? '')

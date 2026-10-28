@@ -63,7 +63,7 @@ import { createHash, randomUUID } from 'crypto';
 // The lock protocol is lib/dir-lock.mjs, shared with every other core lock;
 // this module only picks the follow-ups lock directory, timing and error.
 import { acquireDirLock, releaseOrWarn } from './lib/dir-lock.mjs';
-import { makeCliFailWith, renameSyncWithRetry } from './tracker-utils.mjs';
+import { makeCliFailWith, renameSyncWithRetry, CLI_EXIT } from './tracker-utils.mjs';
 import { tmpdir } from 'os';
 import { resolveColumns, parseTrackerRow } from './tracker-parse.mjs';
 import { localToday } from './lib/local-today.mjs';
@@ -696,12 +696,13 @@ function parseCliArgs(argv) {
   return opts;
 }
 
+// SeedError codes onto the shared CLI numbering.
 const EXIT_CODES = {
-  USAGE: 1,
-  INVALID_DATE: 1,
-  NOT_APPLIED: 1,
-  ROW_NOT_FOUND: 2,
-  LOCK_TIMEOUT: 4,
+  USAGE: CLI_EXIT.USAGE,
+  INVALID_DATE: CLI_EXIT.USAGE,
+  NOT_APPLIED: CLI_EXIT.USAGE,
+  ROW_NOT_FOUND: CLI_EXIT.NOT_FOUND,
+  LOCK_TIMEOUT: CLI_EXIT.LOCK_TIMEOUT,
 };
 
 /**

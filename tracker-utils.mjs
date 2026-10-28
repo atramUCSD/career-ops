@@ -1005,6 +1005,34 @@ export function resolveCanonicalStateId(input, states) {
 export const CLI_EXIT = { OK: 0, USAGE: 1, NOT_FOUND: 2, AMBIGUOUS: 3, LOCK_TIMEOUT: 4, STALE: 5 };
 
 /**
+ * Status-log `source` labels (data/status-log.tsv). funnel-velocity.mjs parses
+ * the ledger and drops rows whose source is not in LEDGER_SOURCES; set-status
+ * --source accepts only WRITER_SOURCES. Defined once so the writer and the
+ * reader cannot disagree about what a valid source is.
+ */
+// `web` sits alongside `set-status` because it is the same class of event: a
+// status change made in the web app is recorded as the user makes it, not
+// reconstructed afterwards. Only the door differs.
+// `reply-watch` is the same class: the user confirms the update interactively;
+// the transition is observed at that moment, not reconstructed later.
+// `dedup-tracker` is the opposite class: the kept row of a duplicate pair takes
+// over the removed row's more advanced status, and that transition was found
+// at dedup time, not observed then (#5536).
+// `close-stale` is the same class: close-stale.mjs moves a long-silent Applied
+// row to Discarded in bulk, dated the day it ran. That is when the silence was
+// declared, not when anything happened, so it must not read as a hop (#5794).
+// `remote` is a move made on the cloud page and applied later by the runner;
+// the runner passes the phone-side date as --on, so the day is still observed.
+export const LEDGER_SOURCES = new Set(['set-status', 'web', 'correction', 'backfill', 'manual', 'reply-watch', 'dedup-tracker', 'close-stale', 'remote']);
+// Sources whose dates are trusted for day-math. backfill/manual/dedup-tracker/close-stale
+// are parsed and counted but excluded: they are reconstructed after the fact,
+// not observed.
+export const DAY_MATH_SOURCES = new Set(['set-status', 'web', 'correction', 'reply-watch', 'remote']);
+// Labels a caller may pass to set-status --source. The other ledger sources
+// are written by their own scripts, never through that flag.
+export const WRITER_SOURCES = new Set(['set-status', 'web', 'reply-watch', 'remote']);
+
+/**
  * Build a failWith(exitCode, code, message, extra) bound to a --json flag,
  * shared by every canonical tracker-writer CLI so the JSON-vs-human error
  * contract can't drift between them.

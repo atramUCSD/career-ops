@@ -98,8 +98,8 @@
  *     through resolveCanonicalState, so an empty cell is rejected as
  *     `unknown from-state ""` or `unknown to-state ""` for its own column,
  *     and the row is dropped.
- *   - The source column is a closed set, and VALID_SOURCES in
- *     funnel-velocity.mjs is the authority on its members. Deliberately not
+ *   - The source column is a closed set, and LEDGER_SOURCES in
+ *     tracker-utils.mjs is the authority on its members. Deliberately not
  *     enumerated here: a copy of that list in prose is wrong the first time a
  *     writer is added, and it would be wrong in three files at once.
  *     A value outside the set parses but is excluded from day-math. The row
@@ -119,7 +119,7 @@ import { roleFuzzyMatch } from './role-matcher.mjs';
 import { localToday } from './lib/local-today.mjs';
 import {
   resolveTrackerPath, writeFileAtomic, loadCanonicalStates, resolveCanonicalState,
-  normalizeCompany, cell, CLI_EXIT, makeCliFailWith, makeCliFailUsage, acquireTrackerLockForCli,
+  normalizeCompany, cell, CLI_EXIT, WRITER_SOURCES, makeCliFailWith, makeCliFailUsage, acquireTrackerLockForCli,
   appendLedgerRows,
 } from './tracker-utils.mjs';
 import { getCareerOpsRoot } from './path-resolver.mjs';
@@ -268,12 +268,11 @@ if (wantsHelp(rawArgs)) {
 // the tracker itself — the web status route — needs its ledger rows to stay
 // distinguishable from a CLI run's.
 //
-// The allow-list is narrow on purpose. The value is written to a file
-// funnel-velocity.mjs parses positionally and gates on its own source
-// allow-list, so an unrecognized label would be persisted here and then
+// The allow-list (WRITER_SOURCES, tracker-utils.mjs) is narrow on purpose. The
+// value is written to a file funnel-velocity.mjs parses positionally and gates
+// on LEDGER_SOURCES, so an unrecognized label would be persisted here and then
 // silently dropped there. Rejecting it at the boundary keeps the two ends from
 // disagreeing about what a valid source is.
-const WRITER_SOURCES = new Set(['set-status', 'web', 'reply-watch', 'remote']);
 
 // Before the parse loop: failUsage runs on the first bad token, and a const
 // is not hoisted the way the previous function declaration was.

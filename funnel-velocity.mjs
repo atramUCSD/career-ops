@@ -42,7 +42,7 @@ import { fileURLToPath } from 'url';
 import { loadYaml } from './lib/yaml-document.mjs';
 import { computeFunnel, computeFunnelWithHistory, parseStatusLogStages, trackerStatusByNum, computeTrackerStats } from './stats.mjs';
 import { resolveColumns, parseTrackerRow } from './tracker-parse.mjs';
-import { resolveTrackerPath, loadCanonicalStates, resolveCanonicalState } from './tracker-utils.mjs';
+import { resolveTrackerPath, loadCanonicalStates, resolveCanonicalState, LEDGER_SOURCES, DAY_MATH_SOURCES } from './tracker-utils.mjs';
 import { getCareerOpsRoot } from './path-resolver.mjs';
 import { parseAppliedDate, normalizeStatus, loadFollowupsEnabled } from './followup-cadence.mjs';
 import { flagValue, validateFlags } from './lib/cli-flags.mjs';
@@ -74,24 +74,6 @@ const USAGE = `Usage:
   node funnel-velocity.mjs --help|-h              # show this message`;
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-// `web` sits alongside `set-status` because it is the same class of event: a
-// status change made in the web app is recorded as the user makes it, not
-// reconstructed afterwards. Only the door differs.
-// `reply-watch` is the same class: the user confirms the update interactively;
-// the transition is observed at that moment, not reconstructed later.
-// `dedup-tracker` is the opposite class: the kept row of a duplicate pair takes
-// over the removed row's more advanced status, and that transition was found
-// at dedup time, not observed then (#5536).
-// `close-stale` is the same class: close-stale.mjs moves a long-silent Applied
-// row to Discarded in bulk, dated the day it ran. That is when the silence was
-// declared, not when anything happened, so it must not read as a hop (#5794).
-// `remote` is a move made on the cloud page and applied later by the runner;
-// the runner passes the phone-side date as --on, so the day is still observed.
-const VALID_SOURCES = new Set(['set-status', 'web', 'correction', 'backfill', 'manual', 'reply-watch', 'dedup-tracker', 'close-stale', 'remote']);
-// Sources whose dates are trusted for day-math. backfill/manual/dedup-tracker/close-stale
-// are parsed and counted but excluded: they are reconstructed after the fact,
-// not observed.
-const DAY_MATH_SOURCES = new Set(['set-status', 'web', 'correction', 'reply-watch', 'remote']);
 
 // The hops a candidate can measure from their own tracker. Applied→Rejected is
 // tracked separately from the forward hops — a "days to terminal" number that
@@ -147,7 +129,7 @@ export function parseStatusLog(content, states) {
     if (fromRaw !== '-' && !from) { unparseable.push({ line: i + 1, raw: t, reason: `unknown from-state "${fromRaw}"` }); continue; }
     const to = toRaw === '-' ? '-' : resolveCanonicalState(toRaw, states);
     if (toRaw !== '-' && !to) { unparseable.push({ line: i + 1, raw: t, reason: `unknown to-state "${toRaw}"` }); continue; }
-    if (!VALID_SOURCES.has(source)) {
+    if (!LEDGER_SOURCES.has(source)) {
       unknownSources.push({ line: i + 1, num, source });
       // Parsed but never fed to day-math; still visible in dataQuality.
       observations.push({ num, date, from, to, source, note, dayMath: false });

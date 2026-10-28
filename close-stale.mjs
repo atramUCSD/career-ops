@@ -87,7 +87,7 @@ const STATES_FILE = join(CODE_ROOT, 'templates/states.yml');
 
 export const DEFAULT_DAYS = 60;
 export const DEFAULT_TARGET_STATUS = 'Discarded';
-/** The status-log `source` for these transitions; a member of VALID_SOURCES in funnel-velocity.mjs. */
+/** The status-log `source` for these transitions; a member of LEDGER_SOURCES in tracker-utils.mjs. */
 export const LEDGER_SOURCE = 'close-stale';
 /** Every tag this script writes starts with this, which is how a reopened row is recognised. */
 export const NOTE_TAG_PREFIX = 'no response (auto-closed';
