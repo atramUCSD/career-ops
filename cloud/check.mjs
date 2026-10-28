@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { identify, localDevIdentity, verifyAccessJwt } from './lib/access.mjs';
 import { parseAction } from './lib/inbox.mjs';
-import { canonicalState, chunkRows, diffRows, drainInbox, moveOutcome, siteUrl } from './sync-runner.mjs';
+import { buildCopy, canonicalState, chunkRows, diffRows, drainInbox, moveOutcome, siteUrl } from './sync-runner.mjs';
 import { loadCanonicalStates } from '../tracker-utils.mjs';
 
 const TEAM = 'https://team.cloudflareaccess.com';
@@ -105,6 +105,17 @@ try {
   const lines = fs.readFileSync(path.join(root, 'data/board-activity.jsonl'), 'utf8').trim().split('\n');
   assert.equal(lines.length, 1);
   assert.equal(JSON.parse(lines[0]).text, 'called back');
+
+  // The copy: one card per tracker row plus the two meta rows, and a hash that only
+  // moves when the card does, so an idle run pushes nothing.
+  const copy = buildCopy(root);
+  const pushed = Object.fromEntries(copy.map((r) => [r.id, r.hash]));
+  assert.deepEqual(copy.map((r) => r.id), ['card:1', 'states', 'columns']);
+  assert.equal(JSON.parse(copy[0].json).app.status, 'Applied');
+  assert.deepEqual(diffRows(buildCopy(root), pushed).upserts, []);
+  const tracker = path.join(root, 'data/applications.md');
+  fs.writeFileSync(tracker, fs.readFileSync(tracker, 'utf8').replace('| Applied |', '| Interview |'));
+  assert.deepEqual(diffRows(buildCopy(root), pushed).upserts.map((r) => r.id), ['card:1']);
 } finally {
   fs.rmSync(root, { recursive: true, force: true });
 }
