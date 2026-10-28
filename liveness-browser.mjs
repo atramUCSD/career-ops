@@ -96,6 +96,13 @@ export const LIVENESS_CONTEXT_OPTIONS = {
   locale: 'en-US',
 };
 
+// Same off-screen placement as apply-scope's BUNDLED_HEADED_LAUNCH, copied rather
+// than imported: the web app bundles this file and apply-scope pulls in js-yaml.
+const OFFSCREEN_HEADED_LAUNCH = {
+  headless: false,
+  args: ['--window-position=-3200,-3200', '--window-size=1280,940'],
+};
+
 // Open a page in a context that already presents a realistic UA. Both callers use
 // this instead of browser.newPage() so headless checks aren't instantly bot-walled.
 export async function newLivenessPage(browser) {
@@ -840,7 +847,7 @@ export function createHeadedPageProvider(chromium) {
       if (page) return page;
       if (launchFailed) return null;
       try {
-        browser = await chromium.launch({ headless: false });
+        browser = await chromium.launch(OFFSCREEN_HEADED_LAUNCH);
         const context = await browser.newContext(LIVENESS_CONTEXT_OPTIONS);
         page = await context.newPage();
         return page;
