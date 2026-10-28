@@ -46,11 +46,30 @@
  * clearances, and comp floor. Nothing about a person other than what the user
  * wrote down themselves.
  *
+ * PROFILE-OWNED RULES (2026-10-27)
+ * Everything that describes the candidate rather than the posting is read from
+ * profile.yml `scoring:`, and an absent key switches its rule off instead of
+ * falling back to one person's values. A profile that states nothing gets no
+ * geography, years, or degree rule and no bonuses; only the TS/SCI stop stays,
+ * because nobody gets that clearance by applying.
+ *
+ *   hats: true                    the three-hat role model (see `useHats`)
+ *   clearance: secret | ts_sci    held — a requirement at or under it is a bonus
+ *   degree: bachelor | master | phd   highest held — above it costs or gates
+ *   yoe_ceiling: 8                years floor above this gates
+ *   frameworks: [foundry, …]      frameworksIn() keys that count as strengths
+ *   sector: gov                   government / public-sector customer bonus
+ *   onsite_within: california | { name, places, states }
+ *                                 onsite outside this region gates
+ *   segments: [{ name, match, pool, why }]
+ *                                 location buckets, first match wins; an entry
+ *                                 with no `match` is the catch-all
+ *
  * UNTRUSTED CONTENT: description text is pattern-matched for facts, never
  * followed as instruction.
  */
 import { SENIORITY_TOKENS, SUB_BASELINE_SENIORITY } from './role-matcher.mjs';
-import { clearanceIn } from './enrich-jd.mjs';
+import { clearanceIn, sectorIn } from './enrich-jd.mjs';
 
 /** Where a posting sits relative to the profile's target level. */
 const OVER_LEVEL = new Set(['staff', 'principal', 'lead', 'head', 'chief']);
@@ -64,12 +83,13 @@ export const SIGNALS = [
   { id: 'gate', label: 'Hard stop', floor: 0, range: '0', reads: 'clearance, years, degree and comp floor read from the description' },
   { id: 'hats', label: 'Role hats demanded', floor: 0.15, range: '×0.15 – ×1.00', reads: 'how many of designer / developer / AI advocate the description demands' },
   { id: 'title', label: 'Title family', floor: 0.75, range: '×0.75 – ×1.00', reads: 'the title against target_roles in config/profile.yml' },
-  { id: 'framework', label: 'Named framework', floor: 1, range: '×1.10', reads: 'Foundry, Salesforce, ServiceNow or Power Platform named in the title or role summary' },
-  { id: 'clearance', label: 'Clearance advantage', floor: 1, range: '×1.12', reads: 'a Secret or Public Trust requirement — held, and it thins the pool' },
-  { id: 'degree', label: 'Degree demand', floor: 0.85, range: '×0.85', reads: "a master's required with no bachelor's branch" },
+  { id: 'framework', label: 'Named framework', floor: 1, range: '×1.10', reads: 'a framework listed in scoring.frameworks, named in the title or role summary' },
+  { id: 'clearance', label: 'Clearance advantage', floor: 1, range: '×1.12', reads: 'a clearance requirement at or under the one in scoring.clearance — held, and it thins the pool' },
+  { id: 'sector', label: 'Government / public sector', floor: 1, range: '×1.15', reads: 'a federal, defense, or state-and-local customer named in the description or title, for a profile with scoring.sector: gov' },
+  { id: 'degree', label: 'Degree demand', floor: 0.85, range: '×0.85', reads: 'a required degree one step above the one in scoring.degree' },
   { id: 'level', label: 'Seniority alignment', floor: 0.55, range: '×0.55 – ×1.00', reads: 'seniority and people-management words in the title vs the target level' },
   { id: 'fresh', label: 'Posting freshness', floor: 0.6, range: '×0.60 – ×1.00', reads: 'days since the board published it' },
-  { id: 'pool', label: 'Applicant-pool proxy', floor: 0.8, range: '×0.80 – ×1.00', reads: 'corridor segment as a proxy for how many people are applying' },
+  { id: 'pool', label: 'Applicant-pool proxy', floor: 0.8, range: '×0.80 – ×1.00', reads: 'the location segment (scoring.segments) as a proxy for how many people are applying' },
   { id: 'volume', label: 'Employer posting volume', floor: 0.95, range: '×0.95', reads: 'how many reqs this employer has open in the pipeline' },
   { id: 'repost', label: 'Repost pattern', floor: 0.92, range: '×0.92', reads: 'same company and title surfaced under more than one URL' },
   { id: 'family', label: 'Title family only', floor: 1, range: '×0.15 – ×0.62', reads: 'the title against target_roles, for a profile without scoring.hats — the description still feeds the gates and modifiers' },
@@ -138,15 +158,30 @@ function levelScore(title, targetLevel) {
  * effort on. It is about competition and logistics, never about the candidate.
  * Demoted to a multiplier in the 2026-08-23 rebuild — as an additive term it
  * was large enough to carry an unrecognised local title into the top band.
+ *
+ * Remote vs local only means something relative to a home metro, so without
+ * scoring.segments every pool multiplier is 1 and Remote is a display bucket.
+ * The location strings come from dozens of ATS vendors; bucketing is
+ * best-effort and the catch-all is displayed rather than hidden.
  */
-const POOL = {
-  'San Diego': { mult: 1, why: 'home metro — thin local pool, no relocation question' },
-  'Bay Area': { mult: 1, why: 'in corridor — deepest market for these families' },
-  'OC / LA': { mult: 0.96, why: 'drivable — regional pool' },
-  'Central Coast': { mult: 0.96, why: 'drivable — regional pool' },
-  Remote: { mult: 0.88, why: 'remote — national applicant pool' },
-  'Other / unknown': { mult: 0.8, why: 'out of corridor — relocation objection' },
-};
+const DEFAULT_SEGMENTS = [{ name: 'Remote', match: 'remote|telework|anywhere|distributed', pool: 1 }];
+const OTHER = 'Other / unknown';
+
+export function segmentsOf(profile = {}) {
+  const spec = Array.isArray(profile.scoring?.segments) ? profile.scoring.segments : DEFAULT_SEGMENTS;
+  const all = spec.filter(s => s?.name).map(s => ({
+    name: String(s.name),
+    re: s.match ? new RegExp(s.match, 'i') : null,
+    mult: Number.isFinite(Number(s.pool)) ? Number(s.pool) : 1,
+    why: s.why || String(s.name),
+  }));
+  const fallback = all.find(s => !s.re) || { name: OTHER, re: null, mult: 1, why: 'no home metro in the profile' };
+  return { list: all.filter(s => s.re), fallback };
+}
+
+export function segmentFor(location, segments = segmentsOf()) {
+  return segments.list.find(s => s.re.test(location || ''))?.name || segments.fallback.name;
+}
 
 function freshScore(age) {
   if (age === null || age === undefined) return { mult: 0.85, why: 'no posted date published' };
@@ -167,39 +202,59 @@ export function parseMoney(s) {
 }
 
 /**
- * The four hard stops, in the order they are reported. Facts absent from the
- * description never gate — an unread JD is missing evidence, not a reason to
- * bury a posting.
+ * Onsite geography gates only when the description says onsite AND the location
+ * resolves to somewhere outside the profile's region. A location string that
+ * names no state at all never gates: the same rule as an unreadable
+ * description, since a guess must not kill a row. California is the one preset;
+ * any other region is { name, places: '<regex>', states: [xx] } in the profile.
  */
-export const YOE_CEILING = 8;
+const CA_PLACES = '\\b(?:ca|calif|california)\\b|san diego|san francisco|bay area|silicon valley|san jose|sunnyvale|palo alto|mountain view|santa clara|santa monica|santa barbara|santa cruz|oakland|berkeley|emeryville|alameda|fremont|cupertino|san mateo|foster city|redwood city|menlo park|los angeles|el segundo|culver city|burbank|pasadena|long beach|anaheim|irvine|costa mesa|newport beach|carlsbad|san luis obispo|ventura|sacramento|pleasanton|san ramon|walnut creek|playa vista|west hollywood';
+const US_STATES = 'al ak az ar ca co ct de fl ga hi id il in ia ks ky la me md ma mi mn ms mo mt ne nv nh nj nm ny nc nd oh ok or pa ri sc sd tn tx ut vt va wa wv wi wy dc'.split(' ');
 
-/**
- * Relocation is acceptable anywhere in California, so geography gates only when
- * the description says onsite AND the location resolves to somewhere that is not
- * California. A location string that names no state at all never gates: the same
- * rule as an unreadable description, since a guess must not kill a row.
- */
-const CA_PLACES = /\b(?:ca|calif|california)\b|san diego|san francisco|bay area|silicon valley|san jose|sunnyvale|palo alto|mountain view|santa clara|santa monica|santa barbara|santa cruz|oakland|berkeley|emeryville|alameda|fremont|cupertino|san mateo|foster city|redwood city|menlo park|los angeles|el segundo|culver city|burbank|pasadena|long beach|anaheim|irvine|costa mesa|newport beach|carlsbad|san luis obispo|ventura|sacramento|pleasanton|san ramon|walnut creek|playa vista|west hollywood/i;
-const US_STATE = /,\s*(?:al|ak|az|ar|co|ct|de|fl|ga|hi|id|il|in|ia|ks|ky|la|me|md|ma|mi|mn|ms|mo|mt|ne|nv|nh|nj|nm|ny|nc|nd|oh|ok|or|pa|ri|sc|sd|tn|tx|ut|vt|va|wa|wv|wi|wy|dc)\b/i;
+export function regionOf(spec) {
+  if (!spec) return null;
+  const r = spec === 'california' ? { name: 'California', places: CA_PLACES, states: ['ca'] } : spec;
+  const home = (r.states || []).map(s => String(s).toLowerCase());
+  const others = US_STATES.filter(s => !home.includes(s));
+  return {
+    name: r.name || 'the home region',
+    places: r.places ? new RegExp(r.places, 'i') : null,
+    home: home.length ? new RegExp(`,\\s*(?:${home.join('|')})\\b`, 'i') : null,
+    other: new RegExp(`,\\s*(?:${others.join('|')})\\b`, 'i'),
+  };
+}
 
-export function inCalifornia(loc) {
+export function inRegion(loc, region) {
   const t = String(loc || '').trim();
   if (!t) return null;                     // nothing published — unknown, never gates
-  if (CA_PLACES.test(t)) return true;
-  if (US_STATE.test(t)) return false;      // named another state outright
+  if (region.places?.test(t) || region.home?.test(t)) return true;
+  if (region.other.test(t)) return false;  // named another state outright
   if (/united states|usa|remote|anywhere|multiple locations/i.test(t)) return null;
   return /,/.test(t) ? false : null;       // 'Austin, Texas' resolves; a bare word does not
 }
-function gateOf(f, walkAway, loc, title = '') {
+
+/** Held-level ladders. A requirement above the held rung is what costs. */
+const CLEARANCE_RANK = { none: 0, secret: 1, ts_sci: 2 };
+const DEGREE_RANK = { bachelor: 1, master: 2, phd: 3 };
+
+/**
+ * The hard stops, in the order they are reported. Facts absent from the
+ * description never gate — an unread JD is missing evidence, not a reason to
+ * bury a posting.
+ */
+function gateOf(f, walkAway, loc, title, rules) {
+  const tsSciStop = rules.clearance < CLEARANCE_RANK.ts_sci;
   // A title that names its own clearance is evidence, and the only evidence
   // there is when the description could not be read. 'Front-End Engineer,
   // TS/SCI with Poly' gates for the same reason the description would.
-  if (!f) return clearanceIn(title) === 'ts_sci' ? 'title requires TS/SCI, polygraph, or program access' : null;
-  if (f.clearance === 'ts_sci') return 'requires TS/SCI, polygraph, or program access';
-  if (f.yoe !== null && f.yoe > YOE_CEILING) return `${f.yoe}+ years required — above the ${YOE_CEILING}-year ceiling`;
-  if (f.degree === 'phd') return 'doctorate required with no bachelor’s or master’s branch';
-  if (f.remote === 'onsite' && inCalifornia(loc) === false)
-    return `onsite in ${String(loc).trim()} — outside California`;
+  if (!f) return tsSciStop && clearanceIn(title) === 'ts_sci' ? 'title requires TS/SCI, polygraph, or program access' : null;
+  if (tsSciStop && f.clearance === 'ts_sci') return 'requires TS/SCI, polygraph, or program access';
+  if (rules.yoeCeiling && f.yoe !== null && f.yoe > rules.yoeCeiling)
+    return `${f.yoe}+ years required — above the ${rules.yoeCeiling}-year ceiling`;
+  if (rules.degree && f.degree === 'phd' && rules.degree < DEGREE_RANK.phd)
+    return 'doctorate required with no bachelor’s or master’s branch';
+  if (rules.region && f.remote === 'onsite' && inRegion(loc, rules.region) === false)
+    return `onsite in ${String(loc).trim()} — outside ${rules.region.name}`;
   if (f.comp_high !== null && walkAway && f.comp_high < walkAway)
     return `advertised ceiling $${Math.round(f.comp_high / 1000)}K is under the $${Math.round(walkAway / 1000)}K walk-away`;
   return null;
@@ -224,7 +279,18 @@ export function buildScorer({ profile = {}, lanes = [], rows = [], history = [],
   // The three hats are one candidate's role model, not a property of the job.
   // Without an opt-in, a firmware profile read every description as "no hats"
   // and took the x0.15 floor on every row the enricher reached.
-  const useHats = profile.scoring?.hats === true;
+  const sc = profile.scoring || {};
+  const useHats = sc.hats === true;
+  const rules = {
+    clearance: CLEARANCE_RANK[sc.clearance] || 0,
+    degree: DEGREE_RANK[sc.degree] || 0,
+    yoeCeiling: Number(sc.yoe_ceiling) || 0,
+    region: regionOf(sc.onsite_within),
+  };
+  const strengths = new Set(Array.isArray(sc.frameworks) ? sc.frameworks : []);
+  const govBonus = sc.sector === 'gov';
+  const segments = segmentsOf(profile);
+  const poolOf = name => segments.list.find(s => s.name === name) || segments.fallback;
 
   // Title matching. Built from the profile's own words — the North Star titles
   // in target_roles.primary and the archetype names — so adding a target role
@@ -276,7 +342,7 @@ export function buildScorer({ profile = {}, lanes = [], rows = [], history = [],
     const family = titleFamily !== 'unmatched' ? titleFamily
       : row.lane !== 'core' ? 'lane' : 'unmatched';
 
-    const gate = gateOf(f, walkAway, row.l, row.t);
+    const gate = gateOf(f, walkAway, row.l, row.t || '', rules);
     if (gate) {
       signals.push({ id: 'gate', mult: 0, why: gate });
       return { score: 0, band: 'blocked', gate, signals, family };
@@ -313,22 +379,36 @@ export function buildScorer({ profile = {}, lanes = [], rows = [], history = [],
       // Hats are not read here: a hat needs two corroborating terms and a title
       // never carries two, so reading one would only ever return nothing.
       // A read description applies its own clearance below; don't count it twice.
-      if (!f && clearanceIn(row.t) === 'secret') {
+      if (!f && rules.clearance && clearanceIn(row.t) === 'secret') {
         add('clearance', 1.12, 'Secret named in the title — held, and it thins the applicant pool');
         fit *= 1.12;
+      }
+      // A title can also name its own customer — 'Front End Developer, Public
+      // Sector' — on the same evidence footing as the clearance.
+      if (!f && govBonus && sectorIn(row.t) === 'gov') {
+        add('sector', 1.15, 'government / public sector named in the title');
+        fit *= 1.15;
       }
     }
 
     if (f) {
-      if (f.frameworks.length) {
-        add('framework', 1.1, `${f.frameworks.join(', ')} — stated strength`);
+      const named = f.frameworks.filter(k => strengths.has(k));
+      if (named.length) {
+        add('framework', 1.1, `${named.join(', ')} — stated strength`);
         fit *= 1.1;
       }
-      if (f.clearance === 'secret') {
-        add('clearance', 1.12, 'Secret / Public Trust — held, and it thins the applicant pool');
+      const need = CLEARANCE_RANK[f.clearance] || 0;
+      if (need && rules.clearance >= need) {
+        add('clearance', 1.12, `${need === 1 ? 'Secret / Public Trust' : 'TS/SCI'} — held, and it thins the applicant pool`);
         fit *= 1.12;
       }
-      if (f.degree === 'master') {
+      // Stacks with the clearance: one says who buys the work, the other how
+      // thin the applicant pool is.
+      if (govBonus && f.sector === 'gov') {
+        add('sector', 1.15, 'government / public sector customer');
+        fit *= 1.15;
+      }
+      if (rules.degree && f.degree === 'master' && rules.degree < DEGREE_RANK.master) {
         add('degree', 0.85, 'master’s required — in reach, not held');
         fit *= 0.85;
       }
@@ -340,7 +420,7 @@ export function buildScorer({ profile = {}, lanes = [], rows = [], history = [],
 
     const fr = freshScore(row.age);
     add('fresh', fr.mult, fr.why);
-    const pool = POOL[row.seg] || POOL['Other / unknown'];
+    const pool = poolOf(row.seg);
     add('pool', pool.mult, pool.why);
     let timing = fr.mult * pool.mult;
 
@@ -368,6 +448,7 @@ function factsFor(facts, url) {
     yoe: num(r.yoe),
     degree: r.degree || 'open',
     clearance: r.clearance || 'none',
+    sector: r.sector || 'none',
     comp_low: num(r.comp_low),
     comp_high: num(r.comp_high),
     remote: r.remote || '',

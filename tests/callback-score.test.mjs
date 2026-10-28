@@ -1,7 +1,7 @@
 // Guards the match-score rewrite: every hard gate fires on its own, a zero
 // always carries a reason, and hat count is what moves a live score.
 import assert from 'node:assert/strict';
-import { buildScorer, inCalifornia } from '../callback-score.mjs';
+import { buildScorer, inRegion, regionOf } from '../callback-score.mjs';
 import { FACT_COLUMNS } from '../enrich-jd.mjs';
 
 const profile = {
@@ -10,7 +10,10 @@ const profile = {
     archetypes: [{ name: 'Front End / Web Engineer', level: 'Mid-Senior', fit: 'primary' }],
   },
   compensation: { minimum: '$130K' },
-  scoring: { hats: true },
+  scoring: {
+    hats: true, clearance: 'secret', degree: 'bachelor', yoe_ceiling: 8,
+    frameworks: ['foundry', 'salesforce'], onsite_within: 'california', sector: 'gov',
+  },
 };
 
 const URL = 'https://example.com/jobs/1';
@@ -20,7 +23,7 @@ const row = { u: URL, c: 'Example', t: 'Front End Engineer', lane: 'frontend', a
 // a column added to the writer breaks this test instead of the dashboard.
 function facts(overrides) {
   const base = {
-    url: URL, ok: '1', yoe: '', degree: 'none', clearance: 'none',
+    url: URL, ok: '1', yoe: '', degree: 'none', clearance: 'none', sector: 'none',
     comp_low: '', comp_high: '', remote: '', hats: '', frameworks: '', fetched: '2026-08-23',
   };
   return new Map([[URL, { ...base, ...overrides }]]);
@@ -52,7 +55,7 @@ assert.ok(at('San Jose, CA', 'onsite').score > 0, 'onsite in California is fine'
 assert.ok(at('Somewhere', 'onsite').score > 0, 'an unresolvable location never gates');
 assert.ok(at('Austin, TX', 'hybrid').score > 0, 'only onsite gates');
 assert.ok(at('Austin, TX', '').score > 0, 'an unread remote fact never gates');
-assert.equal(inCalifornia('Remote - US'), null);
+assert.equal(inRegion('Remote - US', regionOf('california')), null);
 
 // A zero never arrives without a reason, whatever the input.
 for (const f of [facts({}), facts({ hats: '' }), facts({ ok: '0' }), new Map()]) {
@@ -87,6 +90,20 @@ assert.ok(
 );
 assert.equal(score(facts({ hats: 'developer,designer,ai_advocate', clearance: 'ts_sci' })).score, 0);
 
+// Government customer: a bonus that stacks with the clearance (who buys the work
+// vs how thin the pool is) and never rescues a gate.
+assert.ok(score(facts({ hats: 'developer', sector: 'gov' })).score > score(facts({ hats: 'developer' })).score);
+assert.ok(
+  score(facts({ hats: 'developer', sector: 'gov', clearance: 'secret' })).score
+  > score(facts({ hats: 'developer', sector: 'gov' })).score,
+  'the sector and clearance bonuses stack',
+);
+assert.equal(score(facts({ hats: 'developer', sector: 'gov', clearance: 'ts_sci' })).score, 0);
+
+// Frameworks count only when the profile lists them.
+assert.ok(score(facts({ hats: 'developer', frameworks: 'foundry' })).score > score(facts({ hats: 'developer' })).score);
+assert.equal(score(facts({ hats: 'developer', frameworks: 'servicenow' })).score, score(facts({ hats: 'developer' })).score);
+
 // With no description, the title is the only evidence — so a clearance stated
 // in the title counts, upward and downward alike.
 const byTitle = t => buildScorer({ profile, lanes: [], rows: [row], history: [], facts: new Map() })({ ...row, t });
@@ -94,6 +111,8 @@ assert.ok(
   byTitle('UI/UX Developer / Active Secret').score > byTitle('UI/UX Developer').score,
   'a Secret named in the title should raise an unread row',
 );
+assert.ok(byTitle('Front End Developer, Public Sector').score > byTitle('Front End Developer').score,
+  'a public-sector title should raise an unread row');
 assert.equal(byTitle('Front End Engineer, TS/SCI with Polygraph').score, 0);
 assert.match(byTitle('Front End Engineer, TS/SCI with Polygraph').gate, /TS\/SCI/);
 
@@ -106,7 +125,36 @@ assert.ok(plain(facts({ hats: '' })).signals.some(s => s.id === 'family'));
 assert.ok(!plain(facts({ hats: '' })).signals.some(s => s.id === 'hats'));
 assert.equal(plain(facts({ clearance: 'ts_sci' })).score, 0, 'gates still read the description');
 
+// A profile elsewhere, holding more: Seattle-based, TS/SCI, a master's. The
+// California corridor, the 8-year ceiling and the TS/SCI stop are not its rules.
+const seattle = {
+  ...profile,
+  scoring: {
+    hats: true, clearance: 'ts_sci', degree: 'master', yoe_ceiling: 15,
+    onsite_within: { name: 'Washington', places: 'seattle|bellevue|redmond', states: ['wa'] },
+    segments: [{ name: 'Seattle', match: 'seattle|bellevue|redmond', pool: 1 }, { name: 'Elsewhere', pool: 0.8 }],
+  },
+};
+const wa = (f, l = 'Seattle, WA') => buildScorer({ profile: seattle, lanes: [], rows: [row], history: [], facts: f })({ ...row, l, seg: 'Seattle' });
+assert.ok(wa(facts({ hats: 'developer', remote: 'onsite' })).score > 0, 'onsite in its own region is fine');
+assert.ok(wa(facts({ hats: 'developer', remote: 'onsite' }), 'Tacoma, WA').score > 0, 'a home-state abbreviation resolves home');
+assert.match(wa(facts({ hats: 'developer', remote: 'onsite' }), 'San Jose, CA').gate, /outside Washington/);
+assert.ok(wa(facts({ hats: 'developer', clearance: 'ts_sci' })).score > 0, 'a held TS/SCI is not a stop');
+assert.ok(wa(facts({ hats: 'developer', clearance: 'ts_sci' })).signals.some(s => s.id === 'clearance'));
+assert.ok(wa(facts({ hats: 'developer', yoe: '12' })).score > 0, 'its own ceiling, not 8');
+assert.ok(!wa(facts({ hats: 'developer', degree: 'master' })).signals.some(s => s.id === 'degree'), 'a held master is no penalty');
+assert.equal(buildScorer({ profile: seattle, lanes: [], rows: [row], history: [], facts: new Map() })({ ...row, seg: 'Elsewhere' })
+  .signals.find(s => s.id === 'pool')?.mult, 0.8, 'the catch-all segment carries its own pool');
+
+// A profile that states nothing gets no candidate rules: only the TS/SCI stop.
+const bare = { target_roles: profile.target_roles };
+const nb = (f, l = 'Austin, TX') => buildScorer({ profile: bare, lanes: [], rows: [row], history: [], facts: f })({ ...row, l, seg: 'Other / unknown' });
+for (const o of [{ yoe: '20' }, { degree: 'phd' }, { remote: 'onsite' }]) assert.ok(nb(facts(o)).score > 0, JSON.stringify(o));
+assert.equal(nb(facts({ clearance: 'ts_sci' })).score, 0);
+assert.ok(!nb(facts({ clearance: 'secret', sector: 'gov', frameworks: 'foundry', degree: 'master' })).signals
+  .some(s => ['clearance', 'sector', 'framework', 'degree', 'pool'].includes(s.id)), 'no bonuses or penalties it never asked for');
+
 // enrich-jd writes what callback-score reads.
-assert.ok(FACT_COLUMNS.includes('hats') && FACT_COLUMNS.includes('yoe'));
+assert.ok(FACT_COLUMNS.includes('hats') && FACT_COLUMNS.includes('yoe') && FACT_COLUMNS.includes('sector'));
 
 console.log('callback-score tests OK');

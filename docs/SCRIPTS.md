@@ -977,11 +977,13 @@ Run it after a scan and before `build-artifact.mjs`; `scripts/alert.cmd` does, w
 
 The score is a product, not a sum: `100 × eligibility × fit × timing`.
 
-**Eligibility** is 0 or 1. A row is gated to 0 — and stays visible, naming the rule — when the posting requires TS/SCI, polygraph or program access; when the years floor on the best satisfiable degree branch exceeds the ceiling in `YOE_CEILING`; when a doctorate is required with no bachelor's or master's branch; when the advertised ceiling falls under `compensation.minimum` in `config/profile.yml`; or when the posting is onsite at a location that resolves outside California. A location that resolves to nothing never gates.
+Everything that describes the candidate rather than the posting comes from `scoring:` in `config/profile.yml`, and an absent key switches its rule off — see the commented block in `config/profile.example.yml`.
 
-**Fit** starts from how many of the three role hats the description demands — designer, developer, AI advocate — at 3 → 1.00, 2 → 0.72, 1 → 0.45, 0 → 0.15, then applies the title family, a named framework (×1.10), a Secret or Public Trust requirement (×1.12), a master's demand (×0.85), over-level and people-management titles (×0.55 – ×0.85).
+**Eligibility** is 0 or 1. A row is gated to 0 — and stays visible, naming the rule — when the posting requires TS/SCI, polygraph or program access and `scoring.clearance` is not `ts_sci`; when the years floor on the best satisfiable degree branch exceeds `scoring.yoe_ceiling`; when a doctorate is required with no bachelor's or master's branch and `scoring.degree` is below `phd`; when the advertised ceiling falls under `compensation.minimum`; or when the posting is onsite at a location that resolves outside `scoring.onsite_within`. A location that resolves to nothing never gates.
 
-**Timing** only ever discounts: freshness, corridor segment as an applicant-pool proxy, employer posting volume, and repost pattern. No amount of freshness or geography can manufacture a match the description does not support.
+**Fit** starts from how many of the three role hats the description demands — designer, developer, AI advocate — at 3 → 1.00, 2 → 0.72, 1 → 0.45, 0 → 0.15, then applies the title family, a framework listed in `scoring.frameworks` (×1.10), a clearance requirement at or under `scoring.clearance` (×1.12), a government or public-sector customer when `scoring.sector: gov` (×1.15), a master's demand above `scoring.degree` (×0.85), over-level and people-management titles (×0.55 – ×0.85).
+
+**Timing** only ever discounts: freshness, the `scoring.segments` location bucket as an applicant-pool proxy (every bucket ×1 without segments), employer posting volume, and repost pattern. No amount of freshness or geography can manufacture a match the description does not support.
 
 No protected characteristic is an input and none is inferable from one. Location is read as a proxy for how many people are competing for a requisition, and as the candidate's own stated relocation range, never as a statement about an applicant.
 

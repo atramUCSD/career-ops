@@ -50,7 +50,7 @@ const CONCURRENCY = 6;
 const STALL_MS = 180_000;
 
 export const FACT_COLUMNS = [
-  'url', 'ok', 'yoe', 'degree', 'clearance',
+  'url', 'ok', 'yoe', 'degree', 'clearance', 'sector',
   'comp_low', 'comp_high', 'remote', 'hats', 'frameworks', 'fetched', 'location',
 ];
 
@@ -160,6 +160,59 @@ export function clearanceIn(text) {
   return 'none';
 }
 
+/**
+ * Government and public-sector work: who the customer is. Extracted as a fact
+ * here; whether it is worth anything is the profile's call (scoring.sector).
+ *
+ * The hard part is boilerplate, the same problem clearanceIn has with the
+ * polygraph notice. Nearly every US posting carries an EEO block naming
+ * federal law and a benefits block naming federal holidays; neither says
+ * anything about who the customer is. Those go before a single pattern runs.
+ *
+ * What survives has to name the customer, the contract, or the compliance
+ * regime — a federal agency, a government program, DoD, FedRAMP, an IDIQ. A
+ * bare "government" or "federal" never qualifies on its own.
+ */
+const VERTICALS = [
+  'financial services', 'health\\s?care(?:\\s*&\\s*life sciences)?', 'life sciences',
+  'media and entertainment', 'retail', 'manufacturing', 'energy', 'telecommunications',
+  'construction', 'food\\s*&\\s*beverage', 'passenger transit', 'field services',
+  'k-12', 'higher education', 'transportation', 'logistics', 'professional services',
+].join('|');
+
+const GOV = new RegExp([
+  '\\bpublic sector\\b',
+  '\\bfederal (?:agency|agencies|government|civilian|customer|client|mission|contract|program|sector|space|workforce|it\\b)',
+  '\\bgovernment (?:agency|agencies|client|customer|contract|program|mission|sector|services|work)\\b',
+  '\\bstate and local government\\b|\\bsled\\b|\\bcivilian agency\\b',
+  '\\bdod\\b|\\bdow\\b|department of (?:defense|war)|\\bdefense contractor\\b',
+  '\\bintelligence community\\b|\\bnational security\\b',
+  'fedramp|fisma|\\bcmmc\\b|nist 800|gsa schedule|\\bidiq\\b|\\bgwac\\b|contract vehicle',
+].join('|'), 'i');
+
+export function sectorIn(text) {
+  const t = String(text || '')
+    .replace(/federal,?\s+state,?(?:\s+and)?\s+local\s+laws?/gi, ' ')
+    .replace(/state,?\s+federal,?(?:\s+and)?\s+local\s+laws?/gi, ' ')
+    .replace(/applicable federal|federal and state law|federal law|federal holidays?|federally protected|federal contractor|vevraa|government[- ]issued|government regulations/gi, ' ')
+    // The protected-veteran block names the Department of Defense while saying
+    // nothing about the customer — it is describing who authorized a medal.
+    .replace(/laws? administered by the department of defense|armed forces service medal|campaign badge/gi, ' ')
+    .replace(/federal government contractor|section 4212|vietnam era|office of federal contract compliance/gi, ' ')
+    // Site chrome, not the job: an industry picker in the page nav reads
+    // "Financial Services - Public Sector - Healthcare". A real posting names
+    // its sector in prose, never wedged between two other verticals.
+    .replace(new RegExp(`(?:${VERTICALS})\\s*[-|,·>/]*\\s*public sector`, 'gi'), ' ')
+    .replace(new RegExp(`public sector\\s*[-|,·>/]*\\s*(?:${VERTICALS})`, 'gi'), ' ')
+    // FedRAMP inside a laundry list of commercial regimes is a compliance
+    // checkbox, not a federal customer. Named on its own it still counts.
+    .replace(/fedramp[^.]{0,60}(?:gdpr|hipaa|pci[ -]dss|soc[ -]?2|iso\/iec)|(?:gdpr|hipaa|pci[ -]dss|soc[ -]?2|iso\/iec)[^.]{0,60}fedramp/gi, ' ');
+  // Deliberately no `.gov` / `.mil` domain rule. Every hit it produced across
+  // 458 read descriptions was a compliance link in the EEO footer — eeoc.gov,
+  // dol.gov, e-verify.gov — and never the employer's own customer.
+  return GOV.test(t) ? 'gov' : 'none';
+}
+
 const DEGREE_NEAR = /(bachelor|\bb\.?s\.?\b|\bb\.?a\.?\b|master|\bm\.?s\.?\b|\bm\.?eng\b|ph\.?d|doctorate)/i;
 
 function degreeClass(word = '') {
@@ -246,6 +299,7 @@ export function extractFacts(text, title = '') {
     yoe: yoeFloor(branches),
     degree: degreeIn(text, branches),
     clearance: clearanceIn(text),
+    sector: sectorIn(text),
     comp_low: comp.low,
     comp_high: comp.high,
     remote: remoteIn(text),
@@ -529,6 +583,7 @@ async function main() {
       yoe: f.yoe ?? '',
       degree: f.degree ?? '',
       clearance: f.clearance ?? '',
+      sector: f.sector ?? '',
       comp_low: f.comp_low ?? '',
       comp_high: f.comp_high ?? '',
       remote: f.remote ?? '',
@@ -614,6 +669,25 @@ function selfTest() {
   assert(clearanceIn(ngc) === 'ts_sci', 'TS/SCI beats the bare Secret mention');
   assert(clearanceIn('Active Secret clearance required') === 'secret', 'plain Secret');
   assert(clearanceIn('No clearance needed') === 'none', 'no clearance');
+
+  // The two boilerplate blocks that would otherwise mark every US posting as
+  // government work, and the phrasings that genuinely are.
+  assert(sectorIn('We consider all qualified applicants in accordance with federal, state, and local laws. Employees receive 11 federal holidays.') === 'none',
+    'EEO and holiday boilerplate is not government work');
+  assert(sectorIn('Support a government agency modernizing its case-management system.') === 'gov', 'government agency customer');
+  assert(sectorIn('Deliver public sector solutions across state and local government.') === 'gov', 'public sector');
+  assert(sectorIn('Work with DoD program offices under an IDIQ contract vehicle.') === 'gov', 'DoD and contract vehicle');
+  assert(sectorIn('Take the platform through FedRAMP authorization.') === 'gov', 'FedRAMP compliance regime');
+  assert(sectorIn('Build a React design system for our e-commerce checkout.') === 'none', 'a commercial posting stays commercial');
+  // The false positives a first pass over 458 real descriptions produced.
+  assert(sectorIn('Microsoft is a Federal Government contractor subject to Section 4212 of the Vietnam Era Veterans Act.') === 'none',
+    'the protected-veteran block is not government work');
+  assert(sectorIn('a campaign badge authorized under the laws administered by the Department of Defense') === 'none',
+    'the campaign-badge notice is not a DoD customer');
+  assert(sectorIn('Industries - Financial Services - Public Sector - Healthcare & Life Sciences - Retail') === 'none',
+    'an industry picker in the page nav is chrome, not the job');
+  assert(sectorIn('Know Your Rights: see https://www.eeoc.gov/ and https://www.dol.gov/ofccp') === 'none',
+    'an EEO compliance link is not a government customer');
 
   const ux = 'Own user research and wireframes, build the design system in Figma, ship React and TypeScript components, and drive AI adoption with LLM demos to customers.';
   const hats = hatsIn(ux);

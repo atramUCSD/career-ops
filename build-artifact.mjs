@@ -28,7 +28,7 @@ import { loadYaml } from './lib/yaml-document.mjs';
 import { parsePendingRows, classifyRows } from './swarm.mjs';
 import { loadLanes, LANES_PATH } from './lanes.mjs';
 import { matchedTitleKeywords, buildTitleFilter } from './scan.mjs';
-import { buildScorer, calibrate, SIGNALS, BANDS } from './callback-score.mjs';
+import { buildScorer, calibrate, segmentsOf, segmentFor, SIGNALS, BANDS } from './callback-score.mjs';
 import { profileDir } from './profiles.mjs';
 import { buildChannelTrust } from './channel-trust.mjs';
 import { resolveColumns, parseTrackerRow } from './tracker-parse.mjs';
@@ -46,22 +46,6 @@ import { parseReportGaps, aggregateGaps, knownSkillsText, extractSkills } from '
 import { analyze as analyzePatterns } from './analyze-patterns.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
-
-// Corridor segments. The location strings come from 83 different ATS vendors,
-// so this is a best-effort bucketing — the "other" bucket is displayed rather
-// than hidden, because on live data it is the second largest one.
-const SEGMENTS = [
-  ['San Diego', /san diego|la jolla|carlsbad|escondido|oceanside/i],
-  ['OC / LA', /irvine|costa mesa|newport|anaheim|los angeles|santa monica|el segundo|culver|pasadena|burbank|long beach|torrance|redlands/i],
-  ['Central Coast', /ventura|thousand oaks|santa barbara|goleta|san luis obispo|monterey|santa cruz/i],
-  ['Bay Area', /san francisco|san jose|bay area|palo alto|mountain view|sunnyvale|santa clara|menlo|cupertino|redwood city|san mateo|foster city|fremont|milpitas|oakland|berkeley|emeryville/i],
-  ['Remote', /remote|telework|anywhere|distributed/i],
-];
-
-export function segmentFor(location) {
-  for (const [name, re] of SEGMENTS) if (re.test(location || '')) return name;
-  return 'Other / unknown';
-}
 
 const GOV_TEXT = /\b(public sector|federal|government|govt|state of|county of|city of|department of|dod|defen[cs]e|national security|intelligence community|mission systems?|cleared|clearance|ts\/sci|top secret|public trust|military|army|navy|air force|space force|marine corps|nasa)\b/i;
 // ponytail: hand list of defense and federal-services employers; extend when a
@@ -422,6 +406,10 @@ export function buildModel({ root = ROOT, now = new Date(), profileRoot = null, 
   const today = new Date(now.toISOString().slice(0, 10) + 'T00:00:00Z');
 
   const jdFacts = loadJdFacts(root);
+  const profile = existsSync(getProfilePath(intentRoot))
+    ? loadYaml(readFileSync(getProfilePath(intentRoot), 'utf-8')) || {}
+    : {};
+  const segments = segmentsOf(profile);
   let rows = parsed.map(r => {
     const h = history.byUrl.get(r.url);
     // Some boards publish the location only on the rendered page, so the
@@ -436,7 +424,7 @@ export function buildModel({ root = ROOT, now = new Date(), profileRoot = null, 
       c: r.company || '—',
       t: r.title || '—',
       l: location,
-      seg: segmentFor(location),
+      seg: segmentFor(location, segments),
       p: posted,
       age,
       band: bandFor(age, bands),
@@ -462,9 +450,6 @@ export function buildModel({ root = ROOT, now = new Date(), profileRoot = null, 
   // Response-likelihood prior. Runs after rows exist because two of its
   // signals — how many reqs a company has open, how often a company+title pair
   // has been seen — are properties of the pipeline, not of a single row.
-  const profile = existsSync(getProfilePath(intentRoot))
-    ? loadYaml(readFileSync(getProfilePath(intentRoot), 'utf-8')) || {}
-    : {};
   const scoreRow = buildScorer({ profile, lanes, rows, history: history.added, facts: jdFacts });
   for (const r of rows) {
     const s = scoreRow(r);
@@ -480,7 +465,7 @@ export function buildModel({ root = ROOT, now = new Date(), profileRoot = null, 
     if (gov) r.gov = gov;
     if (fx && fx.ok === '1') {
       r.f = {};
-      for (const k of ['yoe', 'degree', 'clearance', 'comp_low', 'comp_high', 'remote', 'hats', 'frameworks']) {
+      for (const k of ['yoe', 'degree', 'clearance', 'sector', 'comp_low', 'comp_high', 'remote', 'hats', 'frameworks']) {
         if (fx[k]) r.f[k] = fx[k];
       }
     }
@@ -558,7 +543,7 @@ export function buildModel({ root = ROOT, now = new Date(), profileRoot = null, 
     bands,
     lanes: laneMeta,
     rows,
-    segments: [...SEGMENTS.map(s => s[0]), 'Other / unknown'],
+    segments: [...segments.list.map(s => s.name), segments.fallback.name],
     yields: keywordYield(positives, history.added, rows),
     dead,
     expired: loadExpired(root),
@@ -1227,10 +1212,10 @@ ul.chartnote{padding-left:18px}
   <div id="scoringbody"></div>
   <footer>
     <p><b>What the match number is.</b> <span class="mono">100 × eligibility × fit × timing</span>, out of 100.
-    <b>Eligibility</b> is 0 or 1 — a TS/SCI or polygraph requirement, a years-of-experience floor above 8, a
-    required doctorate, or an advertised ceiling under the walk-away makes the row a 0. <b>Fit</b> is how many
+    <b>Eligibility</b> is 0 or 1 — a TS/SCI or polygraph requirement, and — where the profile sets them — a years floor
+    above its ceiling, a required doctorate, onsite outside its region, or an advertised ceiling under the walk-away makes the row a 0. <b>Fit</b> is how many
     of the three hats the description demands — designer, developer, AI advocate — modulated by named
-    frameworks, clearance advantage, degree demand, seniority and title family. <b>Timing</b> only discounts:
+    frameworks, clearance advantage, government / public-sector customer, degree demand, seniority and title family. <b>Timing</b> only discounts:
     freshness, applicant pool, employer volume, repost pattern. Hover any score to see every multiplier.</p>
     <p><b>A 0 is not a hidden row.</b> Gated postings stay in place, stay linked, and name the rule that killed
     them, so a rule that starts eating good reqs is visible on the page that applied it. Fit in the A–G sense is
@@ -1487,7 +1472,7 @@ toggler('cbbands','cbband','data-cbband');
 // One drawer, reused. The row link still opens the posting; only the Match
 // cell opens this, so a click on the role never gets hijacked.
 const FACTLAB = {
-  yoe: 'Years demanded', degree: 'Degree', clearance: 'Clearance',
+  yoe: 'Years demanded', degree: 'Degree', clearance: 'Clearance', sector: 'Sector',
   comp_low: 'Comp floor', comp_high: 'Comp ceiling', remote: 'Onsite policy',
   hats: 'Hats demanded', frameworks: 'Frameworks named',
 };

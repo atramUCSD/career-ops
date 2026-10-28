@@ -8,17 +8,23 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { pass, fail } from './helpers.mjs';
-import { buildModel, renderHtml, segmentFor, publicSectorReason, freshnessBands, bandFor, keywordYield, autoApplyState } from '../build-artifact.mjs';
+import { buildModel, renderHtml, publicSectorReason, freshnessBands, bandFor, keywordYield, autoApplyState } from '../build-artifact.mjs';
+import { segmentFor, segmentsOf } from '../callback-score.mjs';
 
 console.log('\nartifact — generated pipeline page');
 
 // ── pure helpers ─────────────────────────────────────────────────────────────
 
-segmentFor('San Diego, CA') === 'San Diego' && segmentFor('Remote, US') === 'Remote'
-  ? pass('locations bucket into corridor segments')
+// Segments are the profile's; without any, Remote is the only named bucket.
+const corridor = segmentsOf({ scoring: { segments: [
+  { name: 'San Diego', match: 'san diego|la jolla', pool: 1 },
+  { name: 'Remote', match: 'remote', pool: 0.88 },
+] } });
+segmentFor('San Diego, CA', corridor) === 'San Diego' && segmentFor('Remote, US', corridor) === 'Remote'
+  ? pass('locations bucket into the profile segments')
   : fail('segment bucketing is wrong');
 
-segmentFor('Austin, TX') === 'Other / unknown'
+segmentFor('Austin, TX', corridor) === 'Other / unknown' && segmentFor('San Diego, CA') === 'Other / unknown'
   ? pass('an off-corridor location gets a visible bucket, not a silent drop')
   : fail('an off-corridor location was not bucketed');
 

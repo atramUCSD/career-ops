@@ -172,11 +172,22 @@ language:
 # See the tier -> model mapping table in modes/_shared.md.
 spend_tier: standard
 
-# (Optional) Match score: rank read descriptions by how many of the designer /
-# developer / AI-advocate hats they demand (callback-score.mjs). Only useful if
-# that is your role model; without it the title family decides the fit.
+# (Optional) Match score (callback-score.mjs). Every key is opt-in; an absent
+# key switches its rule off. hats ranks read descriptions by how many of the
+# designer / developer / AI-advocate hats they demand — only useful if that is
+# your role model; without it the title family decides the fit.
 # scoring:
 #   hats: true
+#   clearance: secret            # held (secret | ts_sci): reqs at or under it are a bonus; TS/SCI gates unless held
+#   degree: bachelor             # highest held (bachelor | master | phd): one above costs x0.85, a doctorate gates
+#   yoe_ceiling: 8               # a years floor above this gates
+#   frameworks: [salesforce]     # foundry | salesforce | servicenow | power_platform, x1.10 when the role is one
+#   sector: gov                  # x1.15 for a government / public-sector customer
+#   onsite_within: california    # or { name: Washington, places: "seattle|bellevue", states: [wa] }
+#   segments:                    # location buckets, first match wins; an entry with no match is the catch-all
+#     - { name: San Diego, match: "san diego|la jolla", pool: 1, why: "home metro" }
+#     - { name: Remote, match: "remote|anywhere", pool: 0.88, why: "national applicant pool" }
+#     - { name: Other / unknown, pool: 0.8, why: "relocation objection" }
 
 # (Optional) Paper size for every generated PDF: "letter", "a4" or "auto".
 # One setting for the CV, the cover letter and the HTML body width, so they
