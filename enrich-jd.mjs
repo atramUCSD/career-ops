@@ -33,6 +33,7 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { parsePendingRows } from './swarm.mjs';
 import { resolveAtsApi, greenhouseEmbed } from './liveness-api.mjs';
+import { LIVENESS_CONTEXT_OPTIONS } from './liveness-browser.mjs';
 import { DEFAULT_USER_AGENT } from './user-agent.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
 import { flagValue, hasFlag, safeIntFlag, validateFlags } from './lib/cli-flags.mjs';
@@ -392,7 +393,7 @@ export async function browserPass(urls, onEach = () => {}) {
       for (let url = queue.shift(), n = 0; url; url = queue.shift(), n++) {
         if (n % PAGES_PER_CONTEXT === 0) {
           await ctx?.close().catch(() => {});
-          ctx = await browser.newContext({ userAgent: DEFAULT_USER_AGENT });
+          ctx = await browser.newContext(LIVENESS_CONTEXT_OPTIONS);
         }
         onEach(url, await readPage(ctx, url));
       }
