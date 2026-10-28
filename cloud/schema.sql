@@ -1,10 +1,20 @@
 -- ADR-001 store for one profile (the database_name in wrangler.toml). The PC is the only writer
--- of copy_rows and sync_meta; the hosted page only INSERTs into inbox.
+-- of snapshot and sync_meta; the hosted page only INSERTs into inbox.
 -- Apply: npx wrangler d1 execute <database_name> --remote --file cloud/schema.sql
 
--- Read copy pushed by the sync runner. The runner hashes each row and
--- upserts only changed ones, so `hash` is what it compares against.
--- id is "<kind>:<key>", e.g. "app:42", "posting:<url sha1>", "meta:states".
+-- The read copy as one document: the PC's gzipped JSON, base64 text. One row means a
+-- push is atomic and a phone fetch reads one row, not one per card. Text, not BLOB,
+-- because D1 hands a BLOB back to the Function as an array of numbers.
+-- version is a hash of the JSON and doubles as the page's ETag.
+CREATE TABLE IF NOT EXISTS snapshot (
+  id         INTEGER PRIMARY KEY CHECK (id = 1),
+  version    TEXT NOT NULL,
+  body       TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+-- Superseded by snapshot (2026-10-28). Kept so a rollback to the row-based Functions
+-- still finds its table; drop it once the snapshot has run for a while.
 CREATE TABLE IF NOT EXISTS copy_rows (
   id         TEXT PRIMARY KEY,
   kind       TEXT NOT NULL,
@@ -39,8 +49,8 @@ CREATE TABLE IF NOT EXISTS inbox (
 );
 CREATE INDEX IF NOT EXISTS inbox_status_seq ON inbox (status, seq);
 
--- Small key/value state: last_push_at, last_pull_at, applied_cursor,
--- copy_version. The page reads last_push_at for "PC last synced".
+-- Small key/value state. pushed_at moves on every runner push and is the page's
+-- "PC last pushed" clock.
 CREATE TABLE IF NOT EXISTS sync_meta (
   key        TEXT PRIMARY KEY,
   value      TEXT NOT NULL,

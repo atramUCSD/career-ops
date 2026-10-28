@@ -1,5 +1,5 @@
 // ADR-001 steps 2 and 5: apply the page's queued actions, then rebuild the read copy
-// from this profile's files and push only the rows whose hash changed. The files stay
+// from this profile's files and push it as one snapshot when its hash changed. The files stay
 // canonical and this PC stays their only writer; the copy in D1 is derived, and the
 // server never edits it.
 //
@@ -19,6 +19,7 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
+import { gzipSync } from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getCareerOpsRoot, resolveTrackerPath } from '../path-resolver.mjs';
@@ -44,8 +45,10 @@ export function siteUrl(env = process.env, tomlFile = path.join(REPO, 'cloud/wra
   if (m) return m[1];
   throw new Error('No site URL: set CAREER_OPS_CLOUD_URL or SITE_URL in cloud/wrangler.toml (see wrangler.example.toml)');
 }
-// D1 caps a bound string at 2 MB, and each POST binds its whole rowset as one string.
-const CHUNK_BYTES = 1_000_000;
+// D1 caps one value at 2 MB, and the snapshot is one value. At ~0.6 MB gzipped for
+// 8k postings that is ~26k rows of headroom.
+// ponytail: one D1 value; move the snapshot to R2 (no size cap) before it gets here.
+const MAX_SNAPSHOT_CHARS = 1_900_000;
 
 const readIf = (file) => {
   try {
@@ -118,33 +121,13 @@ export function buildCopy(root) {
   // The page offers the states the PC accepts, read from states.yml, never hard-coded.
   rows.push({ id: 'states', kind: 'meta', data: loadCanonicalStates(STATES_FILE) });
   rows.push({ id: 'columns', kind: 'meta', data: BOARD_COLUMNS });
-  return rows.map(({ id, kind, data }) => {
-    const json = JSON.stringify(data);
-    return { id, kind, hash: createHash('sha256').update(json).digest('hex'), json };
-  });
+  return rows;
 }
 
-export function diffRows(local, remoteHashes) {
-  const ids = new Set(local.map((r) => r.id));
-  return {
-    upserts: local.filter((r) => remoteHashes[r.id] !== r.hash),
-    deletes: Object.keys(remoteHashes).filter((id) => !ids.has(id)),
-  };
-}
-
-export function chunkRows(rows, limit = CHUNK_BYTES) {
-  const chunks = [[]];
-  let size = 0;
-  for (const row of rows) {
-    const n = row.json.length + row.id.length + 100;
-    if (size + n > limit && chunks.at(-1).length) {
-      chunks.push([]);
-      size = 0;
-    }
-    chunks.at(-1).push(row);
-    size += n;
-  }
-  return chunks;
+/** The copy as the page receives it: a version (hash of the JSON) and the gzipped JSON as base64. */
+export function snapshot(rows) {
+  const json = JSON.stringify({ rows });
+  return { version: createHash('sha256').update(json).digest('hex').slice(0, 32), body: gzipSync(json).toString('base64') };
 }
 
 // ── inbox (step 5) ────────────────────────────────────────────────
@@ -246,15 +229,16 @@ export async function drainInbox(root, pending) {
   return results;
 }
 
-async function api(route, method, body) {
+async function api(route, method, body, headers = {}) {
   const res = await fetch(`${siteUrl()}${route}`, {
     method,
     headers: {
       'CF-Access-Client-Id': process.env.CF_ACCESS_CLIENT_ID,
       'CF-Access-Client-Secret': process.env.CF_ACCESS_CLIENT_SECRET,
-      'content-type': 'application/json',
+      'content-type': typeof body === 'string' ? 'text/plain' : 'application/json',
+      ...headers,
     },
-    body: body && JSON.stringify(body),
+    body: typeof body === 'string' ? body : body && JSON.stringify(body),
     // A rejected token gets a 302 to the Access login, which fetch would follow to a 200 HTML page.
     redirect: 'manual',
   });
@@ -269,17 +253,21 @@ async function once() {
   const root = getCareerOpsRoot();
   const results = await drainInbox(root, await api('/api/inbox', 'GET'));
 
-  const local = buildCopy(root);
-  const { upserts, deletes } = diffRows(local, await api('/api/sync', 'GET'));
-  // Always POST, even with nothing changed: the pushed_at bump tells the page the PC is current.
-  const chunks = chunkRows(upserts);
-  for (const [i, rows] of chunks.entries()) {
-    await api('/api/sync', 'POST', { upserts: rows, deletes: i === chunks.length - 1 ? deletes : [] });
+  const rows = buildCopy(root);
+  const snap = snapshot(rows);
+  const push = (body) => api('/api/sync', 'POST', body, { 'x-copy-version': snap.version });
+  // Always POST, even with nothing changed: the pushed_at bump tells the page the PC is
+  // current. The snapshot itself goes up only when the server holds another version.
+  const sent = (await push(null)).version !== snap.version;
+  if (sent) {
+    if (snap.body.length > MAX_SNAPSHOT_CHARS) throw new Error(`snapshot is ${snap.body.length} chars, over D1's 2 MB value cap; move it to R2`);
+    const { version } = await push(snap.body);
+    if (version !== snap.version) throw new Error(`push stored version ${version}, expected ${snap.version}`);
   }
   // Acknowledge after the push, so a settled move never shows on the page before
   // the copy that has the card in its new lane.
   const { settled = 0 } = results.length ? await api('/api/inbox', 'PUT', { results }) : {};
-  console.log(`inbox: ${results.length} settled (${settled} new); copy: ${local.length} rows; pushed ${upserts.length} changed, ${deletes.length} deleted`);
+  console.log(`inbox: ${results.length} settled (${settled} new); copy: ${rows.length} rows, ${sent ? `pushed ${snap.body.length} chars` : 'unchanged'}`);
 }
 
 const USAGE = 'usage: node --env-file=.env cloud/sync-runner.mjs --once';

@@ -10,6 +10,7 @@
     :root { --bg: #141413; --fg: #ebeae5; --muted: #9b9a93; --card: #1f1f1d; --line: #30302c; --accent: #82c4a2; --warn: #f0a07f; --wait: #e2c26b; }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; } /* #board's display: grid would beat the attribute */
   body { margin: 0; font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--fg); }
   header { padding: 16px; display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; }
   h1 { margin: 0; font-size: 18px; }
@@ -40,11 +41,15 @@
   #status a { color: var(--accent); }
   #postings { padding: 0 16px 40px; max-width: 760px; }
   #postings input { width: 100%; font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; }
+  #tabs { display: flex; gap: 4px; padding: 0 16px 12px; }
+  #tabs a { padding: 6px 12px; border-radius: 6px; color: var(--muted); text-decoration: none; font-size: 14px; }
+  #tabs a[aria-current] { background: var(--card); color: var(--fg); border: 1px solid var(--line); }
   .post { display: block; padding: 8px 0; border-bottom: 1px solid var(--line); color: inherit; text-decoration: none; }
 </style>
 </head>
 <body>
 <header><h1>career-ops board</h1><span id="status">Loading…</span></header>
+<nav id="tabs" hidden><a href="#">Board</a><a href="#postings" id="tab-postings">Postings</a></nav>
 <main id="board"></main>
 <section id="postings" hidden>
   <h2 id="postings-h"></h2>
@@ -172,7 +177,7 @@
     }
     if (i) actions = await i.json();
     if (m) {
-      const meta = await m.json(); // newer than the copy's own pushedAt after any 304
+      const meta = await m.json(); // pushedAt rides in a header, so only /meta keeps it
       copy.pushedAt = meta.pushedAt ?? copy.pushedAt;
       checkedAt = meta.checkedAt;
     }
@@ -234,7 +239,8 @@
   const daysSince = (day) => Math.floor((Date.now() - Date.parse(`${day}T00:00:00Z`)) / 86_400_000);
   function drawPostings() {
     const all = copy.rows.filter((r) => r.kind === 'posting').map((r) => r.data);
-    document.getElementById('postings').hidden = !all.length;
+    document.getElementById('tab-postings').textContent = `Postings ${all.length}`;
+    route();
     const q = document.getElementById('q').value.trim().toLowerCase();
     const hits = (q ? all.filter((p) => `${p.c} ${p.t} ${p.l}`.toLowerCase().includes(q)) : all).sort((a, b) => (b.cb ?? 0) - (a.cb ?? 0));
     document.getElementById('postings-h').textContent = q ? `Pending postings ${hits.length} of ${all.length}` : `Pending postings ${all.length}`;
@@ -246,6 +252,21 @@
     }), hits.length > POSTINGS_SHOWN ? el('p', { class: 'empty' }, `${hits.length - POSTINGS_SHOWN} more; filter to narrow`) : '');
   }
   document.getElementById('q').oninput = drawPostings;
+
+  // Two views on the hash, so the back button and a home-screen bookmark both work.
+  // The tabs appear only once the copy carries postings.
+  function route() {
+    const any = copy.rows.some((r) => r.kind === 'posting');
+    const postings = any && location.hash === '#postings';
+    document.getElementById('tabs').hidden = !any;
+    document.getElementById('board').hidden = postings;
+    document.getElementById('postings').hidden = !postings;
+    for (const a of document.querySelectorAll('#tabs a')) {
+      if ((a.hash === '#postings') === postings) a.setAttribute('aria-current', 'page');
+      else a.removeAttribute('aria-current');
+    }
+  }
+  addEventListener('hashchange', route);
 
   // redirect: 'manual' because a lapsed Access session answers with a 302 to its login
   // page; followed, that is a cross-origin HTML page and the fetch fails as if offline.
@@ -264,19 +285,21 @@
       mode = 'signed-out';
       return draw();
     }
+    // An exhausted D1 quota or a Pages fallback can answer 200 with an HTML page.
+    const json = (r) => (r.headers.get('content-type') ?? '').includes('application/json');
     if (c.status === 304) {
       copy.pushedAt = c.headers.get('x-pushed-at') || copy.pushedAt;
-    } else if (c.ok) {
+    } else if (c.ok && json(c)) {
       const text = await c.text();
-      copy = JSON.parse(text);
+      copy = { ...JSON.parse(text), pushedAt: c.headers.get('x-pushed-at') || null };
       etag = c.headers.get('etag');
       copyRev++;
       await snapshot('/api/copy', text, etag ? { etag } : {});
     } else {
-      [mode, modeDetail] = ['error', `HTTP ${c.status}`];
+      [mode, modeDetail] = ['error', c.ok ? 'not JSON' : `HTTP ${c.status}`];
       return draw();
     }
-    if (i.ok) {
+    if (i.ok && json(i)) {
       const text = await i.text();
       actions = JSON.parse(text);
       await snapshot('/api/inbox', text);

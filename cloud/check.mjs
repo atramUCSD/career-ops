@@ -1,14 +1,15 @@
 // Self-check for the cloud/ logic that fails silently: the Access JWT check and its
 // local-dev bypass (a bug there either locks everyone out or lets everyone in), the
-// push diff, and the inbox (validation, stale handling, replay from the log).
+// snapshot push, and the inbox (validation, stale handling, replay from the log).
 //   node cloud/check.mjs
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { gunzipSync } from 'node:zlib';
 import { identify, localDevIdentity, verifyAccessJwt } from './lib/access.mjs';
 import { parseAction } from './lib/inbox.mjs';
-import { buildCopy, canonicalState, chunkRows, diffRows, drainInbox, moveOutcome, postingRows, siteUrl } from './sync-runner.mjs';
+import { buildCopy, canonicalState, drainInbox, moveOutcome, postingRows, siteUrl, snapshot } from './sync-runner.mjs';
 import { loadCanonicalStates } from '../tracker-utils.mjs';
 
 const TEAM = 'https://team.cloudflareaccess.com';
@@ -48,13 +49,6 @@ assert.deepEqual(identify({ common_name: 'abc.access' }, cfg), { runner: true })
 assert.equal(identify({ common_name: 'other.access' }, cfg), null);
 assert.equal(identify({ common_name: '' }, { people: '', runnerId: '' }), null, 'unset config matches nobody');
 assert.equal(identify({ email: 'me@example.com' }, {}), null);
-
-const row = (id, hash, json = '{}') => ({ id, kind: 'card', hash, json });
-const d = diffRows([row('a', '1'), row('b', '2'), row('c', '3')], { a: '1', b: 'old', z: '9' });
-assert.deepEqual(d.upserts.map((r) => r.id), ['b', 'c']);
-assert.deepEqual(d.deletes, ['z']);
-assert.deepEqual(chunkRows([row('a', '', 'x'.repeat(600)), row('b', '', 'x'.repeat(600))], 1000).map((c) => c.length), [1, 1]);
-assert.deepEqual(chunkRows([], 1000), [[]], 'an empty push still posts once');
 
 // The dev bypass needs both the variable and a loopback host; pages.dev never qualifies.
 const req = (url, headers = {}) => new Request(url, { headers });
@@ -106,16 +100,18 @@ try {
   assert.equal(lines.length, 1);
   assert.equal(JSON.parse(lines[0]).text, 'called back');
 
-  // The copy: one card per tracker row plus the two meta rows, and a hash that only
-  // moves when the card does, so an idle run pushes nothing.
+  // The copy: one card per tracker row plus the two meta rows, and a snapshot version
+  // that only moves when the data does, so an idle run uploads nothing.
   const copy = buildCopy(root);
-  const pushed = Object.fromEntries(copy.map((r) => [r.id, r.hash]));
   assert.deepEqual(copy.map((r) => r.id), ['card:1', 'states', 'columns']);
-  assert.equal(JSON.parse(copy[0].json).app.status, 'Applied');
-  assert.deepEqual(diffRows(buildCopy(root), pushed).upserts, []);
+  assert.equal(copy[0].data.app.status, 'Applied');
+  const snap = snapshot(copy);
+  assert.match(snap.version, /^[0-9a-f]{32}$/, 'sync.js accepts 16-64 hex');
+  assert.equal(snapshot(buildCopy(root)).version, snap.version);
+  assert.deepEqual(JSON.parse(gunzipSync(Buffer.from(snap.body, 'base64'))), { rows: copy }, 'the page gets {rows}');
   const tracker = path.join(root, 'data/applications.md');
   fs.writeFileSync(tracker, fs.readFileSync(tracker, 'utf8').replace('| Applied |', '| Interview |'));
-  assert.deepEqual(diffRows(buildCopy(root), pushed).upserts.map((r) => r.id), ['card:1']);
+  assert.notEqual(snapshot(buildCopy(root)).version, snap.version);
 
   // Postings: pending rows inside the window, one per URL, no age field to churn daily.
   const day = (n) => new Date(Date.UTC(2026, 9, 28) - n * 864e5).toISOString().slice(0, 10);
