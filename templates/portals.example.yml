@@ -1839,6 +1839,11 @@ search_queries:
 #     queries:            # optional, preferred over keywords; Keyword has no OR
 #       - { series: "2210", keyword: "web" }
 #       - { title: "UX" }
+#     # Federal titles carry the OPM parenthetical, not the role: a 2210 hit reads
+#     # "IT Specialist (APPSW)". Add "APPSW", "Application Software" and
+#     # "Applications Software" to title_filter.positive (and to a lane's
+#     # title_keywords, whose jd_gate then checks the description), or the
+#     # title filter drops every result.
 #     locationName: "Washington, DC"  # optional, "City, State"
 #     radius: 50          # optional miles around locationName
 #     days: 30            # optional DatePosted window (max 60)
