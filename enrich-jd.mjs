@@ -27,7 +27,7 @@
  *   node enrich-jd.mjs --skip linkedin.com   leave these hosts unread (comma list)
  *   node enrich-jd.mjs --self-test     extraction checks, no network
  */
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { launchHeadless } from './lib/chromium-launch-error.mjs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -38,6 +38,7 @@ import { DEFAULT_USER_AGENT } from './user-agent.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
 import { flagValue, hasFlag, safeIntFlag, validateFlags } from './lib/cli-flags.mjs';
 import { writeFileAtomic } from './tracker-utils.mjs';
+import { localToday } from './lib/local-today.mjs';
 
 import { getCareerOpsRoot } from './path-resolver.mjs';
 const DATA_ROOT = getCareerOpsRoot();
@@ -495,7 +496,7 @@ async function main() {
   // A posting can be edited after it is published — a comp range added, a
   // clearance line changed — and nothing else in this script ever re-reads one.
   const staleBefore = staleDays
-    ? new Date(Date.now() - staleDays * 86400000).toISOString().slice(0, 10)
+    ? localToday(new Date(Date.now() - staleDays * 86400000))
     : null;
 
   mkdirSync(CACHE, { recursive: true });
@@ -517,7 +518,7 @@ async function main() {
     .filter(r => refresh || reparse || !facts.has(r.url) || isStale(r.url)
       || (retryUnread && facts.get(r.url)?.ok !== '1'))
     .slice(0, limit);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localToday();
   let done = 0, ok = 0;
 
   const record = (r, text, location = '') => {
@@ -564,7 +565,7 @@ async function main() {
       let text = !refresh && !isStale(r.url) && existsSync(file) ? readFileSync(file, 'utf-8') : '';
       if (!text && !reparse) {
         text = await fetchJd(r.url);
-        if (text) writeFileSync(file, text);
+        if (text) writeFileAtomic(file, text);
       }
       record(r, text);
       progress();
@@ -586,7 +587,7 @@ async function main() {
     const byUrl = new Map(blind.map(r => [r.url, r]));
     let seen = 0;
     await browserPass(blind.map(r => r.url), (url, { text, location }) => {
-      if (text) { writeFileSync(join(CACHE, `${hash(url)}.txt`), text); browsed++; }
+      if (text) { writeFileAtomic(join(CACHE, `${hash(url)}.txt`), text); browsed++; }
       if (location) located++;
       record(byUrl.get(url), text, location);
       progress();
