@@ -34,6 +34,14 @@ import {
 import { collectMjsFiles } from '../lib/mjs-files.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Upper bounds below are multiplied by how late this process's timers fire
+// right now, so a loaded runner stretches them instead of failing them. Lower
+// bounds stay fixed: a timer never fires meaningfully early.
+async function timerLag() {
+  const t = Date.now();
+  for (let i = 0; i < 5; i++) await sleep(20);
+  return Math.max(1, (Date.now() - t) / 100);
+}
 const SELF = fileURLToPath(import.meta.url);
 const REPO_ROOT = dirname(dirname(SELF));
 
@@ -164,6 +172,7 @@ test('acquirePipelineLock: configurable timing — the contention timeout is not
     const p = join(root, 'data', 'pipeline.md');
     const held = await acquirePipelineLock(p, { timeoutMs: 150, retryMs: 20 });
     try {
+      const lag = await timerLag();
       const startedAt = Date.now();
       // The failure must be the *timeout*, not an unrelated instant throw —
       // otherwise a lock broken in some other way still passes this test.
@@ -174,7 +183,7 @@ test('acquirePipelineLock: configurable timing — the contention timeout is not
       const elapsed = Date.now() - startedAt;
       assert.ok(elapsed >= 100, `timeout returned too early after ${elapsed}ms — the caller timeout was not actually awaited`);
       // Must honor the caller's timeout, not the module default (seconds).
-      assert.ok(elapsed < 2000, `expected the caller timeout to be honored, waited ${elapsed}ms`);
+      assert.ok(elapsed < 2000 * lag, `expected the caller timeout to be honored, waited ${elapsed}ms (timer lag x${lag})`);
     } finally {
       held.release();
     }
@@ -521,6 +530,7 @@ test('acquirePipelineLock: extended waiting is still bounded by maxWaitMs, so en
     const p = join(root, 'data', 'pipeline.md');
     // Progress must buy patience, never immortality: a lock handed round for
     // ever still has to fail the caller rather than block it indefinitely.
+    const lag = await timerLag();
     const startedAt = Date.now();
     await assert.rejects(
       () => acquirePipelineLock(p, { timeoutMs: 100, retryMs: 10, maxWaitMs: 400 }),
@@ -528,7 +538,7 @@ test('acquirePipelineLock: extended waiting is still bounded by maxWaitMs, so en
     );
     const elapsed = Date.now() - startedAt;
     assert.ok(elapsed >= 400, `gave up after ${elapsed}ms, before the caller's maxWaitMs`);
-    assert.ok(elapsed < 3000, `waited ${elapsed}ms — maxWaitMs did not bound the extension`);
+    assert.ok(elapsed < 3000 * lag, `waited ${elapsed}ms (timer lag x${lag}) — maxWaitMs did not bound the extension`);
   } finally {
     await churn.stop();
     rmSync(root, { recursive: true, force: true });
@@ -544,6 +554,7 @@ test('acquirePipelineLock: an explicit maxWaitMs below timeoutMs is honored, not
     // one range where the caller stated it most explicitly: asking for "never
     // more than 200ms" bought five seconds. It was also only consulted inside
     // the per-holder deadline branch, which this caller never reaches.
+    const lag = await timerLag();
     const startedAt = Date.now();
     const outcome = await settleOrGiveUp(
       acquirePipelineLock(p, { timeoutMs: 5000, retryMs: 20, maxWaitMs: 200 }),
@@ -551,7 +562,7 @@ test('acquirePipelineLock: an explicit maxWaitMs below timeoutMs is honored, not
     );
     const elapsed = Date.now() - startedAt;
     assert.ok(outcome instanceof LockTimeoutError, `expected the ceiling to end it, got: ${outcome}`);
-    assert.ok(elapsed < 2000, `waited ${elapsed}ms — the 200ms ceiling was raised to timeoutMs`);
+    assert.ok(elapsed < 2000 * lag, `waited ${elapsed}ms (timer lag x${lag}) — the 200ms ceiling was raised to timeoutMs`);
     // The diagnosis has to name the limit that was actually applied. Reporting
     // timeoutMs here states a number that was never in force, and sends the
     // reader looking for a 5s hold that never happened.
@@ -597,11 +608,12 @@ test('acquirePipelineLock: a maxWaitMs of 0 means no waiting, not the default ce
     // opposite of the request. Asserted through the env var, which is where the
     // idiom lived, and against a churning lock so only the ceiling can end it.
     process.env.CAREER_OPS_PIPELINE_LOCK_MAX_WAIT_MS = '0';
+    const lag = await timerLag();
     const startedAt = Date.now();
     const outcome = await settleOrGiveUp(acquirePipelineLock(p, { timeoutMs: 400, retryMs: 20 }), 3000);
     const elapsed = Date.now() - startedAt;
     assert.ok(outcome instanceof LockTimeoutError, `expected an immediate ceiling, got: ${outcome}`);
-    assert.ok(elapsed < 300, `waited ${elapsed}ms for a zero ceiling — the 0 was read as "unset"`);
+    assert.ok(elapsed < 300 * lag, `waited ${elapsed}ms (timer lag x${lag}) for a zero ceiling — the 0 was read as "unset"`);
   } finally {
     if (previous === undefined) delete process.env.CAREER_OPS_PIPELINE_LOCK_MAX_WAIT_MS;
     else process.env.CAREER_OPS_PIPELINE_LOCK_MAX_WAIT_MS = previous;

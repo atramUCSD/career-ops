@@ -324,15 +324,19 @@ test('captures: pathological unterminated markup is still read around', () => {
 });
 
 test('htmlToText: hostile unterminated markup stays near-linear (in-process, generous bound)', () => {
-  // The old tag regex needed ~17s for 200k of this; a linear scan needs well
-  // under a second. 5s leaves ample headroom for a loaded CI runner while still
-  // failing on quadratic or exponential backtracking.
-  for (const unit of ['<a ', '<a "', '<script ', '<!-- ']) {
-    const input = unit.repeat(Math.ceil(200000 / unit.length));
+  // The old tag regex needed ~17s for 200k of this. The bound is the same input
+  // at a quarter of the size, timed in the same moment, so a loaded runner slows
+  // both sides: 4x the input costs ~4x when linear and ~16x when quadratic. The
+  // 50ms floor keeps sub-millisecond units out of timer noise.
+  const time = (input) => {
     const t = process.hrtime.bigint();
     htmlToText(input);
-    const ms = Number(process.hrtime.bigint() - t) / 1e6;
-    assert.ok(ms < 5000, JSON.stringify(unit) + ' took ' + Math.round(ms) + 'ms');
+    return Number(process.hrtime.bigint() - t) / 1e6;
+  };
+  for (const unit of ['<a ', '<a "', '<script ', '<!-- ']) {
+    const small = time(unit.repeat(Math.ceil(50000 / unit.length)));
+    const ms = time(unit.repeat(Math.ceil(200000 / unit.length)));
+    assert.ok(ms < 10 * small + 50, JSON.stringify(unit) + ' took ' + Math.round(ms) + 'ms at 200k vs ' + Math.round(small) + 'ms at 50k');
   }
 });
 
