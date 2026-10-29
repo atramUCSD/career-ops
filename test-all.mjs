@@ -17411,7 +17411,9 @@ try {
       // for ~250 suites is deep in the middle that formatRunFailure elides; spec
       // repeats every failure in a `failing tests` block at the very end, which the
       // tail-weighted clip keeps.
-      } else if (run(NODE, ['--experimental-strip-types', '--test', '--test-reporter=spec', ...webUnits], { timeout: 180000 }) !== null) {
+      // cwd web/, as `npm test` runs them: the code root falls back to the cwd's
+      // parent, so from the repo root it lands one directory above the checkout.
+      } else if (run(NODE, ['--experimental-strip-types', '--test', '--test-reporter=spec', ...webUnits.map((f) => relative('web', f))], { timeout: 180000, cwd: join(ROOT, 'web') }) !== null) {
         pass('web pdf write-scope unit suites pass (#2185)');
       } else {
         // The signal distinguishes a timeout/kill from an assertion failure —
@@ -17427,7 +17429,7 @@ try {
         // #4017 that outlived its own test.
         // 8000, not the default 2000: each failure in spec's summary runs ~850
         // chars with its stack, so the default tail holds one; this holds ~5.
-        fail(`web pdf write-scope unit suites failed${killed ? ` (killed: ${killed})` : ''} (run: node --experimental-strip-types --test ${webUnits.join(' ')})${formatRunFailure(8000)}`);
+        fail(`web pdf write-scope unit suites failed${killed ? ` (killed: ${killed})` : ''} (run: cd web && node --experimental-strip-types --test ${webUnits.map((f) => relative('web', f)).join(' ')})${formatRunFailure(8000)}`);
       }
 
       // Parity: everything web/package.json would run must be something we DO run.
