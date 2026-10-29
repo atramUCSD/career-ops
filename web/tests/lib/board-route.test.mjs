@@ -10,7 +10,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const ENV_KEYS = ["CAREER_OPS_ROOT", "CAREER_OPS_DATA_DIR", "CAREER_OPS_TRACKER", "CAREER_OPS_PROFILES_DIR"];
+const ENV_KEYS = ["CAREER_OPS_CODE_ROOT", "CAREER_OPS_ROOT", "CAREER_OPS_DATA_DIR", "CAREER_OPS_TRACKER", "CAREER_OPS_PROFILES_DIR"];
 
 const TRACKER = [
   "# Applications Tracker",
@@ -26,6 +26,8 @@ async function withBoard(fn, { busy = false } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "board-route-"));
   const saved = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
   process.env.CAREER_OPS_ROOT = root;
+  // The root doubles as the code checkout so the tracker-utils stand-in below is the one loaded.
+  process.env.CAREER_OPS_CODE_ROOT = root;
   // Empty rather than deleted: each would pull a read out of the sandbox, and
   // dotenv only fills keys that are absent.
   process.env.CAREER_OPS_DATA_DIR = "";
@@ -34,7 +36,7 @@ async function withBoard(fn, { busy = false } = {}) {
   try {
     fs.mkdirSync(path.join(root, "data"));
     fs.writeFileSync(path.join(root, "data", "applications.md"), TRACKER);
-    // withTrackerLock imports the core lock from careerOpsRoot(); a stand-in keeps
+    // withTrackerLock imports the core lock from the code root; a stand-in keeps
     // the core's own packages out of web CI (same as apply-cv-resolver.test.mjs).
     fs.writeFileSync(path.join(root, "tracker-utils.mjs"), [
       "export const trackerLockDirFor = (t) => t + '.lock';",

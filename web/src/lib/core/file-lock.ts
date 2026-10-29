@@ -1,7 +1,7 @@
 import path from "node:path";
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
-import { careerOpsRoot } from "@/lib/career-ops";
+import { rootScript } from "@/lib/career-ops";
 
 /**
  * Per-file cross-process lock for the web's settings and CV writers, built on
@@ -23,10 +23,10 @@ type CoreWithLock = (file: string, fn: () => unknown, options?: Record<string, u
 const modCache = new Map<string, CoreWithLock>();
 
 async function loadCoreLock(): Promise<CoreWithLock | null> {
-  const file = path.join(careerOpsRoot(), "pipeline-lock.mjs");
+  const file = rootScript("pipeline-lock");
   const cached = modCache.get(file);
   if (cached) return cached;
-  // A data-only root has no core scripts to race, so running unlocked is right.
+  // A checkout without the core (web deployed alone) has no core writers to race.
   if (!fs.existsSync(file)) return null;
   const mod = await import(/* webpackIgnore: true */ pathToFileURL(file).href);
   if (typeof mod.withPipelineLock !== "function") throw new Error("pipeline-lock.mjs has no withPipelineLock export");

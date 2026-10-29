@@ -1,6 +1,6 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { careerOpsRoot, userRoot } from "@/lib/career-ops";
+import { rootScript, userRoot } from "@/lib/career-ops";
 
 /**
  * ACL for the core's `resolvePdfIndexPath`/`resolveTrackerPath` (tracker-utils.mjs)
@@ -15,7 +15,7 @@ import { careerOpsRoot, userRoot } from "@/lib/career-ops";
  * `CAREER_OPS_PDF_INDEX` override, for every reader.
  *
  * We can't `import` it statically: the core lives in the USER's checkout,
- * resolved at runtime via careerOpsRoot(), and is not a build dependency of this
+ * resolved at runtime via rootScript(), and is not a build dependency of this
  * app. So we import it dynamically per resolved root and cache the module —
  * keyed by path, and NEVER caching a failure (the lesson from #2590, where a
  * cached fallback pinned stale definitions for the process lifetime).
@@ -36,7 +36,7 @@ let warned = false;
  *  callers must treat null as "can't resolve" rather than guessing a path. */
 export async function resolvePdfIndexPath(): Promise<string | null> {
   // Module from the code root, tracker from the active profile's data root.
-  const file = path.join(careerOpsRoot(), "tracker-utils.mjs");
+  const file = rootScript("tracker-utils");
   const root = userRoot();
   const hit = modCache.get(file);
   if (hit) return hit.resolvePdfIndexPath(hit.resolveTrackerPath(root));
