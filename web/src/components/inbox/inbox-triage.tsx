@@ -21,6 +21,7 @@ import { estimateRunCost } from "@/lib/run-cost-estimate.mjs";
 import { createInboxSkipActions, queueInboxSkip } from "@/lib/inbox-skip-client.mjs";
 import { CONFIG_KEY, subscribeConfig } from "@/lib/config-events.mjs";
 
+// Legacy: the shortlist lived here before data/ui-state.json; read once to migrate.
 const SHORTLIST_KEY = "career-ops:shortlist";
 const HIDDEN_KEY = "career-ops:hidden";
 const BATCH = 20;
@@ -56,11 +57,31 @@ export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
   const [restoring, setRestoring] = useState(false);
   const [hasCli, setHasCli] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [shortLoaded, setShortLoaded] = useState(false);
+  const savedShortlist = useRef<string | null>(null); // the list as the server last stored it
+  const shortlistSave = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
+    let legacy: ShortItem[] = [];
     try {
       const s = localStorage.getItem(SHORTLIST_KEY);
-      if (s) setShortlist(JSON.parse(s));
+      if (s) legacy = JSON.parse(s);
+    } catch {
+      /* ignore */
+    }
+    fetch("/api/inbox/shortlist", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then(({ shortlist: disk }: { shortlist: ShortItem[] }) => {
+        savedShortlist.current = JSON.stringify(disk);
+        // One-time move: a browser that saved before the file existed uploads its list.
+        setShortlist(disk.length || !legacy.length ? disk : legacy);
+        setShortLoaded(true);
+      }, () => {
+        // Saving stays off: a PUT now could replace a disk list this tab never saw.
+        setShortlist(legacy);
+        setWriteError("Could not load the shortlist from disk. Changes stay in this tab until you reload.");
+      });
+    try {
       const h = localStorage.getItem(HIDDEN_KEY);
       if (h) {
         const parsed = JSON.parse(h) as unknown;
@@ -86,9 +107,21 @@ export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
     read();
     return subscribeConfig(window, read);
   }, []);
+  // Saves run one at a time in order, each carrying the list as it was when queued,
+  // so a fast Save then Remove can't land on disk reversed.
   useEffect(() => {
-    if (loaded) try { localStorage.setItem(SHORTLIST_KEY, JSON.stringify(shortlist)); } catch { /* quota */ }
-  }, [shortlist, loaded]);
+    if (!shortLoaded) return;
+    const json = JSON.stringify(shortlist);
+    shortlistSave.current = shortlistSave.current
+      .then(async () => {
+        if (json === savedShortlist.current) return;
+        const res = await fetch("/api/inbox/shortlist", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ shortlist }) });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        savedShortlist.current = json;
+        try { localStorage.removeItem(SHORTLIST_KEY); } catch { /* storage blocked */ }
+      })
+      .catch(() => setWriteError("Could not save the shortlist to disk. It will retry on the next change."));
+  }, [shortlist, shortLoaded]);
   useEffect(() => {
     if (loaded) try { localStorage.setItem(HIDDEN_KEY, JSON.stringify(hidden)); } catch { /* quota */ }
   }, [hidden, loaded]);
