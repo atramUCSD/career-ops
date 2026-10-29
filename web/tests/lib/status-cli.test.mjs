@@ -88,6 +88,8 @@ test("a tracker row is the # column, so only digits select one", () => {
   assert.equal(trackerRowArg("42"), "42");
   assert.equal(trackerRowArg(42), "42");
   assert.equal(trackerRowArg("  42  "), "42");
+  assert.equal(trackerRowArg("007"), "7");
+  assert.equal(trackerRowArg("0"), "0");
 });
 
 test("a row selector that cannot name a row is refused before anything is spawned", () => {

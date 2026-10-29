@@ -104,5 +104,7 @@ export function clientErrorMessage(parsed, _stderr) {
 export function trackerRowArg(n) {
   if (typeof n !== "string" && typeof n !== "number") return null;
   const row = String(n).trim();
-  return /^\d+$/.test(row) ? row : null;
+  // One spelling per row: the board log keys events by this string, so /board/007
+  // and /board/7 must not split one card's history in two.
+  return /^\d+$/.test(row) ? row.replace(/^0+(?=\d)/, "") : null;
 }
