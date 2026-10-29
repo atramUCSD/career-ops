@@ -172,6 +172,18 @@ try {
     pass('eightfold.fetch() returns a tagged partial board when retries are exhausted');
   else fail(`eightfold.fetch() on exhausted retries: ${partial.length} jobs, tag ${JSON.stringify(partial.eightfoldPcsxTruncated)}, ${n} calls`);
 
+  // A 429 before any page was read is a failed fetch. Returned as [], scan.mjs
+  // logged a rate-limited Qualcomm as a zero-job board (unverified_zero).
+  let blocked = null;
+  try {
+    await eightfold.fetch({ ...QUALCOMM, queries: ['engineer'] }, mkCtx(async () => { throw Object.assign(new Error('HTTP 429 Too Many Requests'), { status: 429 }); }));
+  } catch (e) {
+    blocked = e;
+  }
+  const { classifyFetchError } = await import('../../verify-portals.mjs');
+  if (blocked && classifyFetchError(blocked) === 'rate_limited') pass('eightfold.fetch() throws a 429 that read nothing, classified rate_limited');
+  else fail(`eightfold.fetch() on a 429 with nothing read: ${blocked ? classifyFetchError(blocked) : 'returned instead of throwing'}`);
+
   // A non-429 error is not a rate limit and must not be retried into silence.
   let threw = null;
   try {

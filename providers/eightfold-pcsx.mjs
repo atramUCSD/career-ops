@@ -129,6 +129,9 @@ export default {
         // Retries exhausted: the host stays angry for minutes, so later terms
         // would only burn more backoff. Keep the jobs read so far and tag them.
         if (rateLimited) {
+          // Nothing read at all is a failed fetch, not a partial board: returned
+          // as [], scan.mjs records it as a zero-job board (unverified_zero).
+          if (seen.size === 0) throw rateLimited;
           truncated = { reason: `rate-limited on "${q}" page ${page + 1} after ${MAX_RETRIES} attempts` };
           break terms;
         }
