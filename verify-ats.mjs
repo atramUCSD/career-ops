@@ -305,8 +305,8 @@ function linkContacts(html) {
  * @returns {boolean}
  */
 function hasMultiColumn(blob) {
-  const count = blob.match(/column-count\s*:\s*(\d+)/i);
-  if (count && Number(count[1]) >= 2) return true;
+  // Every match: the style blocks arrive joined, so a later rule can ask for columns.
+  for (const m of blob.matchAll(/column-count\s*:\s*(\d+)/gi)) if (Number(m[1]) >= 2) return true;
   for (const m of blob.matchAll(/\bcolumns\s*:\s*([^;{}]+)/gi)) {
     for (const token of m[1].trim().split(/\s+/)) {
       if (/^\d+$/.test(token) && Number(token) >= 2) return true;
