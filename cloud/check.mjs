@@ -9,7 +9,7 @@ import path from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { identify, localDevIdentity, verifyAccessJwt } from './lib/access.mjs';
 import { parseAction } from './lib/inbox.mjs';
-import { buildCopy, canonicalState, drainInbox, moveOutcome, postingRows, siteUrl, snapshot } from './sync-runner.mjs';
+import { buildCopy, canonicalState, drainInbox, JOBS_PER_DAY, moveOutcome, postingRows, queueJobs, runNextJob, siteUrl, snapshot } from './sync-runner.mjs';
 import { loadCanonicalStates } from '../tracker-utils.mjs';
 
 const TEAM = 'https://team.cloudflareaccess.com';
@@ -66,6 +66,8 @@ assert.match(parseAction({ ...move, precondition: null }), /precondition/);
 assert.match(parseAction({ uuid: U, type: 'comment', payload: { n: '1', text: 'x'.repeat(2001) } }), /2000/);
 assert.equal(parseAction({ uuid: U, type: 'comment', payload: { n: '1', text: '  hi  ' } }).payload.text, 'hi');
 assert.match(parseAction({ ...move, type: 'settings' }), /type/);
+assert.deepEqual(parseAction({ uuid: U, type: 'job', payload: { kind: 'scan', extra: 1 } }), { uuid: U, type: 'job', payload: { kind: 'scan' }, precondition: null });
+assert.match(parseAction({ uuid: U, type: 'job', payload: { kind: 'evaluate' } }), /kind/, 'AI-spending kinds stay closed');
 
 const states = loadCanonicalStates(new URL('../templates/states.yml', import.meta.url));
 assert.equal(canonicalState('applied', states), 'Applied');
@@ -128,6 +130,33 @@ try {
   assert.deepEqual(posts.map((r) => r.data.u), ['https://jobs.example/a', 'https://jobs.example/undated']);
   assert.equal(posts[0].kind, 'posting');
   assert.ok(!('age' in posts[0].data) && typeof posts[0].data.cb === 'number');
+
+  // Jobs: a daily cap counted from the log, replay of a logged outcome instead of a
+  // second run, and a job cut off twice failing instead of looping.
+  fs.writeFileSync(log, '');
+  const job = (i) => ({ uuid: `3c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e${String(i).padStart(2, '0')}`, seq: 10 + i, type: 'job', payload: { kind: 'scan' }, status: 'pending' });
+  const now = new Date();
+  const many = Array.from({ length: JOBS_PER_DAY + 1 }, (_, i) => job(i));
+  const queuedOut = queueJobs(root, many, now);
+  assert.deepEqual(queuedOut.map((r) => r.status), [...Array(JOBS_PER_DAY).fill('queued'), 'rejected']);
+  assert.equal(queuedOut.at(-1).result.reason, 'cap');
+  assert.deepEqual(queueJobs(root, [many[0], many.at(-1)], now).map((r) => r.status), ['queued', 'rejected'], 'a resent job keeps its outcome');
+
+  let ran = 0;
+  const starts = [];
+  const exec = { scan: () => (ran++, { status: 'done', result: { found: 3 } }) };
+  const ranOnce = await runNextJob(root, [many[0], many[1]], { exec, start: async (r) => starts.push(r.status) });
+  assert.deepEqual([ranOnce.uuid, ranOnce.status, ranOnce.result.found, ran, starts], [many[0].uuid, 'done', 3, 1, ['running']]);
+  const again = await runNextJob(root, [many[0], many[1]], { exec });
+  assert.deepEqual([again.uuid, again.status, ran], [many[0].uuid, 'done', 1], 'logged but unacknowledged: replayed, not rerun');
+  const offline = await runNextJob(root, [many[1]], { exec, start: async () => { throw new Error('offline'); } });
+  assert.equal(offline.status, 'done', 'a failed running ack does not stop the job');
+
+  const cut = job(20);
+  fs.appendFileSync(log, ['running', 'running'].map((status) => JSON.stringify({ uuid: cut.uuid, type: 'job', status, at: now.toISOString() }) + '\n').join(''));
+  const gaveUp = await runNextJob(root, [cut], { exec });
+  assert.deepEqual([gaveUp.status, ran], ['failed', 2]);
+  assert.equal(await runNextJob(root, [], { exec }), null);
 } finally {
   fs.rmSync(root, { recursive: true, force: true });
 }

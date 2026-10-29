@@ -1,7 +1,8 @@
-// ADR-001 steps 2 and 5: apply the page's queued actions, then rebuild the read copy
+// ADR-001 steps 2, 5 and 7: apply the page's queued actions, then rebuild the read copy
 // from this profile's files and push it as one snapshot when its hash changed. The files stay
 // canonical and this PC stays their only writer; the copy in D1 is derived, and the
 // server never edits it.
+// Remote jobs (scan only, so far) queue through the same inbox and run here, one per pass.
 //
 //   node --env-file=.env cloud/sync-runner.mjs --once
 //
@@ -34,6 +35,10 @@ import { isReservedReportFile } from '../web/src/lib/report-files.mjs';
 import { isMainModule } from '../lib/is-main-module.mjs';
 import { buildModel } from '../build-artifact.mjs';
 import { readShortlist } from '../web/src/lib/ui-state.mjs';
+import { JOB_KINDS } from './lib/inbox.mjs';
+import { buildScanCommand, extractRolesFound, SCAN_TIMEOUT_MS } from '../web/scripts/scheduled-jobs-runner.mjs';
+import { scanFailureMessage } from '../web/src/lib/scheduled-scan-error.mjs';
+import { withResourceLock } from '../web/src/lib/scheduled-jobs-store.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const STATES_FILE = path.join(REPO, 'templates/states.yml');
@@ -231,6 +236,94 @@ export async function drainInbox(root, pending) {
   return results;
 }
 
+// ADR-001 step 7. Jobs share the inbox log with moves and comments, one line per
+// status change, so the log alone says how many started today and whether one
+// already finished (an outcome logged but never acknowledged is replayed, not rerun).
+export const JOBS_PER_DAY = 6;
+const FINAL = new Set(['done', 'failed', 'rejected']);
+const MAX_STARTS = 2;
+
+function jobLog(root) {
+  const byUuid = new Map();
+  for (const e of jsonl(readIf(path.join(root, 'data', 'inbox-log.jsonl')))) {
+    if (e.type === 'job') byUuid.set(e.uuid, [...(byUuid.get(e.uuid) ?? []), e]);
+  }
+  return byUuid;
+}
+
+function logJob(root, job, status, result = {}) {
+  const file = path.join(root, 'data', 'inbox-log.jsonl');
+  const entry = { uuid: job.uuid, seq: job.seq, type: 'job', payload: job.payload, sender: job.sender, status, result, at: new Date().toISOString() };
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.appendFileSync(file, JSON.stringify(entry) + '\n');
+  return { uuid: job.uuid, status, result };
+}
+
+/** Accept or refuse each new job request. Accepted ones are acknowledged as queued. */
+export function queueJobs(root, pending, now = new Date()) {
+  const log = jobLog(root);
+  const today = localToday(now);
+  let used = [...log.values()].filter((entries) => entries.some((e) => e.status === 'queued' && localToday(new Date(e.at)) === today)).length;
+  return pending.map((job) => {
+    const entries = log.get(job.uuid) ?? [];
+    const final = entries.find((e) => FINAL.has(e.status));
+    if (final) return { uuid: job.uuid, status: final.status, result: final.result };
+    if (entries.some((e) => e.status === 'queued')) return { uuid: job.uuid, status: 'queued', result: {} };
+    if (!JOB_KINDS.includes(job.payload?.kind)) return logJob(root, job, 'rejected', { reason: 'invalid', message: `unknown job kind "${job.payload?.kind}"` });
+    if (used >= JOBS_PER_DAY) return logJob(root, job, 'rejected', { reason: 'cap', message: `${JOBS_PER_DAY} jobs a day; try tomorrow` });
+    used++;
+    return logJob(root, job, 'queued');
+  });
+}
+
+/** The portal scan the web's scheduled jobs run, against this profile's own portals.yml. */
+export function runScan(root) {
+  const { script, args } = buildScanCommand({ engine: 'portals' });
+  const r = spawnSync(process.execPath, [path.join(REPO, script), ...args], {
+    cwd: REPO,
+    env: { ...process.env, CAREER_OPS_ROOT: root },
+    encoding: 'utf8',
+    timeout: SCAN_TIMEOUT_MS,
+    maxBuffer: 10 * 1024 * 1024,
+    windowsHide: true,
+  });
+  if (r.status === 0) return { status: 'done', result: { found: extractRolesFound('portals', r.stdout ?? '') } };
+  return { status: 'failed', result: { message: scanFailureMessage(r, { timeoutMs: SCAN_TIMEOUT_MS }) } };
+}
+
+/**
+ * Run the oldest open job, one per pass, under a lock so a second runner never starts
+ * it again. The lock is the heartbeat: a job still marked running when the lock is
+ * free was cut off (the PC slept or the process died), so it runs again, up to
+ * MAX_STARTS. Returns the final outcome to acknowledge, or null when there is none.
+ * `start` is called with the running acknowledgement before the job begins.
+ */
+export async function runNextJob(root, open, { exec = { scan: runScan }, start = async () => {} } = {}) {
+  if (!open.length) return null;
+  try {
+    return await withResourceLock(path.join(root, 'data', 'cloud-jobs'), async () => {
+      const log = jobLog(root);
+      for (const job of open) {
+        const final = (log.get(job.uuid) ?? []).find((e) => FINAL.has(e.status));
+        if (final) return { uuid: job.uuid, status: final.status, result: final.result };
+      }
+      const job = open[0];
+      const starts = (log.get(job.uuid) ?? []).filter((e) => e.status === 'running').length;
+      if (starts >= MAX_STARTS) return logJob(root, job, 'failed', { message: `cut off ${starts} times; not retried` });
+      const run = exec[job.payload?.kind];
+      if (!run) return logJob(root, job, 'rejected', { reason: 'invalid', message: `unknown job kind "${job.payload?.kind}"` });
+      // The running status only feeds the page, so a failed send must not keep the job from running.
+      const running = logJob(root, job, 'running');
+      await Promise.resolve().then(() => start(running)).catch((err) => console.warn(`job ${job.uuid}: running ack failed: ${err.message}`));
+      const outcome = run(root);
+      return logJob(root, job, outcome.status, outcome.result);
+    }, { timeoutMs: 1_000, staleMs: SCAN_TIMEOUT_MS + 60_000 });
+  } catch (err) {
+    if (err.code === 'LOCK_TIMEOUT') return null; // another runner holds the job
+    throw err;
+  }
+}
+
 async function api(route, method, body, headers = {}) {
   const res = await fetch(`${siteUrl()}${route}`, {
     method,
@@ -253,8 +346,34 @@ async function once() {
     throw new Error('CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET unset; run with node --env-file=.env');
   }
   const root = getCareerOpsRoot();
-  const results = await drainInbox(root, await api('/api/inbox', 'GET'));
+  const open = await api('/api/inbox', 'GET');
+  const isJob = (a) => a.type === 'job';
+  const results = [
+    ...(await drainInbox(root, open.filter((a) => !isJob(a)))),
+    ...queueJobs(root, open.filter((a) => isJob(a) && a.status === 'pending')),
+  ];
+  const ack = async (list) => (list.length ? (await api('/api/inbox', 'PUT', { results: list })).settled ?? 0 : 0);
 
+  // Acknowledge after the push, so a settled move never shows on the page before
+  // the copy that has the card in its new lane.
+  const pushed = await pushCopy(root);
+  const settled = await ack(results);
+  console.log(`inbox: ${results.length} settled (${settled} new); copy: ${pushed}`);
+
+  // One job per pass, after the copy is current. A scan can take many minutes; the
+  // timer task skips its ticks meanwhile (IgnoreNew), and the page shows it running.
+  // ponytail: jobs run inline; detach them if a long scan starving the copy matters.
+  const queued = new Set(results.filter((r) => r.status === 'queued').map((r) => r.uuid));
+  const jobs = open.filter((a) => isJob(a) && (queued.has(a.uuid) || a.status === 'queued' || a.status === 'running'));
+  const done = await runNextJob(root, jobs, { start: (r) => ack([r]) });
+  if (done) {
+    const after = await pushCopy(root);
+    await ack([done]);
+    console.log(`job: ${done.status} ${JSON.stringify(done.result)}; copy: ${after}`);
+  }
+}
+
+async function pushCopy(root) {
   const rows = buildCopy(root);
   const snap = snapshot(rows);
   const push = (body) => api('/api/sync', 'POST', body, { 'x-copy-version': snap.version });
@@ -266,10 +385,7 @@ async function once() {
     const { version } = await push(snap.body);
     if (version !== snap.version) throw new Error(`push stored version ${version}, expected ${snap.version}`);
   }
-  // Acknowledge after the push, so a settled move never shows on the page before
-  // the copy that has the card in its new lane.
-  const { settled = 0 } = results.length ? await api('/api/inbox', 'PUT', { results }) : {};
-  console.log(`inbox: ${results.length} settled (${settled} new); copy: ${rows.length} rows, ${sent ? `pushed ${snap.body.length} chars` : 'unchanged'}`);
+  return `${rows.length} rows, ${sent ? `pushed ${snap.body.length} chars` : 'unchanged'}`;
 }
 
 const USAGE = 'usage: node --env-file=.env cloud/sync-runner.mjs --once';

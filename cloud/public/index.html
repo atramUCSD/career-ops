@@ -41,6 +41,9 @@
   #status a { color: var(--accent); }
   #postings { padding: 0 16px 40px; max-width: 760px; }
   #saved:not(:empty) { margin-bottom: 20px; }
+  #scan { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-bottom: 16px; font-size: 13px; color: var(--muted); }
+  #scan .failed, #scan .pending { font-size: inherit; }
+  #scan button { font-size: 14px; padding: 8px 12px; }
   #postings input { width: 100%; font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; }
   #tabs { display: flex; gap: 4px; padding: 0 16px 12px; }
   #tabs a { padding: 6px 12px; border-radius: 6px; color: var(--muted); text-decoration: none; font-size: 14px; }
@@ -53,6 +56,7 @@
 <nav id="tabs" hidden><a href="#">Board</a><a href="#postings" id="tab-postings">Postings</a></nav>
 <main id="board"></main>
 <section id="postings" hidden>
+  <div id="scan"></div>
   <div id="saved"></div>
   <h2 id="postings-h"></h2>
   <input id="q" type="search" placeholder="Filter by company, title or location" aria-label="Filter postings">
@@ -78,6 +82,8 @@
   const open = new Set(); // cards the user expanded survive a re-render
   let states = [];
   let actions = [];
+  // Still waiting on the PC: moves and comments until applied, jobs until done or failed.
+  const OPEN = new Set(['pending', 'queued', 'running']);
   let lastDrawn = '';
 
   // A rejection stays on its card for a day: long enough to be seen on the next
@@ -189,7 +195,7 @@
     const s = document.getElementById('status');
     const cards = copy.rows.filter((r) => r.kind === 'card');
     const off = cards.filter((r) => !r.data.lane).length;
-    const waiting = actions.filter((a) => a.status === 'pending').length;
+    const waiting = actions.filter((a) => OPEN.has(a.status)).length;
     const stale = copy.pushedAt && Date.now() - Date.parse(copy.pushedAt) > STALE_MS;
     const lead = {
       live: '',
@@ -243,6 +249,7 @@
     const all = copy.rows.filter((r) => r.kind === 'posting').map((r) => r.data);
     document.getElementById('tab-postings').textContent = `Postings ${all.length}`;
     route();
+    drawScan();
     drawSaved(all);
     const q = document.getElementById('q').value.trim().toLowerCase();
     const hits = (q ? all.filter((p) => `${p.c} ${p.t} ${p.l}`.toLowerCase().includes(q)) : all).sort((a, b) => (b.cb ?? 0) - (a.cb ?? 0));
@@ -270,6 +277,31 @@
           el('div', null, el('span', { class: 'co' }, s.company), ` ${s.role}`), el('div', { class: 'sub' }, sub));
       }),
     ] : []));
+  }
+
+  // A portal scan on the PC (ADR-001 step 7). The runner takes one job per pass and
+  // reports queued, running, then done or failed; new postings arrive with the copy.
+  function drawScan() {
+    const last = actions.find((a) => a.type === 'job' && a.payload?.kind === 'scan');
+    const busy = last && OPEN.has(last.status);
+    const r = last?.result ?? {};
+    const when = last?.resolvedAt ? ago(last.resolvedAt) : '';
+    const text = !last ? ''
+      : last.status === 'pending' ? 'Scan requested, waiting for the PC'
+      : last.status === 'queued' ? 'Scan queued on the PC'
+      : last.status === 'running' ? `Scan running on the PC, started ${when}`
+      : last.status === 'done' ? `Last scan ${when}: ${r.found ?? 0} new`
+      : last.status === 'failed' ? `Last scan failed: ${r.message ?? 'no reason given'}`
+      : `Scan not run: ${r.message ?? r.reason ?? last.status}`;
+    const bad = last && (last.status === 'failed' || last.status === 'rejected');
+    const button = el('button', { type: 'button', disabled: busy }, busy ? 'Scan queued' : 'Run scan on PC');
+    button.onclick = () => {
+      button.disabled = true;
+      send({ uuid: crypto.randomUUID(), type: 'job', payload: { kind: 'scan' } })
+        .catch((err) => (alert(`Could not queue the scan: ${err.message}`), (button.disabled = false)));
+    };
+    document.getElementById('scan').replaceChildren(button,
+      text ? el('span', { class: bad ? 'failed' : busy ? 'pending' : null, role: 'status' }, text) : '');
   }
 
   // Two views on the hash, so the back button and a home-screen bookmark both work.
@@ -332,7 +364,7 @@
   // Poll faster while something is waiting, so a settled move shows up soon after the runner reports it.
   async function tick() {
     await load().catch((err) => ([mode, modeDetail] = ['error', err.message], draw()));
-    setTimeout(tick, actions.some((a) => a.status === 'pending') ? 10_000 : 60_000);
+    setTimeout(tick, actions.some((a) => OPEN.has(a.status)) ? 10_000 : 60_000);
   }
   // A phone reopening the tab should not wait out the poll interval.
   document.addEventListener('visibilitychange', () => document.hidden || load().catch(() => {}));
