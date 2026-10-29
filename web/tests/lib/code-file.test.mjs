@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { listTree } from "../../../lib/walk-tree.mjs";
 
 test("states and mode prompts resolve from the checkout under a data-only root", async () => {
   await import("../helpers/web-ts-alias-loader.mjs");
@@ -39,10 +40,9 @@ test("states and mode prompts resolve from the checkout under a data-only root",
 test("no web source reads templates/ or modes/ from the data root", () => {
   const src = path.join(import.meta.dirname, "..", "..", "src");
   const offenders = [];
-  for (const rel of fs.readdirSync(src, { recursive: true })) {
-    if (!/\.(ts|tsx|mjs)$/.test(rel)) continue;
-    const text = fs.readFileSync(path.join(src, rel), "utf8");
-    if (/careerOpsRoot\(\)\s*,\s*["'](templates|modes)["']/.test(text)) offenders.push(rel);
+  for (const file of listTree(src, { match: /\.(ts|tsx|mjs)$/ })) {
+    const text = fs.readFileSync(file, "utf8");
+    if (/careerOpsRoot\(\)\s*,\s*["'](templates|modes)["']/.test(text)) offenders.push(path.relative(src, file));
   }
   assert.deepEqual(offenders, []);
 });
