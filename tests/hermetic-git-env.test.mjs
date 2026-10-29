@@ -255,7 +255,12 @@ try {
     writeFileSync(join(hooksDir, hook), '#!/bin/sh\necho "rejected by a global hook" >&2\nexit 1\n', { mode: 0o755 });
   }
   const hooksConfig = join(hooksRoot, 'gitconfig');
-  writeFileSync(hooksConfig, `[core]\n\thooksPath = ${hooksDir.replace(/\\/g, '/')}\n`);
+  // fsmonitor off too: this file REPLACES the contributor's global config, so a
+  // system-level fsmonitor (Git for Windows can enable it in etc/gitconfig) that
+  // their global had turned off comes back. Its daemon then holds the suites'
+  // origin dirs open and their teardown fails EBUSY, which reads as a hooksPath
+  // failure.
+  writeFileSync(hooksConfig, `[core]\n\thooksPath = ${hooksDir.replace(/\\/g, '/')}\n\tfsmonitor = false\n\tuseBuiltinFSMonitor = false\n`);
   const env = { ...process.env, GIT_CONFIG_GLOBAL: hooksConfig };
   for (const name of ['GIT_CONFIG_COUNT', 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG']) delete env[name];
 
