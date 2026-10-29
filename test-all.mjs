@@ -17407,7 +17407,11 @@ try {
         if (existsSync(join(ROOT, 'web', 'tests', 'lib'))) {
           fail('web/tests/lib contains no *.test.mjs — the #2185 unit suites are not being gated');
         }
-      } else if (run(NODE, ['--experimental-strip-types', '--test', ...webUnits], { timeout: 180000 }) !== null) {
+      // spec, not the default TAP: TAP prints each `not ok` where it happens, which
+      // for ~250 suites is deep in the middle that formatRunFailure elides; spec
+      // repeats every failure in a `failing tests` block at the very end, which the
+      // tail-weighted clip keeps.
+      } else if (run(NODE, ['--experimental-strip-types', '--test', '--test-reporter=spec', ...webUnits], { timeout: 180000 }) !== null) {
         pass('web pdf write-scope unit suites pass (#2185)');
       } else {
         // The signal distinguishes a timeout/kill from an assertion failure —
@@ -17421,7 +17425,9 @@ try {
         // which of the hundred broke. A flake that only reproduces on a slow
         // runner is then undiagnosable by construction, which is the half of
         // #4017 that outlived its own test.
-        fail(`web pdf write-scope unit suites failed${killed ? ` (killed: ${killed})` : ''} (run: node --experimental-strip-types --test ${webUnits.join(' ')})${formatRunFailure()}`);
+        // 8000, not the default 2000: each failure in spec's summary runs ~850
+        // chars with its stack, so the default tail holds one; this holds ~5.
+        fail(`web pdf write-scope unit suites failed${killed ? ` (killed: ${killed})` : ''} (run: node --experimental-strip-types --test ${webUnits.join(' ')})${formatRunFailure(8000)}`);
       }
 
       // Parity: everything web/package.json would run must be something we DO run.
