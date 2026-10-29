@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
-import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { careerOpsRoot, rootScript, spawnEnv } from "@/lib/career-ops";
 import type { DiscoveredOffer } from "./scan";
@@ -59,7 +58,7 @@ export async function addOffersToPipeline(offers: DiscoveredOffer[]): Promise<Ad
   }
 
   const scanUrl = pathToFileURL(rootScript("scan")).href;
-  const localTodayUrl = pathToFileURL(path.join(careerOpsRoot(), "lib", "local-today.mjs")).href;
+  const localTodayUrl = pathToFileURL(rootScript("lib/local-today")).href;
   const code = `
 import { appendToPipeline, appendToScanHistory } from ${JSON.stringify(scanUrl)};
 import { localToday } from ${JSON.stringify(localTodayUrl)};

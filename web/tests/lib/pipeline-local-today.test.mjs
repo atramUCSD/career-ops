@@ -85,11 +85,11 @@ test("localToday is imported into the spawned child from lib/local-today.mjs", (
   );
 });
 
-test("localTodayUrl is built the same way scanUrl is: an absolute file:// URL under careerOpsRoot()", () => {
+test("localTodayUrl is built the same way scanUrl is: an absolute file:// URL under the code root", () => {
   assert.match(
     src,
-    /const localTodayUrl = pathToFileURL\(path\.join\(careerOpsRoot\(\),\s*["']lib["'],\s*["']local-today\.mjs["']\)\)\.href;/,
-    `${SRC}: localTodayUrl must resolve lib/local-today.mjs under careerOpsRoot(), so the import ` +
-      `works regardless of the checkout the web dashboard is pointed at.`,
+    /const localTodayUrl = pathToFileURL\(rootScript\(["']lib\/local-today["']\)\)\.href;/,
+    `${SRC}: localTodayUrl must resolve lib/local-today.mjs through rootScript(), like scanUrl, so ` +
+      `the import still works when CAREER_OPS_ROOT points at a data-only directory.`,
   );
 });
