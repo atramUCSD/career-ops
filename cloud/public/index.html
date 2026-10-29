@@ -36,7 +36,7 @@
   ol { margin: 10px 0 0; padding-left: 18px; }
   li { margin-bottom: 4px; }
   li time { color: var(--muted); font-size: 12px; display: block; }
-  details.more > summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 4px 0 8px; }
+  details.more > summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 10px 0; }
   #status.stale { color: var(--warn); }
   #status a { color: var(--accent); }
   #postings { padding: 0 16px 40px; max-width: 760px; }
@@ -79,6 +79,11 @@
     return mins < 60 ? rtf.format(-mins, 'minute') : mins < 2880 ? rtf.format(-Math.round(mins / 60), 'hour') : rtf.format(-Math.round(mins / 1440), 'day');
   };
   const httpUrl = (u) => (/^https?:\/\//.test(u ?? '') ? u : null);
+  // Multi-site postings list every office (some carry eight); the filter still searches them all.
+  const place = (l) => {
+    const parts = [...new Set(String(l ?? '').split(/\s*(?: · |;)\s*/).filter(Boolean))];
+    return parts.length > 2 ? `${parts.slice(0, 2).join(' · ')} +${parts.length - 2}` : parts.join(' · ');
+  };
   const open = new Set(); // cards the user expanded survive a re-render
   let states = [];
   let actions = [];
@@ -256,7 +261,7 @@
     document.getElementById('postings-h').textContent = q ? `Pending postings ${hits.length} of ${all.length}` : `Pending postings ${all.length}`;
     document.getElementById('postings-list').replaceChildren(...hits.slice(0, POSTINGS_SHOWN).map((p) => {
       const url = httpUrl(p.u);
-      const sub = [p.l, p.p ? `posted ${daysSince(p.p)}d ago` : 'no posted date', p.band && `${p.band} ${p.cb}`, p.gov && 'public sector'].filter(Boolean).join(' · ');
+      const sub = [place(p.l), p.p ? `posted ${daysSince(p.p)}d ago` : 'no posted date', p.band && `${p.band} ${p.cb}`, p.gov && 'public sector'].filter(Boolean).join(' · ');
       return el(url ? 'a' : 'div', { class: 'post', href: url, target: url && '_blank', rel: url && 'noopener noreferrer' },
         el('div', null, el('span', { class: 'co' }, p.c), ` ${p.t}`), el('div', { class: 'sub' }, sub));
     }), hits.length > POSTINGS_SHOWN ? el('p', { class: 'empty' }, `${hits.length - POSTINGS_SHOWN} more; filter to narrow`) : '');
@@ -272,7 +277,7 @@
       ...saved.map((s) => {
         const url = httpUrl(s.url);
         const p = byUrl.get(s.url);
-        const sub = p ? [p.l, p.band && `${p.band} ${p.cb}`].filter(Boolean).join(' · ') : 'no longer pending';
+        const sub = p ? [place(p.l), p.band && `${p.band} ${p.cb}`].filter(Boolean).join(' · ') : 'no longer pending';
         return el(url ? 'a' : 'div', { class: 'post', href: url, target: url && '_blank', rel: url && 'noopener noreferrer' },
           el('div', null, el('span', { class: 'co' }, s.company), ` ${s.role}`), el('div', { class: 'sub' }, sub));
       }),
