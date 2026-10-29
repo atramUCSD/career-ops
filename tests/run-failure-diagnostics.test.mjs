@@ -127,9 +127,11 @@ const OK_CHILD = 'console.log("OK");';
 
   // The site, found by the thing that makes it distinctive: it is the only
   // fail() whose message interpolates the discovered web-unit list.
-  const site = src.split('\n').find((l) => l.includes('fail(') && l.includes('webUnits.join('));
+  // `webUnits` then `.join(` rather than the literal `webUnits.join(`: the
+  // printed rerun command maps the list to web/-relative paths first.
+  const site = src.split('\n').find((l) => l.includes('fail(') && /webUnits\b.*\.join\(/.test(l));
   if (site) pass('the web-unit batch failure site is still findable');
-  else fail('no fail() in test-all.mjs interpolates webUnits.join() — this check has lost its subject');
+  else fail('no fail() in test-all.mjs interpolates the webUnits list — this check has lost its subject');
 
   const CARRIERS = [/formatRunFailure\s*\(/, /failureExcerpt\s*\(/, /\.(stdout|stderr)\b/];
   if (site && CARRIERS.some((re) => re.test(site))) {

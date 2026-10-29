@@ -62,7 +62,7 @@ test('Explore add preserves a valid posting date in pipeline and scan history', 
   process.env.CAREER_OPS_TRACKER = path.join(tmp, 'data', 'applications.md');
   process.env.CAREER_OPS_PORTALS = path.join(tmp, 'portals.yml');
 
-  // pipeline.ts currently imports localToday from careerOpsRoot()/lib. Stage
+  // pipeline.ts imports localToday through rootScript("lib/local-today"). Stage
   // that system module inside the throwaway root (independent of PR #4430).
   fs.mkdirSync(path.join(tmp, 'lib'), { recursive: true });
   fs.copyFileSync(todayPath, path.join(tmp, 'lib', 'local-today.mjs'));
@@ -76,6 +76,7 @@ test('Explore add preserves a valid posting date in pipeline and scan history', 
   const shim = `const careerOpsRoot = () => ${JSON.stringify(tmp)};\n`
     + `const spawnEnv = async () => process.env;\n`
     + `const rootScript = (name) => {\n`
+    + `  if (name === "lib/local-today") return ${JSON.stringify(path.join(tmp, 'lib', 'local-today.mjs'))};\n`
     + `  if (name !== "scan") throw new Error("Unexpected script name: " + name);\n`
     + `  return ${JSON.stringify(scanPath)};\n};`;
   // Node >=22.6.0 supports --experimental-strip-types for .mts files,
