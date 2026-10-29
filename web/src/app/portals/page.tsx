@@ -1,6 +1,5 @@
-import path from "node:path";
 import { PortalsView } from "@/components/portals-view";
-import { careerOpsRoot, portalsConfigPath, userRoot } from "@/lib/career-ops";
+import { codeFile, portalsConfigPath, userRoot } from "@/lib/career-ops";
 import { watchedCompanies, type WatchedCompany } from "@/lib/portals-config.mjs";
 import { loadYamlDoc } from "@/lib/yaml-doc.mjs";
 
@@ -9,7 +8,7 @@ export const dynamic = "force-dynamic";
 function readWatched(): { watched: WatchedCompany[]; error: string | null } {
   // The active profile's file, seeded from the code root's shipped example.
   try {
-    const { doc, seeded } = loadYamlDoc(portalsConfigPath(userRoot()), path.join(careerOpsRoot(), "templates", "portals.example.yml"));
+    const { doc, seeded } = loadYamlDoc(portalsConfigPath(userRoot()), codeFile("templates", "portals.example.yml"));
     return { watched: seeded ? [] : watchedCompanies(doc.toJS()), error: null };
   } catch (e) {
     return { watched: [], error: e instanceof Error ? e.message : String(e) };

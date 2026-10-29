@@ -1,5 +1,4 @@
-import path from "node:path";
-import { careerOpsRoot, portalsConfigPath, userRoot } from "@/lib/career-ops";
+import { codeFile, portalsConfigPath, userRoot } from "@/lib/career-ops";
 import { atomicWriteWithBackup } from "@/lib/core/safe-write";
 import { withFileLock } from "@/lib/core/file-lock";
 import { portalsPatch } from "@/lib/portals-config.mjs";
@@ -27,7 +26,7 @@ export async function POST(req: Request) {
   const file = portalsConfigPath(userRoot());
   try {
     return await withFileLock(file, () => {
-      const { doc, src, seeded } = loadYamlDoc(file, path.join(careerOpsRoot(), "templates", "portals.example.yml"));
+      const { doc, src, seeded } = loadYamlDoc(file, codeFile("templates", "portals.example.yml"));
       setIn(doc, [], result.patch);
       atomicWriteWithBackup(file, toYaml(doc, src));
       return Response.json({ ok: true, seeded });

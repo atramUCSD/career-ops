@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { cliSubstitutionNotice, cliUnavailableError, resolveCliOrFallback } from "@/lib/clis";
-import { careerOpsRoot, profilePreamble, readMemory, spawnEnv } from "@/lib/career-ops";
+import { careerOpsRoot, codeFile, profilePreamble, readMemory, spawnEnv } from "@/lib/career-ops";
 import { assembleDedupContext } from "@/lib/core/discover";
 import { makeKnownOfferFilter } from "@/lib/explore-ai";
 import { CAPS } from "@/lib/worker-capabilities.mjs";
@@ -64,7 +64,7 @@ export async function POST(req: Request) {
   // homegrown prompt. Missing (older core) → graceful 400 so the Scan tab stays usable.
   let mode: string;
   try {
-    mode = fs.readFileSync(path.join(careerOpsRoot(), "modes", "discover.md"), "utf8");
+    mode = fs.readFileSync(codeFile("modes", "discover.md"), "utf8");
   } catch {
     return Response.json({ code: "MODE_MISSING", error: "AI search needs a newer career-ops — update to enable it." }, { status: 400 });
   }

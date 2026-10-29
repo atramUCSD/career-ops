@@ -209,6 +209,16 @@ export function rootScript(nameNoExt: string): string {
   return resolveRootScript(resolveCodeRoot(process.cwd(), process.env), nameNoExt);
 }
 
+/**
+ * A system-layer file (templates/, modes/) from the engine checkout. The core
+ * reads these from its own checkout only (followup-cadence.mjs, close-stale.mjs),
+ * so a data-root copy would let the web and the core disagree on, say, which
+ * statuses are canonical.
+ */
+export function codeFile(...parts: string[]): string {
+  return path.join(/* turbopackIgnore: true */ resolveCodeRoot(process.cwd(), process.env), ...parts);
+}
+
 // Feature-detect the core's `tracker.mjs delete --num` row-delete (#1200) by probing
 // the local script source — older checkouts lack it, so the delete UI hides itself.
 export function trackerCanDelete(): boolean {
