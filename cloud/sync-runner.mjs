@@ -33,6 +33,7 @@ import { BOARD_COLUMNS, boardColumn, isSkipDecision } from '../web/src/lib/board
 import { isReservedReportFile } from '../web/src/lib/report-files.mjs';
 import { isMainModule } from '../lib/is-main-module.mjs';
 import { buildModel } from '../build-artifact.mjs';
+import { readShortlist } from '../web/src/lib/ui-state.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const STATES_FILE = path.join(REPO, 'templates/states.yml');
@@ -121,6 +122,7 @@ export function buildCopy(root) {
   // The page offers the states the PC accepts, read from states.yml, never hard-coded.
   rows.push({ id: 'states', kind: 'meta', data: loadCanonicalStates(STATES_FILE) });
   rows.push({ id: 'columns', kind: 'meta', data: BOARD_COLUMNS });
+  rows.push({ id: 'shortlist', kind: 'meta', data: readShortlist(path.join(root, 'data/ui-state.json')) });
   return rows;
 }
 

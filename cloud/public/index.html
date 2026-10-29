@@ -40,6 +40,7 @@
   #status.stale { color: var(--warn); }
   #status a { color: var(--accent); }
   #postings { padding: 0 16px 40px; max-width: 760px; }
+  #saved:not(:empty) { margin-bottom: 20px; }
   #postings input { width: 100%; font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; }
   #tabs { display: flex; gap: 4px; padding: 0 16px 12px; }
   #tabs a { padding: 6px 12px; border-radius: 6px; color: var(--muted); text-decoration: none; font-size: 14px; }
@@ -52,6 +53,7 @@
 <nav id="tabs" hidden><a href="#">Board</a><a href="#postings" id="tab-postings">Postings</a></nav>
 <main id="board"></main>
 <section id="postings" hidden>
+  <div id="saved"></div>
   <h2 id="postings-h"></h2>
   <input id="q" type="search" placeholder="Filter by company, title or location" aria-label="Filter postings">
   <div id="postings-list"></div>
@@ -241,6 +243,7 @@
     const all = copy.rows.filter((r) => r.kind === 'posting').map((r) => r.data);
     document.getElementById('tab-postings').textContent = `Postings ${all.length}`;
     route();
+    drawSaved(all);
     const q = document.getElementById('q').value.trim().toLowerCase();
     const hits = (q ? all.filter((p) => `${p.c} ${p.t} ${p.l}`.toLowerCase().includes(q)) : all).sort((a, b) => (b.cb ?? 0) - (a.cb ?? 0));
     document.getElementById('postings-h').textContent = q ? `Pending postings ${hits.length} of ${all.length}` : `Pending postings ${all.length}`;
@@ -252,6 +255,22 @@
     }), hits.length > POSTINGS_SHOWN ? el('p', { class: 'empty' }, `${hits.length - POSTINGS_SHOWN} more; filter to narrow`) : '');
   }
   document.getElementById('q').oninput = drawPostings;
+
+  // The inbox shortlist from the PC (data/ui-state.json), above the filter so it stays put.
+  function drawSaved(all) {
+    const saved = copy.rows.find((r) => r.id === 'shortlist')?.data ?? [];
+    const byUrl = new Map(all.map((p) => [p.u, p]));
+    document.getElementById('saved').replaceChildren(...(saved.length ? [
+      el('h2', null, `Shortlisted ${saved.length}`),
+      ...saved.map((s) => {
+        const url = httpUrl(s.url);
+        const p = byUrl.get(s.url);
+        const sub = p ? [p.l, p.band && `${p.band} ${p.cb}`].filter(Boolean).join(' · ') : 'no longer pending';
+        return el(url ? 'a' : 'div', { class: 'post', href: url, target: url && '_blank', rel: url && 'noopener noreferrer' },
+          el('div', null, el('span', { class: 'co' }, s.company), ` ${s.role}`), el('div', { class: 'sub' }, sub));
+      }),
+    ] : []));
+  }
 
   // Two views on the hash, so the back button and a home-screen bookmark both work.
   // The tabs appear only once the copy carries postings.

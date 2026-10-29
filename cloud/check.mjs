@@ -100,10 +100,11 @@ try {
   assert.equal(lines.length, 1);
   assert.equal(JSON.parse(lines[0]).text, 'called back');
 
-  // The copy: one card per tracker row plus the two meta rows, and a snapshot version
+  // The copy: one card per tracker row plus the meta rows, and a snapshot version
   // that only moves when the data does, so an idle run uploads nothing.
   const copy = buildCopy(root);
-  assert.deepEqual(copy.map((r) => r.id), ['card:1', 'states', 'columns']);
+  assert.deepEqual(copy.map((r) => r.id), ['card:1', 'states', 'columns', 'shortlist']);
+  assert.deepEqual(copy.at(-1).data, [], 'no ui-state.json reads as an empty shortlist');
   assert.equal(copy[0].data.app.status, 'Applied');
   const snap = snapshot(copy);
   assert.match(snap.version, /^[0-9a-f]{32}$/, 'sync.js accepts 16-64 hex');
