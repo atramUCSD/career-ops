@@ -1,0 +1,8 @@
+lanes:
+  - id: data
+    archetype: "Data Engineer"
+    title_keywords: ["Data Engineer"]
+    max_evaluations: 5
+  - id: backend
+    archetype: "Backend Engineer"
+    title_keywords: ["Backend"]

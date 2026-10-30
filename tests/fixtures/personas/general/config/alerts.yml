@@ -1,0 +1,10 @@
+alerts:
+  to: "riley@example.test"
+  min_match: 42
+  calendar:
+    enabled: true
+    min_match: 55
+    keywords: [Data Engineer, Backend]
+    locations: [Chicago, Evanston, Remote]
+    at: "18:30"
+    time_zone: America/Chicago

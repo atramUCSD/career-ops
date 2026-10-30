@@ -1,0 +1,31 @@
+# Synthetic persona for tests/persona-e2e.test.mjs. Nothing here describes a
+# real person. Every scoring key is set to a value that differs from the
+# maintainer profiles, so a rule that still reads a hardcoded value shows up.
+candidate:
+  full_name: "Riley Moreno"
+  location: "Chicago, IL"
+target_roles:
+  primary:
+    - "Data Engineer"
+    - "Backend Engineer"
+  archetypes:
+    - name: "Data Engineer"
+      level: "Mid-Senior"
+      fit: "primary"
+    - name: "Backend Engineer"
+      level: "Mid-Senior"
+      fit: "secondary"
+compensation:
+  minimum: "$140K"
+  currency: USD
+scoring:
+  degree: bachelor
+  yoe_ceiling: 6
+  onsite_within:
+    name: Illinois
+    places: "chicago|evanston|oak brook|naperville"
+    states: [il]
+  segments:
+    - { name: Chicago, match: "chicago|evanston|oak brook|naperville", pool: 1, why: home metro }
+    - { name: Remote, match: "remote|anywhere", pool: 0.85, why: national applicant pool }
+    - { name: Elsewhere, pool: 0.9, why: relocation case }

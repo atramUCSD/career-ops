@@ -1,0 +1,9 @@
+max_posting_age_days: 45
+title_filter:
+  positive:
+    - "Data Engineer"
+    - "Backend"
+    - "Frontend"
+    - "Forward Deployed"
+  negative:
+    - "Intern"

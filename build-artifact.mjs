@@ -480,9 +480,11 @@ export function buildModel({ root = ROOT, now = new Date(), profileRoot = null, 
   const dropped = profileRoot ? rows.filter(r => r.family === 'unmatched').length : 0;
   if (profileRoot) rows = rows.filter(r => r.family !== 'unmatched');
 
+  const primary = profile.target_roles?.primary || [];
   const laneMeta = [
     ...lanes.map(l => ({ id: l.id, label: l.archetype, max: l.max_evaluations ?? null })),
-    { id: 'core', label: 'Core targeting (AI / front-end / forward-deployed)', max: null },
+    // Named from the profile so a projected page never describes another person's targeting.
+    { id: 'core', label: primary.length ? `Core targeting (${primary.join(' / ')})` : 'Core targeting', max: null },
   ];
 
   const dead = positives.filter(k => !keywordCount(k, rows));
@@ -507,7 +509,7 @@ export function buildModel({ root = ROOT, now = new Date(), profileRoot = null, 
     { label: 'Scanner-added (all time)', n: history.added.length },
     { label: 'Pending now', n: rows.length },
     { label: 'Description read', n: readCount },
-    { label: 'Match ≥ 42', n: rows.filter(r => r.cbBand === 'premier' || r.cbBand === 'strong').length },
+    { label: `Match ≥ ${BANDS.find(b => b.id === 'strong').min}`, n: rows.filter(r => r.cbBand === 'premier' || r.cbBand === 'strong').length },
     { label: 'Applied', n: appList.length },
     { label: 'Reached interview', n: tiles.interviews },
     { label: 'Offer', n: tiles.offers },
@@ -580,7 +582,10 @@ export function buildModel({ root = ROOT, now = new Date(), profileRoot = null, 
     // It stays on `root` even under a projection: the channels are a property of
     // the corpus, not of whoever is looking at it.
     channels: buildChannelTrust({ root }),
-    signals: SIGNALS,
+    // The hats row and its prose describe one candidate's role model; a profile
+    // that has not opted in never sees a hats multiplier, so it is not listed.
+    hats: profile.scoring?.hats === true,
+    signals: profile.scoring?.hats === true ? SIGNALS : SIGNALS.filter(s => s.id !== 'hats'),
     cbBands: BANDS.map(b => ({ id: b.id, label: b.label, min: b.min === -Infinity ? 0 : b.min })),
     calibration: calibrate(rows),
     runStats: computeRunStats(readIf(join(root, 'data/scan-runs.tsv'))),
@@ -1213,8 +1218,8 @@ ul.chartnote{padding-left:18px}
   <footer>
     <p><b>What the match number is.</b> <span class="mono">100 × eligibility × fit × timing</span>, out of 100.
     <b>Eligibility</b> is 0 or 1 — a TS/SCI or polygraph requirement, and — where the profile sets them — a years floor
-    above its ceiling, a required doctorate, onsite outside its region, or an advertised ceiling under the walk-away makes the row a 0. <b>Fit</b> is how many
-    of the three hats the description demands — designer, developer, AI advocate — modulated by named
+    above its ceiling, a required doctorate, onsite outside its region, or an advertised ceiling under the walk-away makes the row a 0. <b>Fit</b> is ${model.hats ? `how many
+    of the three hats the description demands — designer, developer, AI advocate —` : 'the title against this profile’s target roles,'} modulated by named
     frameworks, clearance advantage, government / public-sector customer, degree demand, seniority and title family. <b>Timing</b> only discounts:
     freshness, applicant pool, employer volume, repost pattern. Hover any score to see every multiplier.</p>
     <p><b>A 0 is not a hidden row.</b> Gated postings stay in place, stay linked, and name the rule that killed
@@ -1322,7 +1327,7 @@ el('hyd').title = M.built
 const dated = rows.filter(r => r.age !== null).map(r => r.age).sort((a,b)=>a-b);
 el('stats').innerHTML = [
   [rows.length, 'Pending'],
-  [rows.filter(r=>r.cbBand==='premier'||r.cbBand==='strong').length, 'Match ≥42'],
+  [rows.filter(r=>r.cbBand==='premier'||r.cbBand==='strong').length, 'Match ≥' + M.cbBands.find(b=>b.id==='strong').min],
   [M.jd.gated, 'Gated to 0'],
   [M.jd.read, 'Descriptions read'],
   [rows.filter(r=>r.lane!=='core').length, 'In a role family'],
