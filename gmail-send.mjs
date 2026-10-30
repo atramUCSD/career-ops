@@ -41,7 +41,7 @@ export function credentialsFrom(env = process.env) {
   return { clientId, clientSecret, refreshToken, missing };
 }
 
-async function accessTokenFor({ clientId, clientSecret, refreshToken }, fetchFn) {
+export async function accessTokenFor({ clientId, clientSecret, refreshToken }, fetchFn) {
   const res = await fetchFn(TOKEN_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

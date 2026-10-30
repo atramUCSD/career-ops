@@ -9,6 +9,7 @@
  *
  *   node scripts/mint-gmail-token.mjs              # gmail.send     -> GMAIL_SEND_REFRESH_TOKEN (alerts)
  *   node scripts/mint-gmail-token.mjs --readonly   # gmail.readonly -> GMAIL_REFRESH_TOKEN (ingest, reply scan)
+ *   node scripts/mint-gmail-token.mjs --calendar   # calendar.events -> GCAL_REFRESH_TOKEN (calendar-alert.mjs)
  *
  * Separate tokens so either can be revoked without breaking the other.
  * Re-running replaces the existing line for that token.
@@ -31,8 +32,11 @@ if (!clientId || !clientSecret) {
 }
 
 const readonly = process.argv.includes('--readonly');
-const ENV_KEY = readonly ? 'GMAIL_REFRESH_TOKEN' : 'GMAIL_SEND_REFRESH_TOKEN';
-const SCOPE = `https://www.googleapis.com/auth/gmail.${readonly ? 'readonly' : 'send'}`;
+const calendar = process.argv.includes('--calendar');
+const ENV_KEY = calendar ? 'GCAL_REFRESH_TOKEN' : readonly ? 'GMAIL_REFRESH_TOKEN' : 'GMAIL_SEND_REFRESH_TOKEN';
+const SCOPE = calendar
+  ? 'https://www.googleapis.com/auth/calendar.events'
+  : `https://www.googleapis.com/auth/gmail.${readonly ? 'readonly' : 'send'}`;
 
 const state = randomBytes(16).toString('hex');
 let redirectUri;

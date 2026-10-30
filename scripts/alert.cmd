@@ -70,6 +70,8 @@ if exist profiles (
 
 call node build-hub.mjs
 if errorlevel 1 echo !TS!	hub	FAILED - continuing>> "%LOG%"
+call node calendar-alert.mjs
+if errorlevel 1 echo !TS!	calendar	FAILED - continuing>> "%LOG%"
 
 call node notify-email.mjs
 if errorlevel 1 goto :failed_alert

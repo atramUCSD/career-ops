@@ -36,3 +36,23 @@ alerts:
   # republish it, so this points at the last version published from a Claude
   # session and may lag the attachment.
   artifact_url: ""
+
+  # Google Calendar events for the few postings worth an evening slot
+  # (calendar-alert.mjs, run by scripts/alert.cmd before the mail). Every rule
+  # must pass. Needs GCAL_REFRESH_TOKEN: `node scripts/mint-gmail-token.mjs
+  # --calendar`. Preview with `node calendar-alert.mjs --dry-run`.
+  calendar:
+    enabled: false
+    min_match: 65
+    # Word-matched against the company name ("Anduril" takes "Anduril
+    # Industries", "Meta" does not take "Metabase"). Empty means any company.
+    companies: []
+    # Word-matched against the title and the lane keywords it hit. Empty means any.
+    keywords: []
+    # A host and its subdomains.
+    exclude_hosts: [linkedin.com]
+    # Today at this time in time_zone, or tomorrow once today's has passed.
+    at: "21:00"
+    minutes: 30
+    time_zone: America/Los_Angeles
+    calendar_id: primary

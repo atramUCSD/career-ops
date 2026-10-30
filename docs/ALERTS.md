@@ -115,6 +115,27 @@ make every sweep log FAILED and skip the prune.
 
 Both tasks append to `data/alert-log.tsv`.
 
+## Calendar events
+
+`calendar-alert.mjs` puts a Google Calendar event on the calendar for each
+pending posting that clears a stricter bar than the mail: the
+`alerts.calendar` rules in `config/alerts.yml` (score floor, company list,
+title keywords, excluded hosts, slot time). `scripts/alert.cmd` runs it after
+the hub build and before the mail, so a failure in either one does not stop
+the other.
+
+1. In Google Cloud Console, enable the **Google Calendar API** on the project
+   that owns the mail's OAuth client.
+2. `node scripts/mint-gmail-token.mjs --calendar` mints a `calendar.events`
+   token into `.env` as `GCAL_REFRESH_TOKEN`. It is a separate token, so it can
+   be revoked without touching the mail.
+3. `node calendar-alert.mjs --dry-run` lists what would be created. Then set
+   `calendar.enabled: true`.
+
+Each event id is a hash of the posting URL. Calendar refuses a second insert
+of the same id with 409, so the twice-daily runs never duplicate an event and
+no state file is needed.
+
 ## Failure posture
 
 State is written **only** after Gmail returns 2xx. A failed send leaves every
@@ -140,6 +161,7 @@ published from a Claude session (may lag). Set `artifact_url` in
 |---|---|
 | `notify-email.mjs` | diff, compose, send |
 | `gmail-send.mjs` | transport only — OAuth refresh + `messages/send` |
+| `calendar-alert.mjs` | Calendar events for postings that pass `alerts.calendar` |
 | `config/alerts.yml` | recipient, threshold, row cap (gitignored) |
 | `data/alert-state.json` | seen/strong URL sets + last run (gitignored) |
 | `data/alert-log.tsv` | one row per scheduled run |

@@ -1077,6 +1077,8 @@ New postings at or above `min_match` (`min_reply_odds` is still honoured as the 
 
 Seen/strong URL state lives in `data/alert-state.json` and is written **only** after Gmail returns 2xx, so a failed send re-alerts on the next run rather than silently swallowing a day of postings. Seed once before the first real send, or that mail reports the entire existing backlog. See [ALERTS.md](ALERTS.md) for the send-scoped token and Task Scheduler registration.
 
+`calendar-alert.mjs` adds a Google Calendar event for each posting that passes the stricter `alerts.calendar` rules (`--dry-run` lists them). See [ALERTS.md](ALERTS.md#calendar-events).
+
 ---
 
 ## swarm
