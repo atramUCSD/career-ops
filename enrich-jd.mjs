@@ -374,15 +374,19 @@ export function locationFromTitle(title = '') {
   return m ? m[1].trim() : '';
 }
 
-async function readPage(ctx, url) {
+export async function readPage(ctx, url) {
   const page = await ctx.newPage();
-  // goto is the only call here with a timeout of its own. Closing the page
-  // rejects whatever frame read is still pending, so a page that wedges after
-  // load costs this one row instead of stalling the pass.
+  // goto and the idle wait are the only calls here with timeouts of their own.
+  // Closing the page rejects whatever frame read is still pending, so a page
+  // that wedges after load costs this one row instead of stalling the pass.
   const deadline = setTimeout(() => page.close().catch(() => {}), TIMEOUT_MS * 3);
   try {
-    const res = await page.goto(url, { waitUntil: 'networkidle', timeout: TIMEOUT_MS * 2 });
+    const res = await page.goto(url, { waitUntil: 'load', timeout: TIMEOUT_MS * 2 });
     if (!res || res.status() !== 200) return { text: '', location: '' };
+    // Idle is a grace period for late hydration, not a condition of the read:
+    // a page that polls analytics forever (Ceros on an iCIMS board) never goes
+    // idle, and waiting on it in goto threw away a fully loaded description.
+    await page.waitForLoadState('networkidle', { timeout: TIMEOUT_MS / 3 }).catch(() => {});
     // The description can be in any frame; the longest one is it.
     let text = '';
     for (const f of page.frames()) {
