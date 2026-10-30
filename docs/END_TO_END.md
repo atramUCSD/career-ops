@@ -7,7 +7,7 @@ on, so a rule that quietly reads one person's values shows up as a failure
 rather than as a page that looks right to its author.
 
 ```bash
-node --test tests/persona-e2e.test.mjs
+node --test tests/persona-e2e.test.mjs tests/persona-run.test.mjs \n  tests/persona-property.test.mjs tests/runner.test.mjs
 ```
 
 The persona lives in `tests/fixtures/personas/general/`. It contains config and
@@ -52,10 +52,22 @@ hats model.
 | Years ceiling | none | set | 6 | 1 | none |
 | Work authorization | citizen | citizen | citizen | needs sponsorship | needs a permit |
 | Floor currency | USD | USD | USD | USD | EUR |
-| Checked by | live data | live data | `persona-e2e` | nothing yet | nothing yet |
+| Checked by | live data | live data | `persona-e2e`, `persona-run` | nothing yet | nothing yet |
 
 The two unbuilt columns mark axes the system has no rule for yet. See
 [Open findings](#open-findings).
+
+`persona-property` covers the space between the columns. It generates 200
+profiles from a fixed seed (one or two primary roles, home metro or none,
+degree, years ceiling, clearance, sector, frameworks, hats on or off, comp
+floor) and runs each over one generated corpus. In the corpus, rows come in
+groups that share company, location, date and description facts and differ only
+in title. For every profile it checks that each score is finite and between 0
+and 100, that a gated row scores 0, that a profile without hats never sees the
+hats model, that the core lane names the profile's own roles, that within a
+group a stronger title family never scores below a weaker one, and that a
+projection drops exactly the unmatched titles. A failure message carries the
+seed, the profile index and the profile itself.
 
 ## Workflow: who does each step
 
@@ -96,20 +108,22 @@ below it either asks a model or waits for the person.
 
 ## System: one scheduled run
 
-`scripts/alert.cmd` runs at 07:00 and 19:00. A failed scan or page build stops
-the chain before the mail, because a mail sent after a failed scan would mark a
+`career-ops.exe alert` runs at 07:00 and 19:00. The exe is a windowless
+launcher for `node runner.mjs alert`; the chain itself, and every rule below,
+lives in `runner.mjs`. A failed scan or page build stops the chain before the
+mail, because a mail sent after a failed scan would mark a
 day of postings as seen. Every other failure is logged and the chain continues.
 
 ```mermaid
 flowchart TB
-  start(["Task Scheduler<br/>07:00 and 19:00"]) --> swarm
+  start(["Task Scheduler<br/>career-ops.exe alert<br/>07:00 and 19:00"]) --> swarm
   swarm["swarm.mjs --scan --stale<br/>preflight · scan · liveness · prune"]
   swarm -- "fails" --> stopA["log, stop<br/>no mail, postings stay unseen"]
   swarm -- "ok" --> enrich["enrich-jd.mjs<br/>skips linkedin.com"]
   enrich -- "ok or logged failure" --> build["build-artifact.mjs"]
   build -- "fails" --> stopB["log, stop"]
   build -- "ok" --> loop{"each profiles/*"}
-  loop -- "has config/alerts.yml" --> sep["separate layer<br/>own scan, page and mail<br/>--root profiles/name"]
+  loop -- "has config/alerts.yml" --> sep["separate layer<br/>own scan, page and mail<br/>--root profiles/name<br/>failed scan or page: no mail"]
   loop -- "no alerts.yml" --> proj["projection page<br/>--as-profile name"]
   loop --> hub["build-hub.mjs"]
   hub --> calA["calendar-alert.mjs<br/>owner only"]
@@ -122,9 +136,24 @@ flowchart TB
   mailA -. "OAuth, gmail.send" .-> gmail[["Gmail"]]
 ```
 
-A weekly sweep, `scripts/sweep.cmd` on Sunday at 03:00, is the only path that
+A weekly sweep, `career-ops.exe sweep` on Sunday at 03:00, is the only path that
 finds companies missing from `portals.yml`. It is off this diagram because
 nothing it does changes the morning mail.
+
+## Running without a session
+
+The scheduled runs need no Claude session. `node runner.mjs install` compiles
+`career-ops.exe` from `scripts/launcher.cs` and registers the alert and sweep
+tasks on it; `--sync` adds the ten-minute cloud sync. The exe passes its
+arguments to `node runner.mjs` and appends the output to
+`data/runner-log.txt`. It decides nothing, so a change to the chain is a change
+to `runner.mjs` and takes effect on the next run without a rebuild.
+
+`career-ops.exe` with no arguments writes and opens `output/status.html`: each
+task's last result and next run, the last twenty rows of `data/alert-log.tsv`,
+and links to the pages that exist. When a row says FAILED, the page tells the
+person to paste it, or the log, into the session that maintains the install.
+Diagnosis and fixes happen there; the installed copy only runs.
 
 ## Data: which files each stage reads and writes
 
@@ -208,15 +237,18 @@ projection to check that unmatched titles are dropped.
 | Discover | Postings that match `title_filter.positive` reach `pipeline.md` | scan and provider tests | no, needs the network |
 | Liveness | A closed posting leaves the pipeline and is logged | liveness and prune tests | no, needs the network |
 | Classify | Each row lands in the lane its title keyword names | `classify` | yes |
-| Read | Description facts land in `jd-facts.tsv` | enrich-jd tests | the fixture supplies facts |
+| Read | Description facts land in `jd-facts.tsv` | `persona-run` read: the real parser over the fixture's cached descriptions reproduces its facts | yes |
 | Gate | Each profile-owned rule stops its row and names itself | `gate` | yes |
 | Segment | Locations bucket by the profile's own home metro | `segment` | yes |
 | Rank | A fresh home-metro primary role outranks above-level and remote | `rank` | yes |
 | Project | Titles outside the target roles score low, or drop under a projection | `project` | yes |
 | Page | Nothing on the page describes another person's targeting | `page` | yes |
 | Mail | A first run reports every ungated row over the floor | `mail` | yes |
+| Over time | Each run mails only new rows and rows that rose into a top band; an unchanged day sends nothing | `persona-run` days | yes |
 | Calendar | Stricter bar, profile's own zone, no LinkedIn | `calendar` | yes |
 | Thresholds | Every floor in the profile's `alerts.yml` can be reached | `thresholds` | yes |
+| Orchestrate | The scheduled chain runs its stages in order, stops on the failures that would mark postings seen unmailed, and logs the rest | `runner` | yes |
+| Any profile | Scoring and page invariants hold for generated profiles | `persona-property` | 200 generated |
 | Evaluate | A to G report with a 1 to 5 fit score | `evals/golden` | no, needs a model |
 | Apply | A human submits; nothing is sent automatically | apply-runner tests | no |
 | Track | The tracker row joins back to its posting | artifact-build tests | not for Riley |
@@ -233,7 +265,20 @@ persona:
 - The funnel label "Match ≥ 42" was a second copy of the strong band's floor.
   It now reads the floor from `BANDS`.
 
-### Open findings
+## Findings from the packaging pass
+
+- A separate layer whose page build failed was still mailed, with the previous
+  run's page attached. `alert.cmd` never checked that exit code. The runner
+  now skips that layer's mail and logs the failure.
+- The scheduled tasks were registered with Task Scheduler's default of not
+  starting on battery, so a laptop unplugged at 07:00 skipped the run without
+  a log row. `runner.mjs install` registers them to run on battery.
+- The fixture's facts were hand written, and one of them (a bachelor's degree)
+  is a value the parser cannot produce. The facts are now the parser's own
+  output over cached description text, and `persona-run` checks that they stay
+  so.
+
+## Open findings
 
 1. **Score ceiling for profiles without hats.** When a profile has no hats
    model, the title family is the whole fit, capped at 0.62 for a primary
@@ -243,7 +288,7 @@ persona:
    but can never raise them. The fix is a decision about the cap: lifting it for
    rows whose description was read would rescale the second profile's scores,
    and its floors would need retuning.
-2. **The calendar step uses one Google account.** `alert.cmd` runs
+2. **The calendar step uses one Google account.** The alert chain runs
    `calendar-alert.mjs` for the owner only, so the `alerts.calendar` block in a
    separate layer never runs. Running it would place that person's events on
    the owner's calendar. The two candidate shapes are an attendee invite to the
@@ -254,6 +299,15 @@ persona:
    Pacific.
 4. **No work-authorization fact.** `enrich-jd` extracts no sponsorship or
    authorization terms, so a person who needs sponsorship gets no gate on
-   postings that rule it out.
+   postings that rule it out. Kappa's cached description says it cannot
+   sponsor a visa; nothing in its facts records that.
 5. **The floor has no currency.** `parseMoney` ignores the currency, so a EUR
    floor is compared with whatever number the description states.
+6. **No way to say "no degree".** `scoring.degree` names the highest degree
+   held, and the rule is off when it is absent. The parser files a bachelor's
+   requirement as `open`, so a person without a degree cannot be gated or
+   discounted on postings that require one.
+7. **The years floor is the lowest figure outside a PhD branch.** "10+ years of
+   experience, or 5+ years with a master's" reads as 5. This is deliberate,
+   because the parser does not know which branch applies to the person, but it
+   means a years ceiling never gates a posting that names any lower figure.
