@@ -1,0 +1,19 @@
+Data Engineer
+Acme Data - Chicago, IL
+
+Acme Data is hiring a Data Engineer to join our Chicago team. This role is hybrid: three days a week in our West Loop office.
+
+What you'll do
+- Build and operate batch and streaming pipelines in Python and SQL.
+- Own our dbt models and Airflow DAGs end to end.
+- Partner with analytics on data contracts and quality checks.
+
+What we're looking for
+- Bachelor's degree in Computer Science, Engineering, or a related field.
+- 3+ years of experience building production data pipelines.
+- Strong SQL and Python; experience with Snowflake or BigQuery.
+
+Compensation
+The base salary range for this role is $145,000 – $175,000, plus equity and benefits.
+
+Acme Data is an equal opportunity employer and complies with all applicable federal, state, and local laws.

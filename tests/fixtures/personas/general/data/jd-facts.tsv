@@ -1,5 +1,5 @@
 url	ok	yoe	degree	clearance	sector	comp_low	comp_high	remote	hats	frameworks	fetched	location
-https://x.test/delta/4	1	3	open	none		150000	180000	onsite			2026-10-29	
-https://x.test/epsilon/5	1	3	open	none		100000	120000	hybrid			2026-10-29	
-https://x.test/kappa/10	1	10	open	none		160000	200000	hybrid			2026-10-29	
-https://boards.greenhouse.io/acmedata/jobs/1	1	3	bachelor	none		145000	175000	hybrid			2026-10-29	
+https://boards.greenhouse.io/acmedata/jobs/1	1	3	open	none	none	145000	175000	hybrid			2026-10-29	
+https://x.test/delta/4	1	3	open	none	none	150000	180000	onsite			2026-10-29	
+https://x.test/epsilon/5	1	3	open	none	none	100000	120000	hybrid	developer		2026-10-29	
+https://x.test/kappa/10	1	10	open	none	none	160000	200000	hybrid			2026-10-29	

@@ -1,0 +1,10 @@
+Data Engineer - Evanston, IL (hybrid)
+Kappa Logistics
+
+We need someone with 10+ years of experience designing data platforms at scale.
+- Deep experience with Spark and Airflow.
+- A track record of owning data models across teams.
+
+Compensation: $160,000 to $200,000 depending on experience.
+
+Kappa Logistics is unable to sponsor or take over sponsorship of an employment visa at this time.

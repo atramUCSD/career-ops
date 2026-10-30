@@ -1,0 +1,9 @@
+Delta Freight - Data Engineer (Austin, TX)
+
+This is an on-site role at our Austin headquarters. Relocation assistance is available.
+
+Requirements
+- 3+ years of data engineering experience.
+- Kafka, Spark and Postgres in production.
+
+Salary: $150K–$180K base. Contract-to-hire candidates are paid $85/hour during the contract period.
