@@ -43,6 +43,7 @@ import { classifyFullListAbsence } from './liveness-core.mjs';
 import { parseWwrFeed } from './providers/weworkremotely.mjs';
 import { ZOHO_HOST_RE, isZohoRecordClosed, parseZohoDetailPage } from './providers/zoho-recruit.mjs';
 import { VEJ_KEY_MONITOR } from './providers/vdab.mjs';
+import { GEM_API_URL, JOB_DETAIL_QUERY as GEM_JOB_QUERY } from './providers/gem.mjs';
 import { atsVendorOf } from './ats-vendor.mjs';
 import { linkedInJobId, linkedInGuestUrl } from './lib/linkedin-url.mjs';
 import { getCareerOpsRoot } from './path-resolver.mjs';
@@ -823,6 +824,31 @@ const ATS_PROVIDERS = [
     },
   },
   {
+    id: 'gem',
+    // jobs.gem.com/{boardId}/{extId}, the URL providers/gem.mjs writes. The page
+    // is a client-rendered shell: its HTML has no description, and the posting
+    // arrives from this GraphQL batch endpoint after load, often after a
+    // headless read has already called the page idle. A removed posting answers
+    // 200 with a null posting, never a 404.
+    match(u) {
+      if (u.hostname !== 'jobs.gem.com') return null;
+      const [boardId, extId, ...rest] = u.pathname.split('/').filter(Boolean);
+      return boardId && extId && !rest.length ? { boardId, extId } : null;
+    },
+    api: () => GEM_API_URL,
+    method: 'POST',
+    headers: { 'content-type': 'application/json', batch: 'true' },
+    body: ({ boardId, extId }) => JSON.stringify([
+      { operationName: 'ExternalJobPostingQuery', variables: { boardId, extId }, query: GEM_JOB_QUERY },
+    ]),
+    api404Authoritative: false,
+    async interpret(res, { extId }) {
+      let json;
+      try { json = await res.json(); } catch { return null; }
+      return classifyGemPosting(json, extId);
+    },
+  },
+  {
     id: 'meituan',
     // zhaopin.meituan.com/web/position/detail?jobUnionId={id}, the URL
     // providers/meituan.mjs writes. The browser misses a live posting's 立即申请
@@ -1305,6 +1331,29 @@ export function classifyMeituanJob(json, jobUnionId) {
 }
 
 /**
+ * Decide liveness for one Gem posting from its GraphQL batch answer. A null
+ * posting with no errors is how Gem answers for an id it does not have (a
+ * removed posting, or an id never issued); an answer with errors, or for
+ * another posting, is not a verdict.
+ *
+ * @param {any} json - the parsed batch response (an array, one entry per query)
+ * @param {string} extId
+ * @returns {{ result: 'active' | 'expired', code: string, reason: string } | null}
+ */
+export function classifyGemPosting(json, extId) {
+  const entry = Array.isArray(json) ? json[0] : null;
+  if (!entry || entry.errors?.length || !entry.data || !('oatsExternalJobPosting' in entry.data)) return null;
+  const posting = entry.data.oatsExternalJobPosting;
+  if (posting === null) {
+    return { result: 'expired', code: 'gem_api_gone', reason: 'Gem answers no posting for this id (removed)' };
+  }
+  if (posting?.extId === extId) {
+    return { result: 'active', code: 'gem_api_posted', reason: 'Gem returns the posting (live)' };
+  }
+  return null;
+}
+
+/**
  * Decide liveness for one Alibaba posting from its position/detail answer.
  * Pure + deterministic (no I/O), mirroring classifyTencentPost.
  *
@@ -1495,7 +1544,7 @@ export function isAtsPosting(url) {
 // for liveness only — their public endpoints answer search/status, never body
 // text — so they are deliberately excluded here; see fetch-jd.mjs / the
 // fetch*Jd() family in browser-extract.mjs for the per-provider fetchers.
-export const JD_TEXT_API_ATS = new Set(['greenhouse', 'greenhouse-embedded', 'lever', 'ashby', 'workday', 'smartrecruiters', 'zoho-recruit', 'workable', 'workable-short']);
+export const JD_TEXT_API_ATS = new Set(['greenhouse', 'greenhouse-embedded', 'lever', 'ashby', 'workday', 'smartrecruiters', 'zoho-recruit', 'workable', 'workable-short', 'gem']);
 
 /**
  * Zero-token liveness check via the posting's ATS API.

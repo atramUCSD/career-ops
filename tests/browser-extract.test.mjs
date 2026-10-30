@@ -576,6 +576,7 @@ try {
     ['greenhouse-embedded', 'https://www.acme.com/careers/job?gh_jid=12345'],
     ['smartrecruiters', 'https://jobs.smartrecruiters.com/acme/744000151772990-senior-engineer'],
     ['zoho-recruit', 'https://acme.zohorecruit.com/jobs/Careers/100000000001853029/Senior-Engineer'],
+    ['gem', 'https://jobs.gem.com/acme/am9icG9zdDpFSVhUVVJF'],
   ];
   const routed = ATS_URL_SHAPES.map(([ats, url]) => {
     const resolved = resolveAtsApi(url);

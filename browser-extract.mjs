@@ -53,6 +53,7 @@ import { resolveAtsApi, JD_TEXT_API_ATS } from './liveness-api.mjs';
 import { classifyLiveness } from './liveness-core.mjs';
 import { decodeEntities } from './providers/_html-entities.mjs';
 import { isWorkModelOnly } from './providers/greenhouse.mjs';
+import { buildJobDescriptionText as gemJobText } from './providers/gem.mjs';
 import { isZohoRecordClosed, parseZohoDetailPage } from './providers/zoho-recruit.mjs';
 import { DEFAULT_USER_AGENT } from './user-agent.mjs';
 import { flagValue, hasFlag, validateFlags } from './lib/cli-flags.mjs';
@@ -741,6 +742,48 @@ async function fetchWorkableJd(resolved, postingUrl, textCap, timeoutMs) {
 }
 
 /**
+ * Shape one Gem GraphQL batch answer into a jd-mode result. Pure, same
+ * contract as the other normalizers; the posting must be THIS one.
+ *
+ * @param {any} json - the parsed batch response
+ * @param {string} extId
+ * @param {string} postingUrl
+ * @param {number} [textCap]
+ */
+export function normalizeGemJob(json, extId, postingUrl, textCap = JD_TEXT_CAP) {
+  const posting = Array.isArray(json) ? json[0]?.data?.oatsExternalJobPosting : null;
+  if (!posting || posting.extId !== extId) return null;
+  const text = gemJobText(posting);
+  if (!text) return null;
+  return {
+    url: postingUrl,
+    title: compactText(typeof posting.title === 'string' ? posting.title : '', 300),
+    text: compactText(text, textCap),
+  };
+}
+
+/** The resolver's POST, as liveness sends it; the API host is fixed, never derived from the URL. */
+async function fetchGemJd(resolved, postingUrl, textCap, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(resolved.apiUrl, {
+      method: resolved.method,
+      headers: { ...resolved.headers, accept: 'application/json', 'user-agent': DEFAULT_USER_AGENT },
+      body: resolved.body,
+      redirect: 'error',
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    return normalizeGemJob(await res.json(), resolved.parts.extId, postingUrl, textCap);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * ats id → fetcher. THE routing table `fetchJdViaKnownApi` dispatches through,
  * exported so the owned test can assert its key set IS `JD_TEXT_API_ATS`.
  *
@@ -771,6 +814,7 @@ export const JD_FETCHERS = {
     fetchSmartRecruitersJd(resolved.apiUrl, url, textCap, timeoutMs),
   'zoho-recruit': (resolved, url, textCap, timeoutMs) =>
     fetchZohoJd(resolved.apiUrl, resolved.parts.id, url, textCap, timeoutMs),
+  gem: fetchGemJd,
 };
 
 /**

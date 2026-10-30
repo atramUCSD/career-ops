@@ -21,7 +21,7 @@
 import { htmlToText as sharedHtmlToText } from './_html-to-text.mjs';
 import { countryNameFromIso } from './_country.mjs';
 
-const GEM_API_URL = 'https://jobs.gem.com/api/public/graphql/batch';
+export const GEM_API_URL = 'https://jobs.gem.com/api/public/graphql/batch';
 const ALLOWED_GEM_HOSTS = new Set(['jobs.gem.com', 'api.gem.com']);
 
 const JOB_BOARD_LIST_QUERY = `query JobBoardList($boardId: String!) {
@@ -58,9 +58,10 @@ const JOB_BOARD_LIST_QUERY = `query JobBoardList($boardId: String!) {
 }
 `;
 
-const JOB_DETAIL_QUERY = `query ExternalJobPostingQuery($boardId: String!, $extId: String!) {
+export const JOB_DETAIL_QUERY = `query ExternalJobPostingQuery($boardId: String!, $extId: String!) {
   oatsExternalJobPosting(boardId: $boardId, extId: $extId) {
     extId
+    title
     firstPublishedTsSec
     descriptionHtml
     jobPostSectionHtml {
@@ -104,7 +105,7 @@ function htmlToText(html) {
 // a posting with only descriptionHtml (the common case) renders identically
 // to before this field list was widened.
 /** @param {any} posting */
-function buildJobDescriptionText(posting) {
+export function buildJobDescriptionText(posting) {
   const intro = htmlToText(posting?.jobPostSectionHtml?.introHtml);
   const body = htmlToText(posting?.descriptionHtml);
   const outro = htmlToText(posting?.jobPostSectionHtml?.outroHtml);
