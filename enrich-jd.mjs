@@ -32,9 +32,10 @@ import { launchHeadless } from './lib/chromium-launch-error.mjs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { parsePendingRows } from './swarm.mjs';
-import { resolveAtsApi, greenhouseEmbed } from './liveness-api.mjs';
+import { greenhouseEmbed } from './liveness-api.mjs';
 import { LIVENESS_CONTEXT_OPTIONS } from './liveness-browser.mjs';
 import { DEFAULT_USER_AGENT } from './user-agent.mjs';
+import { fetchJdViaKnownApi } from './browser-extract.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
 import { flagValue, hasFlag, safeIntFlag, validateFlags } from './lib/cli-flags.mjs';
 import { writeFileAtomic } from './tracker-utils.mjs';
@@ -310,19 +311,6 @@ export function extractFacts(text, title = '') {
 
 // ------------------------------------------------------------------ fetching
 
-/** Pull the description out of an ATS API payload, by vendor. */
-function descFromApi(ats, json, parts) {
-  if (ats === 'greenhouse') return json?.content || '';
-  if (ats === 'lever') return [json?.descriptionPlain || json?.description || '',
-    ...(json?.lists || []).map(l => `${l.text}\n${l.content}`)].join('\n');
-  if (ats === 'workday') return json?.jobPostingInfo?.jobDescription || '';
-  if (ats === 'ashby') {
-    const job = (json?.jobs || []).find(j => String(j?.id).toLowerCase() === String(parts.jobId).toLowerCase());
-    return job?.descriptionPlain || job?.descriptionHtml || '';
-  }
-  return '';
-}
-
 async function get(url, headers) {
   const c = new AbortController();
   const t = setTimeout(() => c.abort(), TIMEOUT_MS);
@@ -334,17 +322,12 @@ async function get(url, headers) {
 }
 
 /** ATS API first (structured, cheap); otherwise the public page, tags stripped. */
-async function fetchJd(url) {
-  const ats = resolveAtsApi(url);
-  if (ats) {
-    try {
-      const res = await get(ats.apiUrl, { accept: 'application/json' });
-      if (res.ok) {
-        const text = stripHtml(descFromApi(ats.ats, await res.json(), ats.parts));
-        if (text.length >= 300) return text;
-      }
-    } catch { /* fall through to the page */ }
-  }
+export async function fetchJd(url) {
+  // The shared dispatch, not a private copy: it follows the Greenhouse embed
+  // redirect to the board API, and reads SmartRecruiters, Workable and Zoho,
+  // none of which a bare res.json() on the resolver's URL can.
+  const api = await fetchJdViaKnownApi(url, Infinity, TIMEOUT_MS).catch(() => null);
+  if (api?.text.length >= 300) return api.text;
   const gh = greenhouseEmbed(url);
   if (gh) {
     try {
