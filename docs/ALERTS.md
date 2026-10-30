@@ -120,9 +120,9 @@ Both tasks append to `data/alert-log.tsv`.
 `calendar-alert.mjs` puts a Google Calendar event on the calendar for each
 pending posting that clears a stricter bar than the mail: the
 `alerts.calendar` rules in `config/alerts.yml` (score floor, company list,
-title keywords, excluded hosts, slot time). `scripts/alert.cmd` runs it after
-the hub build and before the mail, so a failure in either one does not stop
-the other.
+title keywords, locations, excluded hosts, slot time). `scripts/alert.cmd`
+runs it after the hub build and before the mail, so a failure in either one
+does not stop the other.
 
 1. In Google Cloud Console, enable the **Google Calendar API** on the project
    that owns the mail's OAuth client.

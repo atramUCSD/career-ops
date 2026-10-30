@@ -5,7 +5,8 @@
  *
  * The mail lists everything over `alerts.min_match`. This is for the few
  * postings worth an evening slot: a higher score floor, an approved company
- * list, a keyword hit, and hosts left out (LinkedIn by default). The rules
+ * list, a keyword hit, a listed location, and hosts left out (LinkedIn by
+ * default). The rules
  * live under `alerts.calendar` in config/alerts.yml.
  *
  * No state file. Each event id is derived from the posting URL, and Calendar
@@ -32,6 +33,7 @@ export const CALENDAR_DEFAULTS = {
   min_match: 65,
   companies: [],
   keywords: [],
+  locations: [],
   exclude_hosts: ['linkedin.com'],
   at: '21:00',
   minutes: 30,
@@ -63,6 +65,8 @@ export function selectRows(rows, cfg) {
     if (cfg.companies.length && !cfg.companies.some(c => mentions(r.c || '', c))) return false;
     const text = [r.t, ...(r.kw || []), ...(r.all || [])].join(' · ');
     if (cfg.keywords.length && !cfg.keywords.some(k => mentions(text, k))) return false;
+    // A multi-city posting passes on any listed city; a bare "Remote" or a blank location does not.
+    if (cfg.locations.length && !cfg.locations.some(l => mentions(r.l || '', l))) return false;
     return true;
   });
 }

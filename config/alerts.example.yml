@@ -49,6 +49,9 @@ alerts:
     companies: []
     # Word-matched against the title and the lane keywords it hit. Empty means any.
     keywords: []
+    # Word-matched against the posting location. A multi-city posting passes on
+    # any listed city; "Remote" passes only if listed. Empty means anywhere.
+    locations: []
     # A host and its subdomains.
     exclude_hosts: [linkedin.com]
     # Today at this time in time_zone, or tomorrow once today's has passed.

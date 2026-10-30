@@ -24,6 +24,18 @@ test('every rule must pass; empty lists are no constraint', () => {
   assert.equal(selectRows(rows, calendarConfig({})).length, 4, 'defaults keep only the score floor and the LinkedIn exclusion');
 });
 
+test('locations: any listed city in a multi-city posting passes; Remote and blank do not', () => {
+  const cfg = calendarConfig({ calendar: { locations: ['San Francisco', 'Palo Alto'] } });
+  const rows = [
+    row({ u: 'https://x.test/sf', l: 'New York, NY; San Francisco, CA' }),
+    row({ u: 'https://x.test/ssf', l: 'South San Francisco, CA' }),
+    row({ u: 'https://x.test/ny', l: 'New York, NY' }),
+    row({ u: 'https://x.test/remote', l: 'Remote - US' }),
+    row({ u: 'https://x.test/blank', l: '' }),
+  ];
+  assert.deepEqual(selectRows(rows, cfg).map(r => r.u), ['https://x.test/sf', 'https://x.test/ssf']);
+});
+
 test('the slot is today at the configured time, or tomorrow once it has passed', () => {
   const cfg = calendarConfig({ calendar: { at: '21:00' } });
   // 07:00 and 21:30 Pacific (PDT, UTC-7) on 2026-10-30.
