@@ -11,7 +11,8 @@ build-artifact.mjs           output/pipeline-artifact.html
 notify-email.mjs             diff against last alert → one email
 ```
 
-`scripts/alert.cmd` chains the four and appends a row to `data/alert-log.tsv`.
+`node runner.mjs alert` chains them, with the profile layers, hub and calendar
+steps between the page and the mail, and appends a row to `data/alert-log.tsv`.
 
 ## What arrives
 
@@ -68,9 +69,25 @@ know about.
 
 ### 4. Schedule
 
-```bat
-schtasks /create /tn "career-ops-alert" /tr "C:\path\to\career-ops\scripts\alert.cmd" /sc daily /st 07:00 /f
+```bash
+node runner.mjs install           # add --sync for the cloud sync task, --dry-run to print only
 ```
+
+This builds `career-ops.exe` (a windowless launcher compiled from
+`scripts/launcher.cs` with the .NET Framework `csc` that ships with Windows)
+and registers `career-ops-alert` at 07:00 and 19:00 and `career-ops-sweep` on
+Sunday at 03:00, both pointed at it. The launcher only runs
+`node runner.mjs <command>` and appends its output to `data/runner-log.txt`;
+every decision about which stage runs and which failure stops what lives in
+`runner.mjs`, so a fix to the chain never needs a rebuild of the exe. The tasks
+run on battery, wake the machine, and start late if a slot was missed.
+`scripts/alert.cmd` and `scripts/sweep.cmd` remain as shims for a task still
+registered on them.
+
+`career-ops.exe` with no command writes and opens `output/status.html`: the
+tasks' last and next runs, the recent log rows, and links to the pages. When a
+row says FAILED, that page (or `data/alert-log.tsv`) is what to hand to whoever
+maintains the install.
 
 Daily is the right cadence: freshness is the largest timing discount in the
 match model (a posting past its first weeks is scored down to ×0.60), so a day
@@ -88,12 +105,8 @@ they cover different ground:
 
 | Task | When | Script | Covers |
 |---|---|---|---|
-| `career-ops-alert` | daily 07:00 | `scripts/alert.cmd` | `swarm.mjs --scan` over the `portals.yml` company and board list, API-only liveness, prune, description reads (LinkedIn skipped), then the email |
-| `career-ops-sweep` | weekly, Sunday 03:00 | `scripts/sweep.cmd` | `scan-ats-full.mjs` reverse-ATS sweep, `scan-hn.mjs`, **full** liveness including the Playwright fallback, prune |
-
-```bat
-schtasks /create /tn "career-ops-sweep" /tr "C:path	ocareer-opsscriptssweep.cmd" /sc weekly /d SUN /st 03:00 /f
-```
+| `career-ops-alert` | daily 07:00 and 19:00 | `career-ops.exe alert` | `swarm.mjs --scan` over the `portals.yml` company and board list, API-only liveness, prune, description reads (LinkedIn skipped), then the email |
+| `career-ops-sweep` | weekly, Sunday 03:00 | `career-ops.exe sweep` | `scan-ats-full.mjs` reverse-ATS sweep, `scan-hn.mjs`, **full** liveness including the Playwright fallback, prune |
 
 The deep pass is separate for two reasons. It is slow — `scan-ats-full.mjs`
 sweeps entire public ATS directories instead of a company list, and a full
@@ -106,11 +119,11 @@ daily scan can only find a posting at a company you already track; the reverse
 sweep is keyword-first across the whole Greenhouse/Lever/Ashby/Workday/iCIMS
 directory, so it is how a company enters the pipeline in the first place.
 
-One behavioural note that `sweep.cmd` encodes deliberately:
+One behavioural note that the sweep encodes deliberately:
 `check-liveness.mjs` exits 1 whenever anything is expired or uncertain. That
 is its normal report, not a failure — a sweep that finds a dead posting has done
-its job. `swarm.mjs` already treats it that way, and `sweep.cmd` must too.
-A naive copy of `alert.cmd`'s `if errorlevel 1` guard after that stage would
+its job. `swarm.mjs` already treats it that way, and the sweep must too.
+A naive copy of the alert chain's stop-on-failure guard after that stage would
 make every sweep log FAILED and skip the prune.
 
 Both tasks append to `data/alert-log.tsv`.
@@ -120,7 +133,7 @@ Both tasks append to `data/alert-log.tsv`.
 `calendar-alert.mjs` puts a Google Calendar event on the calendar for each
 pending posting that clears a stricter bar than the mail: the
 `alerts.calendar` rules in `config/alerts.yml` (score floor, company list,
-title keywords, locations, excluded hosts, slot time). `scripts/alert.cmd`
+title keywords, locations, excluded hosts, slot time). The alert chain
 runs it after the hub build and before the mail, so a failure in either one
 does not stop the other.
 
@@ -165,7 +178,9 @@ published from a Claude session (may lag). Set `artifact_url` in
 | `config/alerts.yml` | recipient, threshold, row cap (gitignored) |
 | `data/alert-state.json` | seen/strong URL sets + last run (gitignored) |
 | `data/alert-log.tsv` | one row per scheduled run |
-| `scripts/alert.cmd` | the scheduled chain |
+| `runner.mjs` | the scheduled chains, the task install, the status page |
+| `scripts/launcher.cs` | source of `career-ops.exe`, the windowless launcher the tasks run |
+| `data/runner-log.txt` | the launched runs' console output |
 
 ```bash
 node test-all.mjs --only notify-email

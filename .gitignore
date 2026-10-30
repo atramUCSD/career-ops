@@ -238,6 +238,7 @@ opencode.json
 .hermes.md
 career-dashboard
 career-dashboard.exe
+/career-ops.exe
 package-lock.json
 !web/package-lock.json
 

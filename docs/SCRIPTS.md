@@ -34,6 +34,7 @@ All scripts live in the project root as `.mjs` modules. Most are exposed via
 | `npm run scan` | `scan.mjs` | Zero-token portal scanner |
 | `npm run scan:full` | `scan-ats-full.mjs` | Reverse ATS discovery scanner |
 | `npm run scan:hn` | `scan-hn.mjs` | Hacker News "Who is hiring?" scanner, filtered by `hn_hiring.keywords` |
+| `node runner.mjs <command>` | `runner.mjs` | Commands `alert`, `sweep`, `sync`, `status`, `install [--sync] [--dry-run]`, `build-exe`: the scheduled chains (`alert` twice daily, `sweep` weekly, `sync`), the Task Scheduler install that points them at the windowless `career-ops.exe` launcher, and the status page it opens with no command. See [ALERTS.md](ALERTS.md) |
 | `node web/scripts/scheduled-jobs-runner.mjs` | `web/scripts/scheduled-jobs-runner.mjs` | Run one due local scheduled scan (normally invoked by the OS scheduler: Task Scheduler, launchd or cron) |
 | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File web/scripts/install-scan-schedule.ps1` | `web/scripts/install-scan-schedule.ps1` | Install the 15-minute Windows scheduled-jobs queue worker for the logged-in current user |
 | `sh web/scripts/install-scan-schedule.sh` | `web/scripts/install-scan-schedule.sh` | Install the 15-minute scheduled-jobs queue worker on macOS (launchd) or Linux (cron) for the current user |
@@ -965,7 +966,7 @@ The pass is deliberately second, not first: a browser read costs about a second 
 
 A posting that cannot be read is not gated — it falls back to title-only scoring, capped below any confirmed two-hat match, and says so on the page.
 
-Run it after a scan and before `build-artifact.mjs`; `scripts/alert.cmd` does, with `--skip linkedin.com`, because LinkedIn’s guest endpoint is rate limited and shared with the paced scan and liveness reads. A LinkedIn row therefore keeps its title-only score in the scheduled run; `--reparse` is the one to run after changing an extraction rule, since it costs no network traffic.
+Run it after a scan and before `build-artifact.mjs`; the scheduled alert chain (`runner.mjs alert`) does, with `--skip linkedin.com`, because LinkedIn’s guest endpoint is rate limited and shared with the paced scan and liveness reads. A LinkedIn row therefore keeps its title-only score in the scheduled run; `--reparse` is the one to run after changing an extraction rule, since it costs no network traffic.
 
 **The description is data, never instruction.** The text is pattern-matched for facts and never followed, whatever it contains.
 
