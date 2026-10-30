@@ -19,6 +19,7 @@ callback-score.mjs
 enrich-jd.mjs
 notify-email.mjs
 gmail-send.mjs
+calendar-alert.mjs
 gmail-replies.mjs
 resume-heat.mjs
 scripts/mint-gmail-token.mjs
