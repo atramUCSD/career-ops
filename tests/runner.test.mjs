@@ -158,12 +158,15 @@ test('log: one header, then rows stamped with the run start in local time', t =>
     'when\tstage\tresult\n2026-10-30T07:00:05\trun\tok\n2026-10-30T07:00:05\thub\tFAILED - continuing\n');
 });
 
-test('install: alert twice daily and the weekly sweep, runnable on battery; sync only on request and never wakes the machine', () => {
+test('install: alert twice daily and the weekly sweep in local time, runnable on battery; sync only on request and never wakes the machine', () => {
   const ps = installScript('C:\\it\'s\\career-ops');
   assert.match(ps, /-TaskName 'career-ops-alert'.*-Argument 'alert'.*-Daily -At 07:00.*-Daily -At 19:00/);
   assert.match(ps, /-TaskName 'career-ops-sweep'.*-DaysOfWeek Sunday -At 03:00/);
   assert.match(ps, /-Execute 'C:\\it''s\\career-ops\\career-ops\.exe'/);
   assert.equal(ps.match(/-AllowStartIfOnBatteries -DontStopIfGoingOnBatteries/g).length, 2);
+  // Local wall time, so the 07:00 run stays at 07:00 across a DST change.
+  assert.equal(ps.match(/\(Local \(New-ScheduledTaskTrigger/g).length, 3);
+  assert.ok(ps.split('\n').includes('function Local($t) { $t.StartBoundary = $t.StartBoundary.Substring(0, 19); $t }'));
   assert.doesNotMatch(ps, /career-ops-sync/);
   const sync = installScript('C:\\r', { sync: true }).split('\n').find(l => l.includes('career-ops-sync'));
   assert.match(sync, /-RepetitionInterval \(New-TimeSpan -Minutes 10\)/);
