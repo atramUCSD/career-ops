@@ -289,12 +289,13 @@ export function installScript(root = ROOT, { sync: withSync = false } = {}) {
   // The schtasks defaults skip a run that starts on battery and stop one when
   // the charger is pulled, so an unplugged laptop at 07:00 missed the mail.
   const base = '-StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew';
-  // New-ScheduledTaskTrigger stamps StartBoundary with today's UTC offset, which
-  // pins the trigger to that offset: after the DST change 07:00 fires at 06:00.
-  // Without an offset Task Scheduler reads the time as local wall time, the way
-  // schtasks registers it.
+  // New-ScheduledTaskTrigger stores StartBoundary as UTC ("…T14:00:00Z" for
+  // 07:00 Pacific), which pins the trigger to that instant: after the DST change
+  // 07:00 fires at 06:00. Rewritten as local time with no offset, it is read as
+  // wall-clock time, the way schtasks registers it. Cutting the string instead
+  // keeps the UTC digits and moves 07:00 to 14:00.
   const lines = [
-    'function Local($t) { $t.StartBoundary = $t.StartBoundary.Substring(0, 19); $t }',
+    "function Local($t) { $t.StartBoundary = ([datetime]$t.StartBoundary).ToString('s'); $t }",
     task('career-ops-alert', 'alert',
       '(Local (New-ScheduledTaskTrigger -Daily -At 07:00)), (Local (New-ScheduledTaskTrigger -Daily -At 19:00))',
       `${base} -WakeToRun -ExecutionTimeLimit (New-TimeSpan -Hours 72)`),
