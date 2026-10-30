@@ -49,7 +49,7 @@ import { fileURLToPath } from 'url';
 import { loadYaml } from './lib/yaml-document.mjs';
 import { LIVENESS_CONTEXT_OPTIONS, rejectPrivateOrInvalid } from './liveness-browser.mjs';
 import { getCareerOpsRoot, getProfilePath } from './path-resolver.mjs';
-import { resolveAtsApi, JD_TEXT_API_ATS } from './liveness-api.mjs';
+import { resolveAtsApi, JD_TEXT_API_ATS, findHimalayasJob } from './liveness-api.mjs';
 import { classifyLiveness } from './liveness-core.mjs';
 import { decodeEntities } from './providers/_html-entities.mjs';
 import { isWorkModelOnly } from './providers/greenhouse.mjs';
@@ -783,6 +783,36 @@ async function fetchGemJd(resolved, postingUrl, textCap, timeoutMs) {
   }
 }
 
+/** Himalayas' listing of this posting in a search answer, as a jd-mode result. */
+export function normalizeHimalayasJob(json, parts, postingUrl, textCap = JD_TEXT_CAP) {
+  const job = findHimalayasJob(json, parts);
+  const body = jdHtmlToText(job?.description);
+  if (!body) return null;
+  return {
+    url: postingUrl,
+    title: compactText(typeof job.title === 'string' ? job.title : '', 300),
+    text: compactText(body, textCap),
+  };
+}
+
+async function fetchHimalayasJd(resolved, postingUrl, textCap, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(resolved.apiUrl, {
+      headers: { accept: 'application/json', 'user-agent': DEFAULT_USER_AGENT },
+      redirect: 'error',
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    return normalizeHimalayasJob(await res.json(), resolved.parts, postingUrl, textCap);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * ats id → fetcher. THE routing table `fetchJdViaKnownApi` dispatches through,
  * exported so the owned test can assert its key set IS `JD_TEXT_API_ATS`.
@@ -815,6 +845,7 @@ export const JD_FETCHERS = {
   'zoho-recruit': (resolved, url, textCap, timeoutMs) =>
     fetchZohoJd(resolved.apiUrl, resolved.parts.id, url, textCap, timeoutMs),
   gem: fetchGemJd,
+  himalayas: fetchHimalayasJd,
 };
 
 /**

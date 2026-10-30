@@ -577,6 +577,7 @@ try {
     ['smartrecruiters', 'https://jobs.smartrecruiters.com/acme/744000151772990-senior-engineer'],
     ['zoho-recruit', 'https://acme.zohorecruit.com/jobs/Careers/100000000001853029/Senior-Engineer'],
     ['gem', 'https://jobs.gem.com/acme/am9icG9zdDpFSVhUVVJF'],
+    ['himalayas', 'https://himalayas.app/companies/acme/jobs/senior-engineer?utm_source=api'],
   ];
   const routed = ATS_URL_SHAPES.map(([ats, url]) => {
     const resolved = resolveAtsApi(url);

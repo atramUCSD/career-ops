@@ -824,6 +824,34 @@ const ATS_PROVIDERS = [
     },
   },
   {
+    id: 'himalayas',
+    // himalayas.app/companies/{company}/jobs/{slug}, the URL providers/himalayas.mjs
+    // records (often with ?utm_source=api, which is ignored). Every page is behind
+    // a Cloudflare managed challenge, for any user agent and for headless
+    // Chromium, so neither a fetch nor the browser rung ever sees a posting. The
+    // public search API is not challenged, but has no lookup by id: search the
+    // company's live postings for the slug's words and match the guid. A trailing
+    // number in a slug only disambiguates a repeated title and matches no field.
+    match(u) {
+      if (u.hostname !== 'himalayas.app') return null;
+      const m = u.pathname.match(/^\/companies\/([^/]+)\/jobs\/([^/]+)\/?$/);
+      return m ? { company: m[1], slug: m[2] } : null;
+    },
+    api: ({ company, slug }) => `https://himalayas.app/jobs/api/search?company=${company}`
+      + `&q=${encodeURIComponent(slug.replace(/-\d+$/, '').replace(/-/g, ' '))}`,
+    // Search can miss a live posting, so only a hit is a verdict; a miss falls
+    // through to the browser, which reports the challenge as before.
+    api404Authoritative: false,
+    throttleMs: 250,
+    async interpret(res, parts) {
+      let json;
+      try { json = await res.json(); } catch { return null; }
+      return findHimalayasJob(json, parts)
+        ? { result: 'active', code: 'himalayas_api_listed', reason: 'Himalayas search lists the posting (live)' }
+        : null;
+    },
+  },
+  {
     id: 'gem',
     // jobs.gem.com/{boardId}/{extId}, the URL providers/gem.mjs writes. The page
     // is a client-rendered shell: its HTML has no description, and the posting
@@ -1331,6 +1359,20 @@ export function classifyMeituanJob(json, jobUnionId) {
 }
 
 /**
+ * The posting a Himalayas search answer lists under this URL's company and
+ * slug, or null. The guid is the posting's own page URL, without the query.
+ *
+ * @param {any} json - the parsed /jobs/api/search response
+ * @param {{ company: string, slug: string }} parts
+ */
+export function findHimalayasJob(json, { company, slug }) {
+  const path = `/companies/${company}/jobs/${slug}`;
+  return (Array.isArray(json?.jobs) ? json.jobs : []).find((job) => {
+    try { return new URL(job?.guid).pathname.replace(/\/$/, '') === path; } catch { return false; }
+  }) || null;
+}
+
+/**
  * Decide liveness for one Gem posting from its GraphQL batch answer. A null
  * posting with no errors is how Gem answers for an id it does not have (a
  * removed posting, or an id never issued); an answer with errors, or for
@@ -1544,7 +1586,7 @@ export function isAtsPosting(url) {
 // for liveness only — their public endpoints answer search/status, never body
 // text — so they are deliberately excluded here; see fetch-jd.mjs / the
 // fetch*Jd() family in browser-extract.mjs for the per-provider fetchers.
-export const JD_TEXT_API_ATS = new Set(['greenhouse', 'greenhouse-embedded', 'lever', 'ashby', 'workday', 'smartrecruiters', 'zoho-recruit', 'workable', 'workable-short', 'gem']);
+export const JD_TEXT_API_ATS = new Set(['greenhouse', 'greenhouse-embedded', 'lever', 'ashby', 'workday', 'smartrecruiters', 'zoho-recruit', 'workable', 'workable-short', 'gem', 'himalayas']);
 
 /**
  * Zero-token liveness check via the posting's ATS API.
