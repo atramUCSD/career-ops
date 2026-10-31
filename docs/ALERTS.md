@@ -80,7 +80,10 @@ Sunday at 03:00, both pointed at it. The launcher only runs
 `node runner.mjs <command>` and appends its output to `data/runner-log.txt`;
 every decision about which stage runs and which failure stops what lives in
 `runner.mjs`, so a fix to the chain never needs a rebuild of the exe. The tasks
-run on battery, wake the machine, and start late if a slot was missed.
+run on battery, wake the machine, and start late if a slot was missed. Windows
+turns wake timers off on battery by default, so a closed laptop off the charger
+runs the missed slots as one late run when it next wakes. Nothing is dropped,
+because each mail is a diff against the last one sent.
 `scripts/alert.cmd` and `scripts/sweep.cmd` remain as shims for a task still
 registered on them.
 

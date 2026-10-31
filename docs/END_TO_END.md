@@ -273,6 +273,16 @@ persona:
 - The scheduled tasks were registered with Task Scheduler's default of not
   starting on battery, so a laptop unplugged at 07:00 skipped the run without
   a log row. `runner.mjs install` registers them to run on battery.
+- Running on battery is not the same as waking on battery. On the first night
+  after the cutover the laptop was unplugged and closed at 15:02. Wake timers
+  are off on battery, so 19:00 passed in standby. At 07:02 it left standby for
+  four seconds on its way to hibernate. Start-when-available launched one run
+  for both missed slots in that window, and the process froze with the machine
+  and finished after the lid opened at 08:12. Task Scheduler still recorded the
+  launch as refused (0x800710E0). The mail was late, but nothing was lost,
+  because the alert diffs against the last one it sent. A catch-up task was
+  built and then parked: it would only help when a frozen run is killed by a
+  shutdown, and the next slot covers that.
 - The fixture's facts were hand written, and one of them (a bachelor's degree)
   is a value the parser cannot produce. The facts are now the parser's own
   output over cached description text, and `persona-run` checks that they stay
