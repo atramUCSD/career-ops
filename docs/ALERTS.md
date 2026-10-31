@@ -87,9 +87,15 @@ because each mail is a diff against the last one sent.
 `scripts/alert.cmd` and `scripts/sweep.cmd` remain as shims for a task still
 registered on them.
 
-`career-ops.exe` with no command writes and opens `output/status.html`: the
-tasks' last and next runs, the recent log rows, and links to the pages. When a
-row says FAILED, that page (or `data/alert-log.tsv`) is what to hand to whoever
+`career-ops.exe` with no command opens the web dashboard at
+http://127.0.0.1:3000, starting it hidden first if nothing answers there (about
+15 seconds, logged to `data/web-log.txt`). The server stays up until
+`career-ops.exe stop` or a reboot, so later launches open it at once. It runs
+`next dev`, which holds about 900 MB and compiles each page on its first visit.
+Every launch also writes `output/status.html`: the tasks' last and next runs,
+the recent log rows, and links to the pages. The exe opens that page as well
+when a chain's latest run logged FAILED, and alone when the dashboard does not
+come up. That page (or `data/alert-log.tsv`) is what to hand to whoever
 maintains the install.
 
 Daily is the right cadence: freshness is the largest timing discount in the

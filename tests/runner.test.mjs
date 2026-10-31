@@ -8,7 +8,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, write
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { alert, sweep, sync, tsvLog, installScript, renderStatus, statusData } from '../runner.mjs';
+import { alert, sweep, sync, tsvLog, installScript, renderStatus, statusData, home, WEB } from '../runner.mjs';
 
 const fixture = fileURLToPath(new URL('./fixtures/personas/general', import.meta.url));
 
@@ -214,4 +214,28 @@ test('status page: the banner follows each chain\'s latest run, not any failure 
   assert.ok(!banner([...cleanAlert, ...failedAlert]));
   assert.ok(banner([...cleanAlert, ...failedSweep]));
   assert.ok(!banner([['2026-11-01T03:00:00', 'sweep', 'ok'], ...cleanAlert, ...failedSweep]));
+});
+
+test('home: reuses a running dashboard, starts one when none answers, falls back to the status page', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'runner-home-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const clean = { tasks: [], rows: [['2026-10-31T19:00:02', 'run', 'ok']], pages: [] };
+  const failed = { ...clean, rows: [['2026-10-31T08:12:48', 'calendar', 'FAILED - continuing']] };
+  const status = join(root, 'output', 'status.html');
+  const run = async ({ up, starts, data = clean, installed = true }) => {
+    const opened = [];
+    let started = 0, live = up;
+    await home({
+      root, data, wait: 3000, open: x => opened.push(x),
+      probe: async () => live,
+      start: () => { started++; live = starts; return installed; },
+    });
+    return { opened, started };
+  };
+
+  assert.deepEqual(await run({ up: true }), { opened: [WEB], started: 0 });
+  assert.deepEqual(await run({ up: false, starts: true }), { opened: [WEB], started: 1 });
+  assert.deepEqual(await run({ up: true, data: failed }), { opened: [WEB, status], started: 0 });
+  assert.deepEqual(await run({ up: false, starts: false, installed: false }), { opened: [status], started: 1 });
+  assert.ok(existsSync(status));
 });

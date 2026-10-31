@@ -149,10 +149,12 @@ arguments to `node runner.mjs` and appends the output to
 `data/runner-log.txt`. It decides nothing, so a change to the chain is a change
 to `runner.mjs` and takes effect on the next run without a rebuild.
 
-`career-ops.exe` with no arguments writes and opens `output/status.html`: each
-task's last result and next run, the last twenty rows of `data/alert-log.tsv`,
-and links to the pages that exist. When a row says FAILED, the page tells the
-person to paste it, or the log, into the session that maintains the install.
+`career-ops.exe` with no arguments opens the web dashboard, starting it hidden
+when it is not already running, and writes `output/status.html`: each task's
+last result and next run, the last twenty rows of `data/alert-log.tsv`, and
+links to the pages that exist. The status page opens too when a chain's latest
+run failed, and it tells the person to paste it, or the log, into the session
+that maintains the install.
 Diagnosis and fixes happen there; the installed copy only runs.
 
 ## Data: which files each stage reads and writes

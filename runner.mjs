@@ -8,7 +8,8 @@
  *   node runner.mjs sweep       weekly deep hydration (Sunday 03:00)
  *   node runner.mjs sync        one cloud sync pass (every 10 minutes, once deployed)
  *   node runner.mjs status      scheduled tasks and the latest log rows
- *   node runner.mjs home        write output/status.html and open it (the exe's default)
+ *   node runner.mjs home        open the web dashboard, starting it if needed (the exe's default)
+ *   node runner.mjs stop        stop the web dashboard on port 3000
  *   node runner.mjs build-exe   compile scripts/launcher.cs to career-ops.exe
  *   node runner.mjs install [--sync] [--dry-run]
  *                               register the scheduled tasks on career-ops.exe
@@ -21,10 +22,11 @@
  * Every stage is deterministic. No model is invoked and nothing is ever
  * submitted on anyone's behalf: this path reads job boards and writes email.
  */
-import { spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { appendFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { parsePendingRows, runLiveness } from './swarm.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
@@ -228,14 +230,19 @@ export function statusData(root = ROOT, tasks = readTasks()) {
 
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
 
-export function renderStatus({ tasks, rows, pages }, now = new Date()) {
+/** Whether any chain's latest run logged a failure. Rows are newest first. */
+export function latestFailed(rows) {
   // Only each chain's latest run counts: a failure an alert has since run clean
   // past would otherwise hold the banner up for days, and a clean alert must
-  // not hide a failed sweep. Rows are newest first and share their run's stamp.
+  // not hide a failed sweep. Every row of a run shares its stamp.
   const chain = r => /^(sweep|sync)/.exec(r[1] || '')?.[0] ?? 'alert';
   const latest = {};
   for (const r of rows) latest[chain(r)] ??= r[0];
-  const failed = rows.some(r => /FAILED/.test(r[2] || '') && r[0] === latest[chain(r)]);
+  return rows.some(r => /FAILED/.test(r[2] || '') && r[0] === latest[chain(r)]);
+}
+
+export function renderStatus({ tasks, rows, pages }, now = new Date()) {
+  const failed = latestFailed(rows);
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>career-ops status</title>
@@ -272,12 +279,59 @@ function status(root) {
   return 0;
 }
 
-function home(root) {
+export const WEB = 'http://127.0.0.1:3000';
+
+const answers = url => fetch(url, { signal: AbortSignal.timeout(5000) }).then(r => r.status < 500, () => false);
+
+function startWeb(root) {
+  if (!existsSync(join(root, 'web', 'node_modules', 'next', 'package.json'))) return false;
+  const out = openSync(join(root, 'data', 'web-log.txt'), 'a');
+  // libuv puts every child it spawns in a job object that kills it when this
+  // process exits, and a detached child gets no console, so each node it starts
+  // would open a visible one. start /b runs ui-server as cmd's child instead:
+  // outside the job (grandchildren break away silently) and on the launcher's
+  // hidden console.
+  spawn('cmd.exe', ['/d', '/c', 'start', '""', '/b', `"${process.execPath}"`, 'scripts/ui-server.mjs', '--no-open'],
+    { cwd: root, stdio: ['ignore', out, out], windowsHide: true, windowsVerbatimArguments: true }).unref();
+  return true;
+}
+
+const openTarget = target => spawnSync('explorer.exe', [target]); // explorer exits 1 even on success
+
+/**
+ * Opens the web dashboard, starting it first when nothing answers on WEB. The
+ * server stays up after this returns, until `stop` or a reboot. The status page
+ * is written every time and opened too when a chain's latest run failed, or
+ * alone when the dashboard never came up.
+ */
+export async function home({ root = ROOT, probe = answers, start = startWeb, open = openTarget, wait = 120_000, data = statusData(root) } = {}) {
   const out = join(root, 'output', 'status.html');
   mkdirSync(dirname(out), { recursive: true });
-  writeFileSync(out, renderStatus(statusData(root)));
-  spawnSync('explorer.exe', [out]); // explorer exits 1 even on success
+  writeFileSync(out, renderStatus(data));
+  let up = await probe(WEB);
+  // ponytail: next dev, so the first visit to each page compiles it; a
+  // production build would be lighter but needs a rebuild after every update.
+  if (!up && start(root)) {
+    for (const end = Date.now() + wait; !up && Date.now() < end;) {
+      await sleep(1000);
+      up = await probe(WEB);
+    }
+  }
+  if (up) open(WEB);
+  if (!up || latestFailed(data.rows)) open(out);
   return 0;
+}
+
+function stop() {
+  const listening = /:3000\s+\S+\s+LISTENING\s+(\d+)/.exec(spawnSync('netstat', ['-ano', '-p', 'TCP'], { encoding: 'utf-8' }).stdout || '');
+  if (!listening) {
+    console.log('no dashboard running on port 3000');
+    return 0;
+  }
+  // The listener is Next's server; the processes above it exit when it does.
+  const r = spawnSync('taskkill', ['/pid', listening[1], '/t', '/f'], { encoding: 'utf-8' });
+  console.log((r.stdout || r.stderr).trim());
+  return r.status ?? 1;
 }
 
 // --------------------------------------------------------- exe and scheduling
@@ -337,12 +391,13 @@ function install(root, { sync: withSync, dryRun }) {
 
 // ----------------------------------------------------------------------- CLI
 
-const USAGE = `Usage: node runner.mjs [alert|sweep|sync|status|home|build-exe|install] [--sync] [--dry-run]
+const USAGE = `Usage: node runner.mjs [alert|sweep|sync|status|home|stop|build-exe|install] [--sync] [--dry-run]
   alert       scrape, triage, snapshot, mail
   sweep       weekly deep hydration
   sync        one cloud sync pass (needs .env)
   status      scheduled tasks and the latest log rows
-  home        write output/status.html and open it (default)
+  home        open the web dashboard, starting it if needed (default)
+  stop        stop the web dashboard on port 3000
   build-exe   compile scripts/launcher.cs to ${EXE}
   install     register career-ops-alert and -sweep on ${EXE}; --sync adds
               career-ops-sync; --dry-run prints the PowerShell instead`;
@@ -357,7 +412,8 @@ export function main(argv, root = ROOT) {
   }
   if (CHAINS[cmd]) return CHAINS[cmd]({ exec: nodeExec(root), log: tsvLog(root), root });
   if (cmd === 'status') return status(root);
-  if (cmd === 'home') return home(root);
+  if (cmd === 'home') return home({ root });
+  if (cmd === 'stop') return stop();
   if (cmd === 'build-exe') return buildExe(root);
   if (cmd === 'install') return install(root, { sync: argv.includes('--sync'), dryRun: argv.includes('--dry-run') });
   console.error(`runner: unknown command ${cmd}\n${USAGE}`);
