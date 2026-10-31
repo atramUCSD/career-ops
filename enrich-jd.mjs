@@ -31,7 +31,7 @@ import { readFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { launchHeadless } from './lib/chromium-launch-error.mjs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { parsePendingRows } from './swarm.mjs';
+import { parsePendingRows, skipsHost } from './swarm.mjs';
 import { greenhouseEmbed } from './liveness-api.mjs';
 import { LIVENESS_CONTEXT_OPTIONS } from './liveness-browser.mjs';
 import { DEFAULT_USER_AGENT } from './user-agent.mjs';
@@ -447,12 +447,6 @@ export async function browserPass(urls, onEach = () => {}) {
 
 // ------------------------------------------------------------------- runtime
 
-/** True when url's host is one of hosts or a subdomain of one. */
-export function skipsHost(url, hosts) {
-  let h;
-  try { h = new URL(url).hostname.toLowerCase(); } catch { return false; }
-  return hosts.some(s => h === s || h.endsWith(`.${s}`));
-}
 
 function loadFacts() {
   if (!existsSync(FACTS)) return new Map();

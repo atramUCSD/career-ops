@@ -27,11 +27,11 @@
  * Nothing here submits an application, ever. The pipeline stops at a package
  * staged for human review.
  *
- * Run: node swarm.mjs [--dry-run] [--scan [--since N]] [--stale N] [--max-evals N]
+ * Run: node swarm.mjs [--dry-run] [--scan [--since N]] [--stale N] [--liveness-skip hosts] [--max-evals N]
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdtempSync } from 'fs';
-import { spawnSync } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import { join, dirname } from 'path';
 import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
@@ -169,6 +169,37 @@ function runNode(script, args, { dryRun, label }) {
   return res.status ?? 0;
 }
 
+/** True when url's host is one of hosts or a subdomain of one. */
+export function skipsHost(url, hosts) {
+  let h;
+  try { h = new URL(url).hostname.toLowerCase(); } catch { return false; }
+  return hosts.some(s => h === s || h.endsWith(`.${s}`));
+}
+
+/**
+ * Runs check-liveness.mjs with its stdout passed through, and reports whether it
+ * reached its Results line. The exit code cannot say: 1 is its normal report and
+ * also what node returns when it dies, an import that fails to load included, so
+ * a run that never finished a URL looked exactly like one that found dead
+ * postings. Its verdicts are only written at the end, so an unfinished run left
+ * nothing behind.
+ */
+export function runLiveness(args, script = join(ROOT, 'check-liveness.mjs')) {
+  console.log(`   node check-liveness.mjs ${args.join(' ')}`);
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [script, ...args], { cwd: ROOT, stdio: ['inherit', 'pipe', 'inherit'] });
+    let tail = '', finished = false;
+    child.stdout.on('data', chunk => {
+      process.stdout.write(chunk);
+      const seen = tail + chunk;
+      if (/(^|\n)Results: /.test(seen)) finished = true;
+      tail = seen.slice(-16);
+    });
+    child.on('error', reject);
+    child.on('close', status => resolve({ status, finished }));
+  });
+}
+
 function readPipeline() {
   if (!existsSync(PIPELINE_PATH)) {
     console.error(`No pipeline at ${PIPELINE_PATH} — nothing to conduct.`);
@@ -187,6 +218,8 @@ async function main() {
   --since <days>     scan window; use a wide one the first time a new lane runs,
                      because max_posting_age_days also truncates pagination
   --stale <days>     retire pending entries older than this (prune-pipeline.mjs)
+  --liveness-skip <hosts>  leave these hosts out of the liveness check (comma list);
+                     exits 3 if check-liveness dies before its Results line
   --max-evals <n>    global cap on evaluations this run (default 10)
   --check-lanes      report lane registration drift and exit
 `);
@@ -224,12 +257,24 @@ async function main() {
   // ── Stage 2: liveness (zero tokens, no browser) ───────────────────────────
   console.log('\n▸ stage 2 — liveness');
   const pendingBefore = parsePendingRows(readPipeline());
-  console.log(`   ${pendingBefore.length} pending URL(s)`);
-  if (pendingBefore.length) {
+  const skipHosts = String(flagValue(args, '--liveness-skip') ?? '').toLowerCase().split(',').map(s => s.trim()).filter(Boolean);
+  const toCheck = pendingBefore.filter(r => !skipsHost(r.url, skipHosts));
+  const skippedNote = skipHosts.length ? `, ${pendingBefore.length - toCheck.length} on ${skipHosts.join(', ')} skipped` : '';
+  console.log(`   ${pendingBefore.length} pending URL(s)${skippedNote}`);
+  let livenessDied = false;
+  if (toCheck.length) {
     const dir = mkdtempSync(join(tmpdir(), 'swarm-'));
     const urlFile = join(dir, 'pending.txt');
-    writeFileSync(urlFile, pendingBefore.map(r => r.url).join('\n') + '\n');
-    runNode('check-liveness.mjs', ['--api-only', '--file', urlFile], { dryRun, label: 'check-liveness' });
+    writeFileSync(urlFile, toCheck.map(r => r.url).join('\n') + '\n');
+    const livenessArgs = ['--api-only', '--file', urlFile];
+    if (dryRun) runNode('check-liveness.mjs', livenessArgs, { dryRun, label: 'check-liveness' });
+    else {
+      const { status, finished } = await runLiveness(livenessArgs);
+      if (!finished) {
+        console.error(`   ❌ check-liveness.mjs exited ${status} before its Results line, so no verdict was recorded`);
+        livenessDied = true;
+      }
+    }
   }
 
   // ── Stage 3: prune ────────────────────────────────────────────────────────
@@ -254,6 +299,9 @@ async function main() {
     console.log(`   [${r.lane}] ${r.posted || '          '}  ${(r.title || '(no title)').slice(0, 48).padEnd(48)} ${r.url}`);
   }
   console.log('\nPhase 1 stops here: nothing is evaluated, nothing is submitted.');
+  // Distinct from 1 (lane drift, no pipeline): scan and prune did run, so a
+  // caller can carry on without the liveness verdicts.
+  if (livenessDied) process.exitCode = 3;
 }
 
 if (isMainModule(import.meta.url)) {

@@ -43,7 +43,7 @@ test('alert: full chain, owner then layers then hub, calendar and the owner mail
   const { log, rows } = fakeLog();
   assert.equal(alert({ exec, log, root }), 0);
   assert.deepEqual(calls, [
-    'swarm.mjs --scan --since 45 --stale 45',
+    'swarm.mjs --scan --since 45 --stale 45 --liveness-skip linkedin.com',
     'enrich-jd.mjs --skip linkedin.com',
     'build-artifact.mjs',
     `build-artifact.mjs --as-profile plain --out ${join('output', 'pipeline-plain.html')}`,
@@ -62,8 +62,17 @@ test('alert: a failed scan stops everything, so no posting is marked seen unmail
   const { exec, calls } = fakeExec(['swarm.mjs']);
   const { log, rows } = fakeLog();
   assert.equal(alert({ exec, log, root: setup(t) }), 1);
-  assert.deepEqual(calls, ['swarm.mjs --scan --since 45 --stale 45']);
+  assert.deepEqual(calls, ['swarm.mjs --scan --since 45 --stale 45 --liveness-skip linkedin.com']);
   assert.deepEqual(rows, ['triage: FAILED - snapshot and alert skipped']);
+});
+
+test('alert: a liveness check that died is logged and the mail still goes', t => {
+  const calls = [];
+  const exec = argv => (calls.push(argv[0]), argv[0] === 'swarm.mjs' ? 3 : 0);
+  const { log, rows } = fakeLog();
+  assert.equal(alert({ exec, log, root: setup(t) }), 0);
+  assert.equal(calls.at(-1), 'notify-email.mjs');
+  assert.deepEqual(rows, ['liveness: FAILED - continuing', 'profile riley: ok', 'run: ok']);
 });
 
 test('alert: a failed owner page skips the mail; failed reads, hub and calendar do not', t => {

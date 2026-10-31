@@ -75,7 +75,7 @@ node swarm.mjs --scan --since 180          # discover first (see the backfill no
 |-------|-----------|------|
 | 0 preflight | lane parse + registration check, `cv-sync-check.mjs` | free |
 | 1 discover (`--scan`) | `scan.mjs` | free |
-| 2 liveness | `check-liveness.mjs --api-only` | free, no browser |
+| 2 liveness | `check-liveness.mjs --api-only`, minus any `--liveness-skip` hosts; exit 3 if it dies before its `Results:` line | free, no browser |
 | 3 prune | `prune-pipeline.mjs [--stale N]` | free |
 | 4a classify | `laneForTitle` per pending row — deterministic, no model | free |
 

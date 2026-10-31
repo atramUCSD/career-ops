@@ -283,6 +283,14 @@ persona:
   because the alert diffs against the last one it sent. A catch-up task was
   built and then parked: it would only help when a frozen run is killed by a
   shutdown, and the next slot covers that.
+- Liveness recorded nothing on the 10-29 19:00 and 10-30 07:00 runs, and no
+  row said so. `check-liveness.mjs` exits 1 both for its normal report and for
+  a crash, and `swarm.mjs` read both as a report. It now checks for the
+  `Results:` line and exits 3 without one, which the alert logs as
+  `liveness FAILED - continuing`. The same look showed the cost of that stage:
+  about 3,300 pending LinkedIn URLs at 3.5 s each kept the 10-31 mail waiting
+  more than three hours. The daily run now skips LinkedIn in liveness, and the
+  weekly sweep checks those URLs.
 - The fixture's facts were hand written, and one of them (a bachelor's degree)
   is a value the parser cannot produce. The facts are now the parser's own
   output over cached description text, and `persona-run` checks that they stay

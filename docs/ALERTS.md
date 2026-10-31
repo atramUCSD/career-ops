@@ -108,8 +108,8 @@ they cover different ground:
 
 | Task | When | Script | Covers |
 |---|---|---|---|
-| `career-ops-alert` | daily 07:00 and 19:00 | `career-ops.exe alert` | `swarm.mjs --scan` over the `portals.yml` company and board list, API-only liveness, prune, description reads (LinkedIn skipped), then the email |
-| `career-ops-sweep` | weekly, Sunday 03:00 | `career-ops.exe sweep` | `scan-ats-full.mjs` reverse-ATS sweep, `scan-hn.mjs`, **full** liveness including the Playwright fallback, prune |
+| `career-ops-alert` | daily 07:00 and 19:00 | `career-ops.exe alert` | `swarm.mjs --scan` over the `portals.yml` company and board list, API-only liveness and description reads (both skip LinkedIn), prune, then the email |
+| `career-ops-sweep` | weekly, Sunday 03:00 | `career-ops.exe sweep` | `scan-ats-full.mjs` reverse-ATS sweep, `scan-hn.mjs`, **full** liveness over every pending URL, LinkedIn included, with the Playwright fallback, prune |
 
 The deep pass is separate for two reasons. It is slow — `scan-ats-full.mjs`
 sweeps entire public ATS directories instead of a company list, and a full
@@ -128,6 +128,18 @@ is its normal report, not a failure — a sweep that finds a dead posting has do
 its job. `swarm.mjs` already treats it that way, and the sweep must too.
 A naive copy of the alert chain's stop-on-failure guard after that stage would
 make every sweep log FAILED and skip the prune.
+
+The same exit 1 also covers a crash, so `swarm.mjs` tells the two apart by
+whether the check printed its `Results:` line. One that died before it exits
+`swarm.mjs` with 3 once prune has run, and the alert logs
+`liveness FAILED - continuing` and still sends the mail. Without that, a
+liveness stage that recorded nothing looked the same as one that found
+nothing.
+
+LinkedIn is left out of the daily liveness check (`--liveness-skip
+linkedin.com`). Its guest endpoint is paced at 3.5 s a request, and with about
+3,300 LinkedIn URLs pending that held every alert run for more than three hours
+before the mail. The weekly sweep checks them.
 
 Both tasks append to `data/alert-log.tsv`.
 

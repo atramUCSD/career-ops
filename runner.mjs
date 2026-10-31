@@ -72,7 +72,14 @@ const profileNames = root => {
 export function alert({ exec, log, root = ROOT }) {
   // swarm.mjs owns preflight, scan, liveness and prune, and exits non-zero on
   // lane registration drift, which is the right place for the chain to stop.
-  if (exec(['swarm.mjs', '--scan', '--since', '45', '--stale', '45'])) {
+  // Its exit 3 means check-liveness died: scan and prune ran, so the mail is
+  // still right, only dead postings stay listed until a liveness pass lands.
+  // LinkedIn's guest endpoint is paced at 3.5 s a request, and ~3,300 pending
+  // LinkedIn URLs held every run for over three hours, so they are left to the
+  // weekly sweep.
+  const triage = exec(['swarm.mjs', '--scan', '--since', '45', '--stale', '45', '--liveness-skip', 'linkedin.com']);
+  if (triage === 3) log('liveness', 'FAILED - continuing');
+  else if (triage) {
     log('triage', 'FAILED - snapshot and alert skipped');
     return 1;
   }
