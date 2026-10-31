@@ -204,3 +204,14 @@ test('status page: links only pages that exist, flags failures, escapes log text
   assert.match(html, /class="bad">exit 1/);
   assert.ok(!existsSync(join(root, 'output', 'status.html')), 'rendering writes nothing');
 });
+
+test('status page: the banner follows each chain\'s latest run, not any failure in view', () => {
+  const banner = rows => /A recent stage failed/.test(renderStatus({ tasks: [], rows, pages: [] }));
+  const cleanAlert = [['2026-10-31T19:00:02', 'run', 'ok']];
+  const failedAlert = [['2026-10-31T08:12:48', 'run', 'ok'], ['2026-10-31T08:12:48', 'calendar', 'FAILED - continuing']];
+  const failedSweep = [['2026-10-25T03:00:00', 'sweep-liveness', 'FAILED - continuing'], ['2026-10-25T03:00:00', 'sweep', 'ok']];
+  assert.ok(banner(failedAlert));
+  assert.ok(!banner([...cleanAlert, ...failedAlert]));
+  assert.ok(banner([...cleanAlert, ...failedSweep]));
+  assert.ok(!banner([['2026-11-01T03:00:00', 'sweep', 'ok'], ...cleanAlert, ...failedSweep]));
+});

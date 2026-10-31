@@ -229,7 +229,13 @@ export function statusData(root = ROOT, tasks = readTasks()) {
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
 
 export function renderStatus({ tasks, rows, pages }, now = new Date()) {
-  const failed = rows.some(r => /FAILED/.test(r[2] || ''));
+  // Only each chain's latest run counts: a failure an alert has since run clean
+  // past would otherwise hold the banner up for days, and a clean alert must
+  // not hide a failed sweep. Rows are newest first and share their run's stamp.
+  const chain = r => /^(sweep|sync)/.exec(r[1] || '')?.[0] ?? 'alert';
+  const latest = {};
+  for (const r of rows) latest[chain(r)] ??= r[0];
+  const failed = rows.some(r => /FAILED/.test(r[2] || '') && r[0] === latest[chain(r)]);
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>career-ops status</title>
