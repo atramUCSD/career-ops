@@ -132,9 +132,10 @@ make every sweep log FAILED and skip the prune.
 The same exit 1 also covers a crash, so `swarm.mjs` tells the two apart by
 whether the check printed its `Results:` line. One that died before it exits
 `swarm.mjs` with 3 once prune has run, and the alert logs
-`liveness FAILED - continuing` and still sends the mail. Without that, a
-liveness stage that recorded nothing looked the same as one that found
-nothing.
+`liveness FAILED - continuing` and still sends the mail. The sweep checks the
+same line and logs `sweep-liveness FAILED - continuing` before it prunes.
+Without that, a liveness stage that recorded nothing looked the same as one
+that found nothing.
 
 LinkedIn is left out of the daily liveness check (`--liveness-skip
 linkedin.com`). Its guest endpoint is paced at 3.5 s a request, and with about

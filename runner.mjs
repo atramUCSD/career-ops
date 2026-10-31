@@ -26,7 +26,7 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSyn
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parsePendingRows } from './swarm.mjs';
+import { parsePendingRows, runLiveness } from './swarm.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
 import { validateFlags } from './lib/cli-flags.mjs';
 
@@ -136,7 +136,7 @@ export function alert({ exec, log, root = ROOT }) {
  * slow ones: scan-ats-full.mjs sweeps whole public ATS directories, and a full
  * liveness check falls back to Playwright, which is sequential by design.
  */
-export function sweep({ exec, log, root = ROOT }) {
+export async function sweep({ exec, log, root = ROOT, liveness = runLiveness }) {
   // scan-ats-full.mjs deletes its checkpoint on a clean finish and exits 1 on
   // --resume with no checkpoint, so --resume is passed only after an
   // interrupted sweep. --since 10 overlaps a sweep that slipped a day.
@@ -158,11 +158,12 @@ export function sweep({ exec, log, root = ROOT }) {
     log('sweep-liveness', 'FAILED - could not build the pending URL list, prune skipped');
     return 1;
   }
-  // check-liveness.mjs exits 1 whenever anything is expired or uncertain. That
-  // is its report, not a failure: guarding it would log FAILED on every sweep
-  // and the prune would never run.
-  exec(['check-liveness.mjs', '--file', urls, '--throttle']);
+  // check-liveness.mjs exits 1 whenever anything is expired or uncertain, and
+  // also when it dies, so the exit code cannot be the guard: its Results line
+  // is. A dead check recorded nothing, which leaves prune safe to run.
+  const { finished } = await liveness(['--file', urls, '--throttle']);
   rmSync(urls, { force: true });
+  if (!finished) log('sweep-liveness', 'FAILED - continuing');
   if (exec(['prune-pipeline.mjs', '--stale', '45'])) {
     log('sweep-prune', 'FAILED');
     return 1;
@@ -357,4 +358,4 @@ export function main(argv, root = ROOT) {
   return 1;
 }
 
-if (isMainModule(import.meta.url)) process.exit(main(process.argv.slice(2)));
+if (isMainModule(import.meta.url)) process.exit(await main(process.argv.slice(2)));

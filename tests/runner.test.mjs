@@ -116,29 +116,36 @@ test('alert: a failed layer mail or projection is logged and the chain goes on; 
   assert.equal(lb.rows.at(-1), 'alert: FAILED - state left untouched, next run re-alerts');
 });
 
-test('sweep: liveness findings are not failures, the pending list is the pipeline, --resume only after an interrupted sweep', t => {
+test('sweep: liveness findings are not failures, the pending list is the pipeline, --resume only after an interrupted sweep', async t => {
   const root = setup(t);
   mkdirSync(join(root, 'data'), { recursive: true });
   cpSync(join(fixture, 'data', 'pipeline.md'), join(root, 'data', 'pipeline.md'));
   let listed = '';
-  const { exec: inner, calls } = fakeExec(['check-liveness.mjs']);
-  const exec = argv => {
-    if (argv[0] === 'check-liveness.mjs') listed = readFileSync(argv[2], 'utf-8');
-    return inner(argv);
+  const { exec, calls } = fakeExec();
+  const liveness = async args => {
+    calls.push(`check-liveness.mjs ${args.join(' ')}`);
+    listed = readFileSync(args[1], 'utf-8');
+    return { status: 1, finished: true };
   };
   const { log, rows } = fakeLog();
-  assert.equal(sweep({ exec, log, root }), 0);
+  assert.equal(await sweep({ exec, log, root, liveness }), 0);
   assert.equal(calls[0], 'scan-ats-full.mjs --since 10');
   assert.deepEqual(calls.slice(1).map(c => c.split(' ')[0]), ['scan-hn.mjs', 'check-liveness.mjs', 'prune-pipeline.mjs']);
   assert.equal(listed.trim().split('\n').length, 10);
   assert.match(listed, /^https:\/\/boards\.greenhouse\.io\/acmedata\/jobs\/1$/m);
   assert.deepEqual(rows, ['sweep: ok']);
 
+  const died = fakeExec();
+  const ld = fakeLog();
+  assert.equal(await sweep({ exec: died.exec, log: ld.log, root, liveness: async () => ({ status: 1, finished: false }) }), 0);
+  assert.equal(died.calls.at(-1), 'prune-pipeline.mjs --stale 45');
+  assert.deepEqual(ld.rows, ['sweep-liveness: FAILED - continuing', 'sweep: ok']);
+
   mkdirSync(join(root, 'data', 'cache'), { recursive: true });
   writeFileSync(join(root, 'data', 'cache', 'ats-full-checkpoint.json'), '{}');
   const again = fakeExec(['scan-hn.mjs']);
   const l2 = fakeLog();
-  assert.equal(sweep({ exec: again.exec, log: l2.log, root }), 1);
+  assert.equal(await sweep({ exec: again.exec, log: l2.log, root }), 1);
   assert.deepEqual(again.calls, ['scan-ats-full.mjs --since 10 --resume', 'scan-hn.mjs']);
   assert.deepEqual(l2.rows, ['sweep-hn: FAILED - liveness and prune skipped']);
 });
