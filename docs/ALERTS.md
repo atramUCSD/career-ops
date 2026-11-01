@@ -77,7 +77,7 @@ This builds `career-ops.exe` (a windowless launcher compiled from
 `scripts/launcher.cs` with the .NET Framework `csc` that ships with Windows)
 and registers `career-ops-alert` at 07:00 and 19:00 and `career-ops-sweep` on
 Sunday at 03:00, both pointed at it. The launcher only runs
-`node runner.mjs <command>` and appends its output to `data/runner-log.txt`;
+`node runner.mjs <command>` and appends its output to `data/runner-log-<command>.txt`, one log per command so an alert that overlaps the Sunday sweep is not locked out of a shared log;
 every decision about which stage runs and which failure stops what lives in
 `runner.mjs`, so a fix to the chain never needs a rebuild of the exe. The tasks
 run on battery, wake the machine, and start late if a slot was missed. Windows
@@ -202,7 +202,7 @@ published from a Claude session (may lag). Set `artifact_url` in
 | `data/alert-log.tsv` | one row per scheduled run |
 | `runner.mjs` | the scheduled chains, the task install, the status page |
 | `scripts/launcher.cs` | source of `career-ops.exe`, the windowless launcher the tasks run |
-| `data/runner-log.txt` | the launched runs' console output |
+| `data/runner-log-<command>.txt` | the launched runs' console output, one file per command (`home` for no arguments) |
 
 ```bash
 node test-all.mjs --only notify-email

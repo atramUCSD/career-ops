@@ -146,7 +146,7 @@ The scheduled runs need no Claude session. `node runner.mjs install` compiles
 `career-ops.exe` from `scripts/launcher.cs` and registers the alert and sweep
 tasks on it; `--sync` adds the ten-minute cloud sync. The exe passes its
 arguments to `node runner.mjs` and appends the output to
-`data/runner-log.txt`. It decides nothing, so a change to the chain is a change
+`data/runner-log-<command>.txt` (one per command, so the alert and the sweep can overlap). It decides nothing, so a change to the chain is a change
 to `runner.mjs` and takes effect on the next run without a rebuild.
 
 `career-ops.exe` with no arguments opens the web dashboard, starting it hidden
