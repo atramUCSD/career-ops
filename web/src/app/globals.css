@@ -102,6 +102,15 @@
   --boost-soft: #F9EBFF;
   --dot: 196 7% 56% / 0.14;
   --pre-bg: #F9FBFA;
+  /* Glass (DESIGN.md 5a). The fill resolves --surface on <html>, where .dark
+     also lands, so one declaration serves both themes. Mist borders vanish on
+     white, so light mode edges with Abyss and a white highlight instead. */
+  --glass-fill: color-mix(in srgb, var(--surface) 55%, transparent);
+  --glass-sheen: linear-gradient(color-mix(in srgb, #FFFFFF 6%, transparent), transparent);
+  --glass-border: color-mix(in srgb, #001E2B 12%, transparent);
+  --glass-edge: color-mix(in srgb, #FFFFFF 70%, transparent);
+  --glass-blur: 12px;
+  --glass-saturate: 160%;
   color-scheme: light;
 }
 
@@ -138,6 +147,8 @@
   --boost-soft: #2D0B59;
   --dot: 196 7% 56% / 0.16;
   --pre-bg: #112733;
+  --glass-border: color-mix(in srgb, #E8EDEB 16%, transparent);
+  --glass-edge: color-mix(in srgb, #E8EDEB 35%, transparent);
   color-scheme: dark;
 }
 
@@ -164,18 +175,111 @@ body {
 @utility focus-ring-inset {
   &:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
 }
+/* Forced colors drops box-shadow, so the ring needs an outline there or the
+   focused field looks identical to the rest. */
 @utility field-focus {
   outline: none;
   &:focus-visible {
     border-color: var(--brand);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 25%, transparent);
+    @media (forced-colors: active) { outline: 2px solid CanvasText; outline-offset: 2px; }
   }
 }
 @utility field-focus-within {
   &:focus-within {
     border-color: var(--brand);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 25%, transparent);
+    @media (forced-colors: active) { outline: 2px solid CanvasText; outline-offset: 2px; }
   }
+}
+
+/* ── Glass (DESIGN.md 5a) ──────────────────────────────────────────────────
+   Solid is the base, so a browser without backdrop-filter gets a Card. The
+   border is there in every branch: dropping it would shift the box by 1px.
+   Plain media queries rather than a @custom-variant: the fallback is part of
+   the material, never something a call site opts into. */
+@utility glass {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  @supports (backdrop-filter: blur(1px)) {
+    background: var(--glass-sheen), var(--glass-fill);
+    border-color: var(--glass-border);
+    box-shadow: inset 0 1px 0 var(--glass-edge);
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  }
+  @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+    background: var(--surface);
+    border-color: var(--border);
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+  :where(html[data-glass="off"]) & {
+    background: var(--surface);
+    border-color: var(--border);
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+  @media (forced-colors: active) {
+    background: Canvas;
+    border-color: CanvasText;
+    box-shadow: none;
+  }
+}
+/* Glass without the blur pass: unlimited, and what the active panel becomes
+   while the camera moves. */
+@utility frost {
+  background: var(--glass-sheen), var(--glass-fill);
+  border: 1px solid var(--glass-border);
+  box-shadow: inset 0 1px 0 var(--glass-edge);
+  @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+    background: var(--surface);
+    border-color: var(--border);
+    box-shadow: none;
+  }
+  :where(html[data-glass="off"]) & {
+    background: var(--surface);
+    border-color: var(--border);
+    box-shadow: none;
+  }
+  @media (forced-colors: active) {
+    background: Canvas;
+    border-color: CanvasText;
+    box-shadow: none;
+  }
+}
+/* Flight swap (DESIGN.md 7a). While the camera moves (data-flying on <html>),
+   every glass surface, chrome included, trades its blur for a solid layer: a
+   blur over a moving world re-samples every frame, and on an integrated GPU at
+   DPR 2 that is what drops frames. The layer fades in over 150ms and the blur
+   drops only once it is opaque; on settle the blur comes back at once while
+   the layer fades out. Opacity sits on the pseudo-element, never on the glass
+   or its ancestors.
+   will-change keeps the panel composited, and a stacking context, after the
+   blur goes. Without it, dropping backdrop-filter 150ms into a flight folds
+   the panel back into the layer below and re-rasterises that layer mid-flight.
+   The stacking context keeps the z-index -1 layer above the panel's background
+   and below its content. The layer is absolute, so a glass box must be
+   positioned. */
+.glass { will-change: backdrop-filter; }
+.glass::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--surface);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .15s var(--ease-out);
+}
+[data-flying] .glass::before { opacity: 1; }
+[data-flying] .glass {
+  backdrop-filter: none;
+  transition: backdrop-filter 0s linear .15s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .glass::before,
+  [data-flying] .glass { transition: none; }
 }
 
 /* ── Dialog (components/ui/dialog.tsx) ─────────────────────────────────────
