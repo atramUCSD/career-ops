@@ -38,7 +38,7 @@ const FILES: Record<string, string> = {
   personalization: "modes/_profile.md",
   lanes: "config/lanes.yml",
 };
-const BOARD_TONE = { live: "good", broken: "warn" } as const;
+const BOARD_TONE: Partial<Record<Board["status"], "good" | "warn">> = { live: "good", broken: "warn" };
 // 400% zoom on a 1280px screen is 320 CSS px wide; 200% on a 720px-tall one is 360 tall.
 const FLAT = "(max-width: 40rem), (max-height: 30rem)";
 
@@ -50,6 +50,8 @@ const subscribe = (cb: () => void) => {
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const show = (v: unknown) => (v === undefined ? "(none)" : Array.isArray(v) ? v.join(", ") || "(empty)" : String(v));
 const hrefOf = (id: string) => (id === OVERVIEW ? "/setup" : `/setup/${id}`);
+// discover-ats lists a company as a bare name or as an object with one.
+const names = (rs: ({ name?: string } | string)[]) => rs.map((r) => (typeof r === "string" ? r : r.name));
 
 /** "7:00 AM" to minutes past midnight. */
 function minutes(t: string) {
@@ -108,9 +110,8 @@ export function SetupWizard({
   const positions = useMemo(() => radialPositions(STAGE_IDS, R) as Record<string, [number, number]>, []);
   const ring = STAGE_IDS.slice(1).map((id) => positions[id]);
 
-  // No announcing here: each route's metadata sets the page title, and Next's
-  // route announcer reads it in the navigation commit. A title written at settle
-  // was one hop stale by then, so the announcer named the stage being left.
+  // No title here: Next's route announcer reads it in the navigation commit, so
+  // each stage route sets it in generateMetadata. One written at settle is a hop stale.
   const onSettle = (id: string) => {
     // No stage h1 to land on at the overview: the review heading takes focus instead of body.
     if (id === OVERVIEW) railHeading.current?.focus({ preventScroll: true });
@@ -379,7 +380,7 @@ export function SetupWizard({
                       />
                       {n}
                       {b && (
-                        <Badge tone={b.status === "live" || b.status === "broken" ? BOARD_TONE[b.status] : "muted"} title={b.detail}>
+                        <Badge tone={BOARD_TONE[b.status]} title={b.detail}>
                           {b.status}
                         </Badge>
                       )}
@@ -580,8 +581,8 @@ export function SetupWizard({
               <p className="text-warn">Company lookup failed: {applied.added.error}</p>
             ) : (
               <p className="text-muted">
-                Added {show(applied.added.resolved?.map((r: { name?: string } | string) => (typeof r === "string" ? r : r.name)))}
-                {applied.added.unresolved?.length > 0 && `; no board found for ${show(applied.added.unresolved.map((r: { name?: string } | string) => (typeof r === "string" ? r : r.name)))}`}.
+                Added {show(names(applied.added.resolved))}
+                {applied.added.unresolved?.length > 0 && `; no board found for ${show(names(applied.added.unresolved))}`}.
               </p>
             ))}
           {applied.draftKept && <p className="text-warn">The saved draft could not be removed: {applied.draftKept}</p>}

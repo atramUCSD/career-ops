@@ -2,7 +2,7 @@
 // notify-email.mjs puts `to` straight into the To: header of the MIME message,
 // so a line break there would add headers to mail sent from the user's account.
 
-const EMAIL = /^[^\s@,;<>"()]+@[^\s@,;<>"()]+\.[^\s@,;<>"()]+$/;
+export const EMAIL = /^[^\s@,;<>"()]+@[^\s@,;<>"()]+\.[^\s@,;<>"()]+$/;
 const INTS = { min_match: [0, 100], max_rows: [1, 100] };
 const BOOLS = ["enabled", "quiet_if_empty", "attach_artifact"];
 const CONTROL = /[\x00-\x1f\x7f]/;

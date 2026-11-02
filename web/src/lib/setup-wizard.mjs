@@ -4,6 +4,8 @@
 // wizard writes nothing. Validation here is the wizard's own (required fields,
 // in the wizard's words); the writers' libraries still check the draft on POST.
 
+import { EMAIL } from "./alerts-config.mjs";
+
 /** @typedef {{ id: string, label: string, title: string }} Stage */
 
 /** @type {Stage[]} */
@@ -26,8 +28,6 @@ export function stageLabel(id) {
 
 export const REMOTE = ["Remote only", "Remote or hybrid", "Hybrid or on-site", "Anywhere"];
 
-// Mirrors alerts-config.mjs, which does not export it.
-const EMAIL = /^[^\s@,;<>"()]+@[^\s@,;<>"()]+\.[^\s@,;<>"()]+$/;
 const MAX_TEXT = 200;
 
 // Form field to the profile draft key profile-patch.mjs reads.

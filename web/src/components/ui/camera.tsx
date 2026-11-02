@@ -41,7 +41,7 @@ export function World({
   overviewPad?: Point;
   /** Screen px the fixed chrome covers, [top, right, bottom, left]. Every view centres in the rect inside it. */
   inset?: [number, number, number, number];
-  /** After a flight lands and the new stage's h1 has focus: set document.title and the status region here. */
+  /** After a flight lands and the new stage's h1 has focus. Not for document.title: that belongs to the route (DESIGN.md 7a). */
   onSettle?: (id: string) => void;
   children: ReactNode;
 }) {
