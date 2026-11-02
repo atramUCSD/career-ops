@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { portalsPatch, scanFunnel, watchedCompanies } from "../../src/lib/portals-config.mjs";
+import { companyToggles, portalsPatch, scanFunnel, watchedCompanies } from "../../src/lib/portals-config.mjs";
 
 test("the onboarding write replaces the include list and, when given, the allowed locations", () => {
   assert.deepEqual(portalsPatch({ roles: [" ML Engineer ", "", 7, "AI Engineer"], location: ["Remote"] }), {
@@ -81,4 +81,35 @@ test("watchedCompanies lists scanned companies first, then paused ones, with the
     { name: "Globex", enabled: false, host: "jobs.example.test" },
   ]);
   assert.deepEqual(watchedCompanies({ title_filter: {} }), []);
+});
+
+test("companyToggles turns scanning on or off by name, writing only what changes", () => {
+  const current = {
+    tracked_companies: [
+      { name: "Acme AI", enabled: true },
+      { name: "Globex", enabled: false },
+      { name: "Initech" },
+      { name: "globex", enabled: true },
+      "not a company",
+    ],
+  };
+  assert.deepEqual(companyToggles(current, { enable: [" GLOBEX "], disable: ["Initech", "acme ai"] }), {
+    edits: [
+      [["tracked_companies", 1, "enabled"], true],
+      [["tracked_companies", 2, "enabled"], false],
+      [["tracked_companies", 0, "enabled"], false],
+    ],
+  });
+  // Already in the asked state, including a missing key read as on.
+  assert.deepEqual(companyToggles(current, { enable: ["Initech", "Acme AI"] }), { edits: [] });
+  assert.deepEqual(companyToggles(current, {}), { edits: [] });
+});
+
+test("companyToggles refuses an unknown name, a contradiction and a malformed body", () => {
+  const current = { tracked_companies: [{ name: "Acme AI" }] };
+  assert.match(companyToggles(current, { disable: ["Hooli"] }).error, /"Hooli" is not in tracked_companies/);
+  assert.match(companyToggles(current, { enable: ["Acme AI"], disable: ["acme ai"] }).error, /both enabled and disabled/);
+  assert.match(companyToggles(current, { enable: "Acme AI" }).error, /lists of names/);
+  assert.match(companyToggles(current, null).error, /must be an object/);
+  assert.match(companyToggles({}, { enable: ["Acme AI"] }).error, /not in tracked_companies/);
 });

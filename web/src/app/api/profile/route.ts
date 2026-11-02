@@ -4,7 +4,7 @@ import { atomicWriteWithBackup } from "@/lib/core/safe-write";
 import { withFileLock } from "@/lib/core/file-lock";
 import { configErrorResponse, loadYamlDoc, setIn, toYaml } from "@/lib/yaml-doc.mjs";
 import { getProfilePath } from "@/lib/core/profile-path.mjs";
-import { profilePatchError } from "@/lib/profile-patch.mjs";
+import { profileEdits, profilePatchError } from "@/lib/profile-patch.mjs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,55 +14,6 @@ export const dynamic = "force-dynamic";
 // in the patch change, and the user's comments stay; a missing file is seeded
 // from config/profile.example.yml. Callers: the assistant's confirm-gated
 // setProfile, and the Home page's preferences.
-
-const TEXT: Record<string, string[]> = {
-  name: ["candidate", "full_name"],
-  email: ["candidate", "email"],
-  location: ["candidate", "location"],
-  currency: ["compensation", "currency"],
-  remote: ["compensation", "location_flexibility"],
-  targetRange: ["compensation", "target_range"],
-  walkAway: ["compensation", "minimum"],
-};
-const SPEND_TIERS = new Set(["economy", "standard", "premium"]);
-
-type Edit = [string[], unknown];
-
-/** The patch as path edits, or an error message. Empty text is skipped, not cleared. */
-function profileEdits(p: Record<string, unknown>): Edit[] | string {
-  const edits: Edit[] = [];
-  for (const [field, keys] of Object.entries(TEXT)) {
-    const v = p[field];
-    if (v == null) continue;
-    if (typeof v !== "string" || v.length > 200) return `${field} must be text of at most 200 characters`;
-    if (v.trim()) edits.push([keys, v.trim()]);
-  }
-  if (p.roles !== undefined) {
-    if (!Array.isArray(p.roles) || p.roles.some((r) => typeof r !== "string")) return "roles must be a list of text";
-    const roles = (p.roles as string[]).map((r) => r.trim()).filter(Boolean).slice(0, 24);
-    if (roles.length) edits.push([["target_roles", "primary"], roles]);
-  }
-  // The assistant's shape: a numeric range the user stated.
-  const { compMin, compMax } = p;
-  if (typeof compMin === "number" && typeof compMax === "number" && compMin > 0 && compMax > 0) {
-    edits.push([["compensation", "target_range"], `${compMin}-${compMax}`]);
-  }
-  if (p.language !== undefined) {
-    if (typeof p.language !== "string" || !/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(p.language)) {
-      return "language must be a language code such as en or pt-BR";
-    }
-    edits.push([["language", "output"], p.language]);
-  }
-  if (p.spendTier !== undefined) {
-    if (typeof p.spendTier !== "string" || !SPEND_TIERS.has(p.spendTier)) {
-      return "spendTier must be economy, standard or premium";
-    }
-    edits.push([["spend_tier"], p.spendTier]);
-  }
-  // seniority intentionally not written (no canonical home in profile.yml);
-  // archetypes/narrative live in modes/_profile.md — this writer never touches them.
-  return edits;
-}
 
 export async function POST(req: Request) {
   let body: unknown;

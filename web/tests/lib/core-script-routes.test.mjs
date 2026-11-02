@@ -180,6 +180,36 @@ test("prepare/approve launches with process.execPath and windowsHide", async () 
   assert.equal(made[0].options?.windowsHide, true);
 });
 
+// Fork route: the setup wizard's apply resolves added companies through
+// discover-ats --write, after every file write. A lookup that fails, or exits
+// cleanly without its JSON, is reported as an error, never as "added".
+test("setup apply launches discover-ats with process.execPath and windowsHide", async () => {
+  const { POST } = await route("setup");
+  const apply = () => new Request("http://localhost/api/setup?apply=1", {
+    method: "POST",
+    body: JSON.stringify({ draft: { companies: { add: ["Initech"] } } }),
+  });
+
+  standIn("discover-ats", 'console.log(JSON.stringify({ metadata: { written: true, warnings: [] }, resolved: [{ name: "Initech" }], unresolved: [], blacklisted: [] }));');
+  const { body, launches: made } = await call(POST, apply());
+  assert.equal(body.ok, true, JSON.stringify(body));
+  assert.deepEqual(body.landed, []);
+  assert.equal(body.added.written, true);
+  assert.deepEqual(body.added.resolved, [{ name: "Initech" }]);
+  assert.equal(made.length, 1);
+  assert.equal(made[0].script, join(codeRoot, "discover-ats.mjs"));
+  assert.equal(made[0].file, process.execPath);
+  assert.equal(made[0].options?.windowsHide, true);
+
+  for (const silent of ["process.exit(1);", "process.exit(0);"]) {
+    standIn("discover-ats", silent);
+    const { body: failed } = await call(POST, apply());
+    assert.equal(failed.ok, true, silent);
+    assert.equal(typeof failed.added.error, "string", silent);
+    assert.equal(failed.added.written, undefined, silent);
+  }
+});
+
 // Every route that calls execFile, found by reading the route tree. The two
 // tests above drive exactly these; a route added later that execFiles a core
 // script fails here until it is driven there too.
@@ -194,6 +224,7 @@ const DRIVEN_ROUTES = [
   "portals/verify",
   "prepare/approve",
   "quiet-companies",
+  "setup",
   "stats",
   "upskill",
 ];

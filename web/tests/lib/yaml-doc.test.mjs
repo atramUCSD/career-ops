@@ -110,6 +110,31 @@ test("a numeric key indexes into a list of settings", () => {
   assert.match(out, /- y # keep\n/);
 });
 
+test("toggling one company leaves its neighbours' aligned comments alone", () => {
+  const source = [
+    "tracked_companies:",
+    "  - name: Acme",
+    "    careers_url: https://a.example/jobs",
+    "    enabled: true",
+    "    max_response_mb: 24  # board was 10 MB",
+    "  - name: Globex",
+    "    careers_url: https://g.example/jobs",
+    "    enabled: false   # paused",
+    "    max_response_mb: 32  # board was 13 MB",
+    "  - name: Initech",
+    "    api: https://i.example/api      # v2 endpoint",
+    "",
+  ].join("\n");
+  const on = edit(source, [["tracked_companies", 1, "enabled"], true]);
+  assert.deepEqual(changedLines(source, on), ["    enabled: true   # paused"]);
+  assert.equal(on.split("\n").length, source.split("\n").length);
+
+  // No `enabled` key yet: that entry is re-rendered, and only that entry.
+  const off = edit(source, [["tracked_companies", 2, "enabled"], false]);
+  assert.ok(off.startsWith(source.slice(0, source.indexOf("  - name: Initech"))));
+  assert.deepEqual(YAML.parse(off).tracked_companies[2], { name: "Initech", api: "https://i.example/api", enabled: false });
+});
+
 test("Windows line endings survive an edit", () => {
   const crlf = SOURCE.replace(/\n/g, "\r\n");
   const out = edit(crlf, [["title_filter", "positive"], ["UI"]], [["max_posting_age_days"], 30]);

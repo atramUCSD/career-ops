@@ -2,7 +2,7 @@ import path from "node:path";
 import { careerOpsRoot, userRoot } from "@/lib/career-ops";
 import { atomicWriteWithBackup } from "@/lib/core/safe-write";
 import { withFileLock } from "@/lib/core/file-lock";
-import { words } from "@/lib/portals-config.mjs";
+import { laneEdits, laneKeywords } from "@/lib/lanes-config.mjs";
 import { configErrorResponse, loadYamlDoc, setIn, toYaml } from "@/lib/yaml-doc.mjs";
 import { readJsonObject } from "@/lib/json-body";
 
@@ -16,32 +16,17 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   const body = await readJsonObject<Record<string, unknown>>(req);
   if (!body) return Response.json({ error: "bad json" }, { status: 400 });
-  const edits = body?.lanes;
-  if (!edits || typeof edits !== "object" || Array.isArray(edits) || !Object.keys(edits).length) {
-    return Response.json({ error: "lanes must name at least one lane" }, { status: 400 });
-  }
-  const keywords: Record<string, string[]> = {};
-  for (const [id, value] of Object.entries(edits)) {
-    const list = words(value);
-    // lanes.mjs loadLanes refuses a lane with no title keyword.
-    if (!list?.length) return Response.json({ error: `lane "${id}" needs at least one title keyword` }, { status: 400 });
-    if (list.length > 40 || list.some((k: string) => k.length > 120)) {
-      return Response.json({ error: `lane "${id}" allows 40 keywords of at most 120 characters` }, { status: 400 });
-    }
-    keywords[id] = list;
-  }
+  const checked = laneKeywords(body.lanes);
+  if ("error" in checked) return Response.json({ error: checked.error }, { status: 400 });
 
   const file = path.join(userRoot(), "config", "lanes.yml");
   try {
     return await withFileLock(file, () => {
       const { doc, src, seeded } = loadYamlDoc(file, path.join(careerOpsRoot(), "config", "lanes.example.yml"), "config/lanes.yml");
       if (seeded) return Response.json({ error: "config/lanes.yml does not exist" }, { status: 404 });
-      const lanes = doc.toJS().lanes;
-      for (const [id, list] of Object.entries(keywords)) {
-        const i = Array.isArray(lanes) ? lanes.findIndex((l) => l?.id === id) : -1;
-        if (i < 0) return Response.json({ error: `no lane "${id}" in config/lanes.yml` }, { status: 404 });
-        setIn(doc, ["lanes", i, "title_keywords"], list);
-      }
+      const planned = laneEdits(doc.toJS(), checked.keywords);
+      if ("error" in planned) return Response.json({ error: planned.error }, { status: 404 });
+      for (const [keys, list] of planned.edits) setIn(doc, keys, list);
       atomicWriteWithBackup(file, toYaml(doc, src));
       return Response.json({ ok: true });
     });

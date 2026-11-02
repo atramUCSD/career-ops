@@ -170,17 +170,34 @@ function renderPair(pair, style) {
     copy.key.commentBefore = undefined;
     copy.key.spaceBefore = false;
   }
-  // Trailing comments attach to the innermost last collection, not always the
-  // value itself, so clear them down the last-item chain.
-  for (let node = copy.value; YAML.isCollection(node); ) {
+  clearTrailing(copy.value);
+  const doc = new YAML.Document(new YAML.YAMLMap());
+  doc.contents.items.push(copy);
+  return doc.toString({ ...OPTS, ...style, verifyAliasOrder: false });
+}
+
+// The same for one list item, which sits after its "- ".
+function renderItem(node, style) {
+  const copy = YAML.isNode(node) ? node.clone() : node;
+  if (YAML.isNode(copy)) {
+    copy.commentBefore = undefined;
+    copy.spaceBefore = false;
+  }
+  clearTrailing(copy);
+  const doc = new YAML.Document();
+  doc.contents = copy;
+  return doc.toString({ ...OPTS, ...style, verifyAliasOrder: false });
+}
+
+// Trailing comments attach to the innermost last collection, not always the
+// node itself, so clear them down the last-item chain.
+function clearTrailing(value) {
+  for (let node = value; YAML.isCollection(node); ) {
     node.comment = undefined;
     const last = node.items.at(-1);
     node = YAML.isPair(last) ? last.value : last;
   }
-  if (YAML.isScalar(copy.value)) copy.value.comment = undefined;
-  const doc = new YAML.Document(new YAML.YAMLMap());
-  doc.contents.items.push(copy);
-  return doc.toString({ ...OPTS, ...style, verifyAliasOrder: false });
+  if (YAML.isScalar(value)) value.comment = undefined;
 }
 
 // The indent a block was written with, relative to its key at column `col`,
@@ -203,14 +220,37 @@ function splicePair(pair, old, src, splices) {
   const next = renderPair(pair, style);
   if (next === renderPair(old, style)) return;
 
-  const [a, b] = [pair.value, old.value];
+  if (descend(pair.value, old.value, src, splices)) return;
+  const text = next.replace(/\n(?=.)/g, `\n${" ".repeat(col)}`);
+  splices.push([start, end, slice.endsWith("\n") ? text : text.replace(/\n$/, "")]);
+}
+
+// Splice inside `b` rather than re-render it when the shape allows: a block map
+// with the same keys, or a block list of the same length (tracked_companies,
+// where one toggled entry must not re-space its 77 neighbours).
+function descend(a, b, src, splices) {
   if (YAML.isMap(a) && YAML.isMap(b) && !a.flow && !b.flow && a.items.length === b.items.length) {
     const olds = new Map(b.items.map((p) => [keyOf(p), p]));
-    if (a.items.every((p) => olds.has(keyOf(p)))) {
-      for (const p of a.items) splicePair(p, olds.get(keyOf(p)), src, splices);
-      return;
-    }
+    if (!a.items.every((p) => olds.has(keyOf(p)))) return false;
+    for (const p of a.items) splicePair(p, olds.get(keyOf(p)), src, splices);
+    return true;
   }
+  if (YAML.isSeq(a) && YAML.isSeq(b) && !a.flow && !b.flow && a.items.length === b.items.length) {
+    if (!b.items.every((item) => YAML.isNode(item) && item.range)) return false;
+    a.items.forEach((item, i) => spliceItem(item, b.items[i], src, splices));
+    return true;
+  }
+  return false;
+}
+
+function spliceItem(item, old, src, splices) {
+  const [start, end] = old.range;
+  const slice = src.slice(start, end);
+  const col = start - src.lastIndexOf("\n", start - 1) - 1;
+  const style = styleOf(slice, col);
+  const next = renderItem(item, style);
+  if (next === renderItem(old, style)) return;
+  if (descend(item, old, src, splices)) return;
   const text = next.replace(/\n(?=.)/g, `\n${" ".repeat(col)}`);
   splices.push([start, end, slice.endsWith("\n") ? text : text.replace(/\n$/, "")]);
 }

@@ -124,6 +124,44 @@ export function scanFunnel(tsv) {
 }
 
 /**
+ * The setIn edits that turn scanning on or off for companies already in
+ * tracked_companies, matched by name without case. Off is `enabled: false`,
+ * never a deleted entry: the resolved board and the user's notes on it stay,
+ * so turning it back on needs no new lookup. Adding a company is
+ * discover-ats.mjs --write, which resolves its board first.
+ *
+ * @param {Record<string, unknown>} current portals.yml as plain data
+ * @param {{ enable?: unknown, disable?: unknown }} body
+ * @returns {{ edits: [Array<string | number>, boolean][] } | { error: string }}
+ */
+export function companyToggles(current, body) {
+  if (!isObj(body)) return { error: "companies must be an object" };
+  const enable = body.enable === undefined ? [] : words(body.enable);
+  const disable = body.disable === undefined ? [] : words(body.disable);
+  if (!enable || !disable) return { error: "companies.enable and companies.disable must be lists of names" };
+  const key = (s) => s.trim().toLowerCase();
+  const on = new Set(enable.map(key));
+  const both = disable.find((n) => on.has(key(n)));
+  if (both) return { error: `"${both}" is both enabled and disabled` };
+
+  const list = Array.isArray(current.tracked_companies) ? current.tracked_companies : [];
+  const index = new Map();
+  list.forEach((c, i) => {
+    if (isObj(c) && typeof c.name === "string") index.set(key(c.name), [...(index.get(key(c.name)) ?? []), i]);
+  });
+  const edits = [];
+  for (const [names, enabled] of [[enable, true], [disable, false]]) {
+    for (const name of names) {
+      const at = index.get(key(name));
+      if (!at) return { error: `"${name}" is not in tracked_companies` };
+      // A missing `enabled` already means on, so enabling it writes nothing.
+      for (const i of at) if ((list[i].enabled !== false) !== enabled) edits.push([["tracked_companies", i, "enabled"], enabled]);
+    }
+  }
+  return { edits };
+}
+
+/**
  * @typedef {{ name: string, enabled: boolean, host: string }} WatchedCompany
  */
 
