@@ -18,6 +18,22 @@ const COMPANY_KEYS = new Set(["enable", "disable", "add"]);
 // Each added name is one discover-ats probe across every ATS vendor.
 const MAX_ADDS = 20;
 
+// A profile seeded from config/profile.example.yml carries an example person.
+// The wizard asks for name, email, location and roles; everything else that
+// describes that person is cleared, as onboard-write.mjs does, so none of it
+// reaches a CV or an evaluation as the user's own.
+export const SEEDED_PROFILE_BLANKS = [
+  ...["phone", "linkedin", "portfolio_url", "github", "twitter"].map((k) => [["candidate", k], ""]),
+  [["target_roles", "archetypes"], []],
+  [["narrative", "headline"], ""],
+  [["narrative", "exit_story"], ""],
+  [["narrative", "superpowers"], []],
+  [["narrative", "proof_points"], []],
+  ...["target_range", "minimum", "location_flexibility"].map((k) => [["compensation", k], ""]),
+  ...["country", "city", "timezone", "visa_status"].map((k) => [["location", k], ""]),
+  [["location", "authorized_in"], []],
+];
+
 const isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 const extra = (obj, allowed) => Object.keys(obj).find((k) => !allowed.has(k));
 
@@ -131,9 +147,10 @@ export function leaves(prefix, obj) {
  * @param {"portals" | "alerts" | "profile" | "lanes"} target
  * @param {Record<string, any>} checked from checkDraft
  * @param {Record<string, unknown>} current the file as plain data
+ * @param {boolean} [seeded] the file does not exist yet and `current` is the shipped example
  * @returns {{ edits: [Array<string | number>, unknown][] } | { error: string }}
  */
-export function yamlEdits(target, checked, current) {
+export function yamlEdits(target, checked, current, seeded = false) {
   switch (target) {
     case "portals": {
       const edits = leaves([], checked.portals ?? {});
@@ -145,8 +162,12 @@ export function yamlEdits(target, checked, current) {
     case "alerts":
       // notify-email reads `alerts:` when present and the top level otherwise.
       return { edits: leaves("alerts" in current ? ["alerts"] : [], checked.alerts ?? {}) };
-    case "profile":
-      return { edits: checked.profile ?? [] };
+    case "profile": {
+      const edits = checked.profile ?? [];
+      if (!seeded) return { edits };
+      const set = new Set(edits.map(([p]) => p.join(".")));
+      return { edits: [...SEEDED_PROFILE_BLANKS.filter(([p]) => !set.has(p.join("."))), ...edits] };
+    }
     case "lanes":
       return checked.lanes ? laneEdits(current, checked.lanes) : { edits: [] };
     default:

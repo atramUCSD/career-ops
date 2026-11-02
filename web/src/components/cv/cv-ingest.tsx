@@ -32,7 +32,10 @@ const STYLE = `
 .co-cvdrop[data-over="true"]{border-color:var(--brand);background:color-mix(in srgb,var(--brand) 5%,transparent)}
 `;
 
-export function CvIngest({ onSaved }: { onSaved?: () => void }) {
+// onSaved takes over after the save: the caller decides where to go next, and
+// the Explorer redirect only runs without one. embedded drops the frosted fill
+// for a parent that is already glass (no glass on glass).
+export function CvIngest({ onSaved, embedded = false }: { onSaved?: (seed: CvSeed | null) => void; embedded?: boolean }) {
   const router = useRouter();
   const [phase, setPhase] = useState<Phase>("input");
   const [paste, setPaste] = useState("");
@@ -169,7 +172,7 @@ export function CvIngest({ onSaved }: { onSaved?: () => void }) {
       setPhase("review");
       return;
     }
-    onSaved?.();
+    if (onSaved) return onSaved(seed);
     // WOW #1 — land in the Explorer with the CV-derived filters in the URL + run=1,
     // so the Explorer auto-fires the FREE scan itself (robust, no push/replaceState race).
     // GENEROUS first scan so it never comes back empty (that would kill the wow): roles
@@ -260,7 +263,7 @@ export function CvIngest({ onSaved }: { onSaved?: () => void }) {
   // ── PARSING (the 10s bridge) ──
   if (phase === "parsing") {
     return (
-      <Card role="status" className="bg-surface/60 backdrop-blur-sm">
+      <Card role="status" className={embedded ? undefined : "bg-surface/60 backdrop-blur-sm"}>
         <div className="flex items-center gap-2">
           <Loader2 aria-hidden className="size-4 text-brand motion-safe:animate-spin" />
           <span className={`${instrumentSerif.className} text-lg text-foreground`}>{trace || "Reading your CV…"}</span>
@@ -284,7 +287,7 @@ export function CvIngest({ onSaved }: { onSaved?: () => void }) {
 
   // ── REVIEW (propose → confirm) ──
   return (
-    <Card className="relative bg-surface/60 backdrop-blur-sm">
+    <Card className={embedded ? "relative" : "relative bg-surface/60 backdrop-blur-sm"}>
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <FileText aria-hidden className="size-4 text-brand" />
         <h2 className={`${instrumentSerif.className} text-lg text-foreground`}>Here&apos;s your CV — review and save</h2>
@@ -327,7 +330,7 @@ export function CvIngest({ onSaved }: { onSaved?: () => void }) {
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <Button type="button" size="lg" onClick={save} loading={phase === "saving"}>
           {phase !== "saving" && <Check aria-hidden className="size-4" />}
-          Save &amp; find my matches
+          {embedded ? "Save CV" : <>Save &amp; find my matches</>}
         </Button>
         <Button
           type="button"

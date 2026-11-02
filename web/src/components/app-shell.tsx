@@ -24,9 +24,9 @@ import { visibleNavItems, isActivePath } from "@/lib/nav-items";
 
 export function AppShell({ children, followupsEnabled }: { children: React.ReactNode; followupsEnabled: boolean }) {
   const pathname = usePathname();
-  // Full-bleed: the camera lab owns the whole viewport, and the shell's glass
-  // nav would put a fourth glass surface over it.
-  if (pathname.startsWith("/lab")) return <MotionConfig reducedMotion="user">{children}</MotionConfig>;
+  // Full-bleed: the camera lab and the setup wizard own the whole viewport, and
+  // the shell's glass nav would put a fourth glass surface over them.
+  if (pathname.startsWith("/lab") || pathname.startsWith("/setup")) return <MotionConfig reducedMotion="user">{children}</MotionConfig>;
   return (
     // One switch for every motion visual: transforms go instant under reduced motion.
     <MotionConfig reducedMotion="user">

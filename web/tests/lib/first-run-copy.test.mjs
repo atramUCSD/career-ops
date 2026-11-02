@@ -6,8 +6,8 @@ import { test } from "node:test";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
 
-test("first-run home does not claim no setup", () => {
-  const src = readFileSync(join(root, "src/components/home/first-run-home.tsx"), "utf8");
+test("setup You stage does not claim no setup", () => {
+  const src = readFileSync(join(root, "src/components/setup/setup-wizard.tsx"), "utf8");
   assert.doesNotMatch(src, /No setup/);
   assert.match(src, /PDF needs an AI CLI/);
 });

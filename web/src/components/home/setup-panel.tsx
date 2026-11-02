@@ -12,7 +12,7 @@ import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/cn";
 import { Bar } from "@/components/ui/charts";
 
-const HEALTH: Record<Schedule["health"], { tone: "good" | "warn" | "bad" | "info"; label: string }> = {
+export const HEALTH: Record<Schedule["health"], { tone: "good" | "warn" | "bad" | "info"; label: string }> = {
   healthy: { tone: "good", label: "Healthy" },
   running: { tone: "info", label: "Running" },
   "not-run": { tone: "info", label: "Not run yet" },
@@ -49,7 +49,14 @@ export function SetupPanel({
     <Card
       icon={ListChecks}
       title="Setup"
-      aside={ok && <Badge tone={checklist.ready === checklist.total ? "good" : "warn"}>{`${checklist.ready} of ${checklist.total} ready`}</Badge>}
+      aside={
+        <span className="flex items-center gap-2">
+          {ok && <Badge tone={checklist.ready === checklist.total ? "good" : "warn"}>{`${checklist.ready} of ${checklist.total} ready`}</Badge>}
+          <Link href="/setup" className={cn(buttonVariants({ variant: "secondary", size: "sm" }))}>
+            Edit in setup
+          </Link>
+        </span>
+      }
     >
       {ok ? (
         <>

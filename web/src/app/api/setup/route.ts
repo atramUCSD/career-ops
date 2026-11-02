@@ -74,7 +74,7 @@ function planYaml(target: YamlTarget, checked: Checked) {
   const loaded = loadYaml(target);
   // Lanes are added by hand: seeding the example's lanes would invent targeting.
   if (target === "lanes" && loaded.seeded) throw new ConfigError("config/lanes.yml does not exist", "invalid-user-config");
-  const planned = yamlEdits(target, checked, loaded.js);
+  const planned = yamlEdits(target, checked, loaded.js, loaded.seeded);
   if ("error" in planned) throw new ConfigError(planned.error, "invalid-user-config");
   return { ...loaded, changes: changes(planned.edits, loaded.js) };
 }

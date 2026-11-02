@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { Sparkles, Check, Circle, CircleDashed } from "lucide-react";
 import { readSavedCliId } from "@/lib/saved-cli";
 
@@ -18,11 +19,12 @@ type Section = { id: string; heading: string; state: "filled" | "template" | "mi
 // count itself done while doctor still says onboarding is incomplete.
 // modes/_profile.md has no `ask` of its own: when it is absent its eight
 // sections are all "missing", and the personalization line below asks for them.
-const PREREQS: { key: string; label: string; ask?: string }[] = [
-  { key: "cv.md", label: "Your CV", ask: "my CV" },
-  { key: "config/profile.yml", label: "Profile — target roles, comp, location", ask: "my profile (target roles, comp, location)" },
-  { key: "modes/_profile.md", label: "Personalization file" },
-  { key: "portals.yml", label: "Companies and roles to scan", ask: "the roles and companies to scan" },
+// `href` is the setup wizard stage that writes the file.
+const PREREQS: { key: string; label: string; ask?: string; href: string }[] = [
+  { key: "cv.md", label: "Your CV", ask: "my CV", href: "/setup/you" },
+  { key: "config/profile.yml", label: "Profile — target roles, comp, location", ask: "my profile (target roles, comp, location)", href: "/setup/what" },
+  { key: "modes/_profile.md", label: "Personalization file", href: "/setup" },
+  { key: "portals.yml", label: "Companies and roles to scan", ask: "the roles and companies to scan", href: "/setup/who" },
 ];
 
 // Same reader the rest of the app uses, so "configured" cannot mean one thing
@@ -83,7 +85,7 @@ export function OnboardingProgress({ compact = false }: { compact?: boolean }) {
 
       <ul className="mt-4 space-y-1.5 text-sm">
         {PREREQS.map((p) => (
-          <Row key={p.key} state={missing.has(p.key) ? "missing" : "filled"} label={p.label} />
+          <Row key={p.key} state={missing.has(p.key) ? "missing" : "filled"} label={p.label} href={missing.has(p.key) ? p.href : undefined} />
         ))}
         <li className="pt-2 font-mono text-2xs eyebrow text-faint">personalization — what evaluations score against</li>
         {sections.map((s) => (
@@ -91,6 +93,9 @@ export function OnboardingProgress({ compact = false }: { compact?: boolean }) {
         ))}
       </ul>
 
+      <Link href="/setup" className="mt-4 mr-3 inline-flex text-sm font-medium text-foreground underline underline-offset-2 focus-ring">
+        Set up step by step
+      </Link>
       {cli ? (
         <button
           onClick={() => window.dispatchEvent(new CustomEvent("co-assistant", { detail: { message: kickoff } }))}
@@ -107,14 +112,20 @@ export function OnboardingProgress({ compact = false }: { compact?: boolean }) {
   );
 }
 
-function Row({ state, label }: { state: "filled" | "template" | "missing"; label: string }) {
+function Row({ state, label, href }: { state: "filled" | "template" | "missing"; label: string; href?: string }) {
   const Icon = state === "filled" ? Check : state === "template" ? CircleDashed : Circle;
   const tone = state === "filled" ? "text-foreground" : "text-muted";
   const hint = state === "template" ? "still the example" : state === "missing" ? "not yet" : "";
   return (
     <li className={`flex items-center gap-2 ${tone}`}>
       <Icon className={`size-3.5 shrink-0 ${state === "filled" ? "text-brand" : "text-faint"}`} aria-hidden />
-      <span className="truncate">{label}</span>
+      {href ? (
+        <Link href={href} className="truncate underline-offset-2 hover:underline focus-ring">
+          {label}
+        </Link>
+      ) : (
+        <span className="truncate">{label}</span>
+      )}
       {hint && <span className="ml-auto shrink-0 text-2xs text-faint">{hint}</span>}
     </li>
   );

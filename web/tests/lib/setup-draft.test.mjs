@@ -1,7 +1,8 @@
+import fs from "node:fs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as YAML from "yaml";
-import { changes, checkDraft, leaves, targets, yamlEdits } from "../../src/lib/setup-draft.mjs";
+import { changes, checkDraft, leaves, SEEDED_PROFILE_BLANKS, targets, yamlEdits } from "../../src/lib/setup-draft.mjs";
 import { profileValues } from "../../src/lib/profile-patch.mjs";
 import { setIn, toYaml } from "../../src/lib/yaml-doc.mjs";
 
@@ -87,6 +88,26 @@ test("yamlEdits plans company toggles and lanes against the current file", () =>
   assert.match(yamlEdits("lanes", { lanes: { c: ["x"] } }, lanes).error, /no lane "c"/);
   assert.deepEqual(yamlEdits("profile", {}, {}), { edits: [] });
   assert.match(yamlEdits("personalization", {}, {}).error, /not a YAML target/);
+});
+
+test("a seeded profile drops the example person; the user's own answers win", () => {
+  const file = new URL("../../../config/profile.example.yml", import.meta.url);
+  const src = fs.readFileSync(file, "utf8");
+  const doc = YAML.parseDocument(src);
+  const { checked } = checkDraft({ profile: { name: "Ada Lovelace", email: "ada@example.org", location: "London", roles: ["Analyst"], targetRange: "90-110K" } });
+  const planned = yamlEdits("profile", checked, doc.toJS(), true);
+  // Every blanked path exists in the shipped example, so the list cannot rot.
+  for (const [p] of SEEDED_PROFILE_BLANKS) assert.notEqual(doc.getIn(p), undefined, p.join("."));
+  for (const c of changes(planned.edits, doc.toJS())) setIn(doc, c.path, c.after);
+  const out = YAML.parse(toYaml(doc, src));
+  assert.equal(out.candidate.full_name, "Ada Lovelace");
+  assert.equal(out.compensation.target_range, "90-110K");
+  assert.equal(out.compensation.minimum, "");
+  assert.deepEqual(out.target_roles, { primary: ["Analyst"], archetypes: [] });
+  assert.deepEqual(out.narrative.proof_points, []);
+  assert.doesNotMatch(JSON.stringify(out), /jane|Jane|San Francisco/);
+  // An existing profile is never blanked.
+  assert.deepEqual(yamlEdits("profile", checked, doc.toJS()).edits, checked.profile);
 });
 
 test("changes keeps only the values that differ", () => {
