@@ -1190,6 +1190,16 @@ function gitTimeoutEnvVar(args) {
   return args[0] === 'fetch' ? 'CAREER_OPS_GIT_FETCH_TIMEOUT_MS' : 'CAREER_OPS_GIT_TIMEOUT_MS';
 }
 
+// Git for Windows ships a system-level `core.useBuiltinFSMonitor=true`. Under
+// it, the first git command in a repo prints "starting fsmonitor-daemon in
+// '<path>'" on STDOUT ahead of the real output, so `ls-files -s` parses as mode
+// "starting" and prepareMaterializedSkillEntrypointsForStage() skips its
+// `rm --cached`. The daemon also holds the repo directory open, which fails
+// temp-fixture cleanup with EBUSY. These calls are one-shot, so the monitor buys
+// nothing. Both knobs are needed: `core.fsmonitor` alone does not override the
+// pre-2.37 `core.useBuiltinFSMonitor` name.
+const GIT_NO_FSMONITOR = ['-c', 'core.fsmonitor=false', '-c', 'core.useBuiltinFSMonitor=false'];
+
 /**
  * gitIn without the trailing/leading trim.
  *
@@ -1201,7 +1211,7 @@ function gitTimeoutEnvVar(args) {
 export function gitRawIn(root, ...args) {
   const timeout = gitTimeoutMs(args);
   try {
-    return execFileSync('git', args, { cwd: root, encoding: 'utf-8', timeout });
+    return execFileSync('git', [...GIT_NO_FSMONITOR, ...args], { cwd: root, encoding: 'utf-8', timeout });
   } catch (err) {
     if (isTimeoutLikeError(err)) {
       throw new Error(`${describeGitCommand(args)} timed out after ${timeoutSeconds(timeout)}s. If your network is slow, retry or set ${gitTimeoutEnvVar(args)} to a larger value.`);
@@ -1235,7 +1245,7 @@ function gitRaw(...args) {
 export function gitQuietIn(root, ...args) {
   const timeout = gitTimeoutMs(args);
   try {
-    return execFileSync('git', args, {
+    return execFileSync('git', [...GIT_NO_FSMONITOR, ...args], {
       cwd: root, encoding: 'utf-8', timeout, stdio: ['pipe', 'pipe', 'pipe'],
     }).trim();
   } catch (err) {
@@ -4116,7 +4126,7 @@ function gitShowRaw(spec) {
   const args = ['show', spec];
   const timeout = gitTimeoutMs(args);
   try {
-    return execFileSync('git', args, {
+    return execFileSync('git', [...GIT_NO_FSMONITOR, ...args], {
       cwd: ROOT, encoding: 'utf-8', timeout, stdio: ['pipe', 'pipe', 'pipe'],
     });
   } catch (err) {
