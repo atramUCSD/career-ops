@@ -3892,7 +3892,7 @@ export async function verifyOffers(offers, { headedFallback = false, throttleBas
   const {
     rejectPrivateOrInvalid, checkUrlLiveness, checkUrlLivenessWithFallback,
     createHeadedPageProvider, newLivenessPage, installLivenessRouteGuard, jitteredDelayMs, sleep,
-    takeSuppressedBlockCount,
+    takeSuppressedBlockCount, DEADLINE_CODE,
   } = await import('./liveness-browser.mjs');
 
   // The HTTP rung can run concurrently; each provider retains its own rate
@@ -3945,9 +3945,20 @@ export async function verifyOffers(offers, { headedFallback = false, throttleBas
     hadBrowserOffer = true;
     return page;
   }
-  const checkPage = (page, url) => headed
-    ? checkUrlLivenessWithFallback(page, url, { getHeadedPage: () => headed.get() })
-    : checkUrlLiveness(page, url);
+  const checkPage = async (offerPage, url) => {
+    const verdict = await (headed
+      ? checkUrlLivenessWithFallback(offerPage, url, { getHeadedPage: () => headed.get() })
+      : checkUrlLiveness(offerPage, url));
+    // A timed-out page may still be wedged, and so may its browser: drop both,
+    // as check-liveness.mjs does, so the next offer launches fresh ones instead
+    // of burning its own deadline. close() can hang on the same renderer.
+    if (verdict.code === DEADLINE_CODE) {
+      headed?.close();
+      browser.close().catch(() => {});
+      browser = page = headed = null;
+    }
+    return verdict;
+  };
 
   // Two permanent buckets, one observational, one transient passthrough:
   //   verified  → active pages, transient nav errors and a still-empty page

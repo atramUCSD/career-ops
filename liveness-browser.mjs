@@ -490,7 +490,7 @@ export async function checkUrlLiveness(page, url, { deadlineMs = CHECK_DEADLINE_
     timer = setTimeout(() => resolve({
       result: 'uncertain',
       code: DEADLINE_CODE,
-      reason: `page did not answer within ${Math.round(deadlineMs / 1000)}s; browser recycled`,
+      reason: `page did not answer within ${Math.round(deadlineMs / 1000)}s`,
     }), deadlineMs);
   });
   try {

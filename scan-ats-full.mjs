@@ -1165,10 +1165,10 @@ export async function parallelEach(items, limit, fn, onItemDone = null, shouldSt
 // ── Liveness verification (reuses liveness-browser.mjs) ────────────
 
 async function filterLive(offers) {
-  let chromium, checkUrlLiveness, newLivenessPage;
+  let chromium, checkUrlLiveness, newLivenessPage, DEADLINE_CODE;
   try {
     ({ chromium } = await import('playwright'));
-    ({ checkUrlLiveness, newLivenessPage } = await import('./liveness-browser.mjs'));
+    ({ checkUrlLiveness, newLivenessPage, DEADLINE_CODE } = await import('./liveness-browser.mjs'));
   } catch (err) {
     throw new Error(
       `--liveness requires Playwright with Chromium (run "npx playwright install chromium"): ${err.message}`,
@@ -1176,19 +1176,29 @@ async function filterLive(offers) {
     );
   }
   console.error(`\nVerifying liveness of ${offers.length} match(es) with Playwright (sequential)...`);
-  const browser = await launchHeadless(chromium);
+  let browser = null;
   const live = [];
   try {
-    const page = await newLivenessPage(browser);
+    let page = null;
     // Sequential — project rule: never Playwright in parallel
     for (const offer of offers) {
-      const { result, reason } = await checkUrlLiveness(page, offer.url);
+      if (!browser) {
+        browser = await launchHeadless(chromium);
+        page = await newLivenessPage(browser);
+      }
+      const { result, code, reason } = await checkUrlLiveness(page, offer.url);
       const icon = result === 'active' ? '✅' : result === 'expired' ? '❌' : '⚠️';
       console.error(`  ${icon} ${result.padEnd(9)} ${offer.company} | ${offer.title}${result === 'expired' ? ` (${reason})` : ''}`);
       if (result !== 'expired') live.push(offer); // keep 'uncertain' — transient errors retry next scan
+      // A timed-out page may still be wedged, and so may its browser: drop both
+      // so the next offer gets fresh ones. close() can hang on that renderer.
+      if (code === DEADLINE_CODE) {
+        browser.close().catch(() => {});
+        browser = null;
+      }
     }
   } finally {
-    await browser.close();
+    if (browser) await browser.close();
   }
   console.error(`  → ${live.length}/${offers.length} passed liveness`);
   return live;
