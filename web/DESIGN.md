@@ -14,7 +14,7 @@ Replace each raw class with its token. When a raw light class is paired with a r
 | Raw class (every listed shade and opacity) | Token |
 |---|---|
 | `text-emerald-400` `-500` `-600` `-700`, `dark:text-emerald-400`; `text-brand/60` `/80` (any alpha on brand text); `text-good` on text or an icon | `text-brand-text` |
-| `bg-emerald-400` `-500` `-500/70` / `bg-emerald-500/10` `/12` `/15` / `hover:bg-emerald-500/15` `/20` / `fill-emerald-500/50` | `bg-good` / `bg-good-soft` / `hover:bg-good/20` / `fill-good/50`. With `backdrop-blur-*`, emerald or amber `/10` becomes `bg-good/10` or `bg-warn/10`, not `-soft` (keeps the glass) |
+| `bg-emerald-400` `-500` `-500/70` / `bg-emerald-500/10` `/12` `/15` / `hover:bg-emerald-500/15` `/20` / `fill-emerald-500/50` | `bg-good` / `bg-good-soft` / `hover:bg-good/20` / `fill-good/50` |
 | `border-emerald-400/40`, `border-emerald-500/25` `/30` `/40` on a status callout (on a button or link, use `<Button variant="soft">`) | `border-good/30` |
 | `text-amber-200` `-300` `-300/90` `-400` `-500` `-600` `-700` `-800` `-800/90`, every `dark:text-amber-*` | `text-warn` |
 | `bg-amber-500` `-500/70` / `bg-amber-500/10` `/15` `/[0.07]` / `bg-amber-500/20` / `hover:bg-amber-500/30` / `hover:bg-amber-600` | `bg-warn` / `bg-warn-soft` / `bg-warn/15` / `hover:bg-warn/25` / `hover:bg-warn/90` |
@@ -68,7 +68,7 @@ One utility replaces `tracking-[0.14em]`, `[0.16em]`, `[0.18em]`, `[0.2em]` and 
 
 Three levels. **Control** `rounded-md` (6px): Button, Input, Select, Textarea, Badge, chips, nav and menu items, inline code, logo tiles up to `size-8`. **Inset** `rounded-xl` (12px): nested cards, callouts, alerts, list and table containers, popovers, menus, toasts, thumbnails. **Surface** `rounded-2xl` (16px): top-level Card, Dialog, drawer, hero. `rounded` becomes `rounded-md`; `rounded-lg` becomes `rounded-md` on a `button`, `a`, form control or chip, and `rounded-xl` on anything else. `rounded-full` stays only on: dots, progress tracks, avatars, fixed-size icon wells with no padding, the Switch, `.co-cost`, filter-builder include/exclude chips, facet-chips and its search input, the three Today hero links (`today-dashboard.tsx`), and the apply-view URL bar with its submit button. Every other `rounded-full` element with padding or a border becomes `rounded-md`, or becomes `<Button>`.
 
-Two shadows, defined in `@theme`. `shadow-raised` = `0 1px 2px var(--shadow-tint), 0 4px 12px -2px var(--shadow-tint)`: elevated or interactive cards, StatCard, floating buttons (Ask, back to top), sticky save bars, shortlist tray, Switch knob. `shadow-overlay` = `0 2px 6px var(--shadow-tint), 0 24px 48px -12px var(--shadow-deep)`: Dialog, drawer, popovers, menus, toasts, assistant console panel. `shadow`, `shadow-sm` and `shadow-md` become `shadow-raised`; `shadow-xl` and `shadow-2xl` become `shadow-overlay`; `shadow-lg` becomes `shadow-overlay` on an overlay and `shadow-raised` elsewhere. Resting cards, rows, inputs and in-flow buttons carry no shadow; in dark, borders carry elevation.
+Two shadows, defined in `@theme`. `shadow-raised` = `0 1px 2px var(--shadow-tint), 0 4px 12px -2px var(--shadow-tint)`: elevated or interactive cards, floating buttons (Ask, back to top), sticky save bars, shortlist tray, Switch knob. `shadow-overlay` = `0 2px 6px var(--shadow-tint), 0 24px 48px -12px var(--shadow-deep)`: Dialog, drawer, popovers, menus, toasts, assistant console panel. `shadow`, `shadow-sm` and `shadow-md` become `shadow-raised`; `shadow-xl` and `shadow-2xl` become `shadow-overlay`; `shadow-lg` becomes `shadow-overlay` on an overlay and `shadow-raised` elsewhere. Resting cards, rows, inputs and in-flow buttons carry no shadow; in dark, borders carry elevation.
 
 ## 5a. Glass material
 
@@ -89,7 +89,10 @@ Glass is a surface treatment, not a color: a translucent fill over a live blur o
 - Text on glass passes 4.5:1 against the worst-case backdrop sample. Brand text on glass is `text-brand-text`, never a Mint literal (about 1.3:1 on light glass).
 - Focus uses `outline`, which survives forced colors. `field-focus` and `field-focus-within` are box-shadow rings, so each adds `outline: 2px solid CanvasText; outline-offset: 2px` under `forced-colors: active`.
 - Dialogs stay out of glass: `dialog.ui-dialog` fades `opacity`, and its scrim leaves nothing worth blurring.
-- `apply-view.tsx`'s `backdrop-blur-*` surfaces become `frost`.
+- Never combine `glass` or `frost` with a `bg-*`, border color or `shadow-*` class. In the built CSS the two utilities sort after Tailwind's border-width utilities and before its background and shadow ones, so at equal specificity a `bg-*` or `shadow-*` class silently beats the material, and `cn()` cannot dedupe a utility twMerge does not know. A surface that needs a tone or a shadow is not glass. The same order means the material's `border: 1px` beats `border-0` and `border-r`: a one-sided edge needs the important modifier (`border-0! border-r!`, as on the nav).
+- Nothing inside or behind a `glass` surface runs an infinite animation. The beta dot in the nav footer pulses three times and holds.
+- `apply-view.tsx` has no `backdrop-blur-*` left. Its neutral panels (questions, skeleton, issue list, form details) are `frost`; its tone callouts take their solid `-soft` fill from Card, by the rule above. `/apply`'s page wrapper sets `--glass-fill` to 70%: at 55% the bright form shot behind it drops `text-muted` to 4.21:1 in dark mode. Text on `glass` or `frost` is `text-foreground` or `text-muted`, never `text-faint` (3.5:1 at 70% over that backdrop).
+- The page behind the shell is `AmbientGlow` (`hero-glow.tsx`), a fixed `-z-10` layer of the hero's static corner glows, so the nav has something to blur. Today's hero shader runs for 4 s and then holds its frame (`speed` 0 stops its rAF loop), so the slab over it costs no idle frames.
 
 ## 6. Spacing rhythm
 
@@ -101,7 +104,7 @@ Durations: 150ms hover, press and focus; 200ms enter, exit, popovers and dialogs
 
 | Pattern | Implementation | Applies to |
 |---|---|---|
-| Hover, press | `transition-colors duration-150 ease-out`. Button and interactive Card use `transition-[color,background-color,border-color,scale] duration-150 ease-out` with `motion-safe:active:scale-98` (Button) or `motion-safe:active:scale-99` (Card) | every interactive element; press on buttons, StatCard, clickable cards |
+| Hover, press | `transition-colors duration-150 ease-out`. Button and interactive Card use `transition-[color,background-color,border-color,scale] duration-150 ease-out` with `motion-safe:active:scale-98` (Button) or `motion-safe:active:scale-99` (Card) | every interactive element; press on buttons, clickable cards |
 | Focus | `focus-ring`, instant; replaces every `focus(-visible)?:ring-*`, `focus-visible:outline-none` and bare `focus:outline-none`. Inside an `overflow-hidden` or `overflow-auto` container use `focus-ring-inset` | buttons, links, cards, rows |
 | Field focus | `field-focus` on Input, Select, Textarea (replaces `outline-none focus:border-brand/50` and `focus:ring-2 focus:ring-brand/20`); `field-focus-within` on text-entry wrappers (filter-builder, facet-chips, apply-view URL bar) | form controls only |
 | Enter and exit | Blocks: `<AnimatePresence initial={false} mode="popLayout">` in a `relative` parent, children use `listItem` (opacity 0 to 1, y 4 to 0, exit y -4, 200ms `EASE_OUT`). Tables: default sync mode around `motion.tr` with `rowItem` (opacity only, 200ms), never popLayout | blocks: inbox, review queue, worker pills, ChipList, shortlist, toasts, inline errors; tables: pipeline, follow-ups |
@@ -147,7 +150,7 @@ Button: ButtonHTMLAttributes<HTMLButtonElement> & { loading?: boolean;  // Loade
   size?: "sm" | "md" | "lg" | "icon" | "icon-sm" }; // h-7 | h-9 (default) | h-10 | size-9 | size-7; all keep max-sm:min-h-11
 // soft = bg-brand-soft text-brand-text border border-brand/30 hover:bg-brand-soft/70; warn = bg-warn and danger = bg-bad-text,
 // both text-brand-foreground; danger-ghost = text-muted hover:text-bad-text hover:bg-bad-soft
-// card.tsx. Absorbs motion-bits Panel and the tinted alert panels. Card and StatCard drop overflow-hidden: the corner
+// card.tsx. Absorbs motion-bits Panel and the tinted alert panels. Card drops overflow-hidden: the corner
 // gradient uses bg-origin-border, and clipping would cut focus outlines.
 Card: HTMLAttributes<HTMLElement> & { as?: "div" | "section" | "article"; // default "section" with a title, else "div"
   icon?: LucideIcon; title?: ReactNode; hint?: ReactNode; aside?: ReactNode; // title renders an h2

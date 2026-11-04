@@ -9,6 +9,7 @@ import { AssistantConsole } from "@/components/assistant-console";
 import { MobileNav } from "@/components/mobile-nav";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { BackToTop } from "@/components/back-to-top";
+import { AmbientGlow } from "@/components/hero-glow";
 import { JobsProvider } from "@/components/jobs/job-store";
 import { PipelineProvider } from "@/components/pipeline/pipeline-provider";
 import { ApplyProvider } from "@/components/apply/apply-provider";
@@ -34,11 +35,12 @@ export function AppShell({ children, followupsEnabled }: { children: React.React
       <PipelineProvider>
       <ApplyProvider>
       <ExploreProvider>
+      <AmbientGlow />
       <MobileNav followupsEnabled={followupsEnabled} />
       {/* md: only. Under md the sticky MobileNav sits above this box, so a
           full-height min made every short page scroll by the header height. */}
       <div className="flex md:min-h-screen">
-        <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col overflow-y-auto border-r border-border bg-surface/30 p-4 md:flex">
+        <aside className="glass sticky top-0 hidden h-screen w-60 shrink-0 flex-col overflow-y-auto border-0! border-r! p-4 md:flex">
           <Link href="/" className="mb-8 flex items-center gap-2.5 rounded-md px-1 focus-ring-inset">
             <CoMark size={32} />
             <span className={`${instrumentSerif.className} relative -top-px text-2xl font-normal tracking-tight text-landing`}>

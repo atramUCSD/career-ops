@@ -91,7 +91,7 @@ export function BetaBanner({ rail = false }: { rail?: boolean }) {
         // From md this sits in flow in the sidebar footer, so it never floats over the rail or the page.
         <div className="space-y-1.5 border-t border-border pt-3">
           <p className="flex items-center gap-1.5 px-1 text-xs font-medium text-brand-text">
-            <span aria-hidden className="size-1.5 rounded-full bg-brand motion-safe:animate-pulse" />
+            <span aria-hidden className="size-1.5 rounded-full bg-brand motion-safe:animate-[pulse_2s_cubic-bezier(0.4,0,0.6,1)_3]" />
             {meta.version} · {meta.channel}
           </p>
           <Button variant="soft" size="sm" onClick={openReport} className="w-full">
@@ -104,7 +104,7 @@ export function BetaBanner({ rail = false }: { rail?: boolean }) {
           {/* h-10 matches Ask's 40px. Under sm the button alone is the face (44px, like Ask): the full pill collides with Ask on one row, and the version still reaches the report via the Dialog title and issue body. */}
           <div className="fixed bottom-5 left-5 z-40 flex h-10 items-center gap-2 rounded-md border border-brand/30 bg-surface/90 px-3 text-xs shadow-raised backdrop-blur-md max-sm:h-auto max-sm:border-0 max-sm:bg-transparent max-sm:p-0 max-sm:shadow-none max-sm:backdrop-blur-none md:hidden">
             <span className="flex items-center gap-1.5 font-medium text-brand-text max-sm:hidden">
-              <span aria-hidden className="size-1.5 rounded-full bg-brand motion-safe:animate-pulse" />{" "}
+              <span aria-hidden className="size-1.5 rounded-full bg-brand motion-safe:animate-[pulse_2s_cubic-bezier(0.4,0,0.6,1)_3]" />{" "}
               <span>
                 {meta.version} · {meta.channel}
               </span>

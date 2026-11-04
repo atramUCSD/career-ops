@@ -19,9 +19,33 @@ const CORNERS = ["0% 0%", "100% 0%", "0% 100%", "100% 100%"]
   .map((at) => `radial-gradient(55% 60% at ${at}, var(--glow), transparent)`)
   .join(", ");
 
-export function HeroGlow() {
+// Page-wide version of the static corners, fixed behind everything at -z-10 so
+// the glass nav has something to blur. Body's background sits on the canvas,
+// below negative z-index layers, so this paints above it and under the page.
+export function AmbientGlow() {
+  return (
+    <div
+      aria-hidden
+      style={{ backgroundImage: CORNERS }}
+      className="pointer-events-none fixed inset-0 -z-10 [--glow:color-mix(in_srgb,#00ED64_8%,transparent)] dark:[--glow:color-mix(in_srgb,#00ED64_12%,transparent)]"
+    />
+  );
+}
+
+// settle: run the shader for a few seconds, then hold the frame (speed 0 stops
+// its rAF loop), so an idle page draws nothing and glass over it stops re-blurring.
+const SETTLE_MS = 4000;
+
+export function HeroGlow({ settle = false }: { settle?: boolean }) {
   const [show, setShow] = useState(false);
   const [dark, setDark] = useState(true);
+  const [settled, setSettled] = useState(false);
+
+  useEffect(() => {
+    if (!settle || !show) return;
+    const t = setTimeout(() => setSettled(true), SETTLE_MS);
+    return () => clearTimeout(t);
+  }, [settle, show]);
 
   useEffect(() => {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
@@ -65,7 +89,7 @@ export function HeroGlow() {
           softness={1}
           intensity={dark ? 0.42 : 0.26}
           noise={0.32}
-          speed={0.45}
+          speed={settled ? 0 : 0.45}
           shape="corners"
           minPixelRatio={1}
           maxPixelCount={1920 * 1080}

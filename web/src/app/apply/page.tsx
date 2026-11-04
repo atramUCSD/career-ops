@@ -9,7 +9,9 @@ export default function ApplyPage() {
     <div className="relative">
       {/* full-viewport blurred form wallpaper (behind everything) */}
       <ApplyBackdropMount />
-      <div className="relative z-10 mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-8 max-sm:pb-24">
+      {/* At the 55% default, frost over a bright form shot drops text-muted under
+          4.5:1 in dark mode (4.21 measured); 70% clears it everywhere (5.29). */}
+      <div className="relative z-10 mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-8 max-sm:pb-24 [--glass-fill:color-mix(in_srgb,var(--surface)_70%,transparent)]">
         <div className="flex items-center gap-3">
           <Send aria-hidden className="size-6 text-brand" />
           <h1 className="font-display text-2xl tracking-tight text-landing">Apply</h1>

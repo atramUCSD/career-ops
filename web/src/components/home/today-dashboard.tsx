@@ -8,7 +8,6 @@ import { motion } from "motion/react";
 import { DURATION, EASE_OUT } from "@/components/ui/motion";
 import { HeroGlow } from "@/components/hero-glow";
 import { Badge } from "@/components/ui/badge";
-import { StatCard } from "@/components/ui/stat-card";
 import { cn } from "@/lib/cn";
 import type { Application } from "@/lib/career-ops";
 import type { HomeData } from "@/lib/home/home-data";
@@ -105,9 +104,8 @@ export function TodayDashboard({ applications, inBetween, home }: { applications
 
   return (
     <div className="mx-auto max-w-6xl space-y-8 px-4 py-6 max-sm:pb-24 sm:px-6 sm:py-8">
-      <div className="space-y-6">
       <section className="dot-bg relative overflow-hidden rounded-2xl border border-border bg-surface/40 px-7 py-10 md:px-10 md:py-12">
-        <HeroGlow />
+        <HeroGlow settle />
         {/* Readability scrim between the animated glow (z-0) and the copy (z-10). */}
         <div aria-hidden className="pointer-events-none absolute inset-0 z-[1] bg-surface/55 backdrop-blur-[2px] dark:bg-background/45" />
         <div className="relative z-10">
@@ -187,28 +185,30 @@ export function TodayDashboard({ applications, inBetween, home }: { applications
             )}
           </div>
           {inBetween && <QuickEvaluate />}
+          {/* The instrument slab: one of the view's glass surfaces (DESIGN.md 5a). The
+              settled shader behind it is why it can blur without costing frames. */}
+          <div className="glass relative mt-8 grid divide-y divide-border overflow-hidden rounded-2xl sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+            {[
+              { href: "/followups", Icon: Bell, value: loaded ? <CountUp value={due} /> : "–", label: "Follow-ups due", hint: overdue ? `${overdue} overdue` : "A nudge beats silence" },
+              { href: "/pipeline", Icon: CircleHelp, value: <CountUp value={awaiting.length} />, label: "Awaiting your decision", hint: "Scored: apply or skip" },
+              {
+                href: "/explore?view=fresh",
+                Icon: Sparkles,
+                value: fresh === null ? "–" : <CountUp value={fresh} />,
+                label: "New since last digest",
+                hint: alerts?.lastRun ? `Last sent ${when(alerts.lastRun)}` : "No digest sent yet",
+              },
+            ].map(({ href, Icon, value, label, hint }) => (
+              <Link key={href} href={href} className="flex flex-col p-5 focus-ring-inset transition-colors duration-150 ease-out hover:bg-surface-hover">
+                <Icon aria-hidden className="size-5 text-brand-text" />
+                <span className="mt-3 text-4xl font-semibold leading-none tabular-nums">{value}</span>
+                <span className="mt-2 text-sm text-foreground">{label}</span>
+                <span className="text-xs text-muted">{hint}</span>
+              </Link>
+            ))}
+          </div>
         </div>
       </section>
-
-      <div className="grid gap-4 sm:grid-cols-3">
-        <StatCard
-          href="/followups"
-          icon={Bell}
-          value={loaded ? <CountUp value={due} /> : "–"}
-          label="Follow-ups due"
-          hint={overdue ? `${overdue} overdue` : "A nudge beats silence"}
-        />
-        <StatCard href="/pipeline" icon={CircleHelp} value={<CountUp value={awaiting.length} />} label="Awaiting your decision" hint="Scored: apply or skip" corner="bl" />
-        <StatCard
-          href="/explore?view=fresh"
-          icon={Sparkles}
-          value={fresh === null ? "–" : <CountUp value={fresh} />}
-          label="New since last digest"
-          hint={alerts?.lastRun ? `Last sent ${when(alerts.lastRun)}` : "No digest sent yet"}
-          corner="tr"
-        />
-      </div>
-      </div>
 
       <Link
         href="/config"

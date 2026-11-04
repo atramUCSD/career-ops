@@ -126,8 +126,7 @@ export function ApplyView() {
       <InlineError>
         {a.error && (
           <motion.div key="error" {...listItem} className="mb-3">
-            {/* bg-warn/10, not -soft: keeps the glass over the backdrop */}
-            <Card inset tone="warn" role="alert" className="flex items-start gap-1.5 bg-warn/10 text-sm text-warn backdrop-blur-sm">
+            <Card inset tone="warn" role="alert" className="flex items-start gap-1.5 text-sm text-warn">
               <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0" /> {a.error}
             </Card>
           </motion.div>
@@ -139,7 +138,7 @@ export function ApplyView() {
           <ApplyIssues issues={a.issues} />
           {/* drafting banner while the planner writes the answers */}
           {prefilling && (
-            <div role="status" className="mb-4 flex items-center gap-3 rounded-xl border border-brand/30 bg-brand-soft/60 p-4 backdrop-blur-sm">
+            <div role="status" className="mb-4 flex items-center gap-3 rounded-xl border border-brand/30 bg-brand-soft p-4">
               <span aria-hidden className="relative grid size-8 shrink-0 place-items-center">
                 <span className="co-orb absolute inset-0 rounded-full bg-brand/40 blur-[6px]" />
                 <Sparkles className="size-4 text-brand" />
@@ -161,11 +160,11 @@ export function ApplyView() {
           </div>
 
           {(prefilling || a.prefillLog.length > 0) && (
-            <details className="mb-4 rounded-xl border border-border bg-surface/60 backdrop-blur-sm" open={false}>
+            <details className="frost mb-4 rounded-xl" open={false}>
               <summary className="flex cursor-pointer select-none items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-medium text-muted focus-ring max-sm:min-h-11">
                 <Terminal aria-hidden className="size-3.5" /> Pre-fill diagnostics
                 {prefilling && <Loader2 aria-hidden className="size-3 text-brand motion-safe:animate-spin" />}
-                <span className="ml-auto text-faint">{a.prefillLog.length} steps</span>
+                <span className="ml-auto text-muted">{a.prefillLog.length} steps</span>
               </summary>
               <div className="max-h-52 overflow-y-auto border-t border-border px-3 py-2">
                 <ol className="space-y-0.5 font-mono text-2xs leading-relaxed text-muted">
@@ -174,7 +173,7 @@ export function ApplyView() {
                       {l}
                     </li>
                   ))}
-                  {prefilling && <li className="text-faint">…</li>}
+                  {prefilling && <li className="text-muted">…</li>}
                 </ol>
               </div>
             </details>
@@ -182,7 +181,7 @@ export function ApplyView() {
 
           {/* the questions — float on the blurred form image, cascade in, each
               flashes brand-orange the instant its drafted answer lands */}
-          <Card elevated className="space-y-1 border-border/70 bg-surface/80 p-2 backdrop-blur-md sm:p-3">
+          <div className="frost space-y-1 rounded-2xl p-2 sm:p-3">
             {a.fields.map((f, i) => (
               <div key={f.id} className="co-rise rounded-xl px-3 py-2.5" style={{ animationDelay: `${Math.min(i * 45, 700)}ms` }}>
                 <FieldRow
@@ -195,7 +194,7 @@ export function ApplyView() {
                 />
               </div>
             ))}
-          </Card>
+          </div>
 
           <div className="mt-5 flex flex-wrap items-center gap-3">
             <Button size="lg" onClick={a.fill} loading={filling} disabled={prefilling}>
@@ -238,7 +237,7 @@ export function ApplyView() {
             </section>
           )}
           {done && (
-            <Card inset tone="good" role="status" className="co-rise mt-4 flex items-start gap-2.5 bg-good/10 text-sm backdrop-blur-sm">
+            <Card inset tone="good" role="status" className="co-rise mt-4 flex items-start gap-2.5 text-sm">
               <CheckCircle2 aria-hidden className="mt-0.5 size-5 shrink-0 text-brand-text" />
               <div>
                 <span className="font-medium text-brand-text">The real form is now in front, pre-filled.</span>{" "}
@@ -327,7 +326,7 @@ function ApplyExitBar() {
 
   if (confirming) {
     return (
-      <Card inset tone="warn" role="group" aria-labelledby="apply-leave" className="co-rise mt-8 bg-warn/10 backdrop-blur-sm">
+      <Card inset tone="warn" role="group" aria-labelledby="apply-leave" className="co-rise mt-8">
         <p id="apply-leave" className="text-sm font-medium text-foreground">Leave this application?</p>
         <p className="mt-1 text-xs text-muted">Your drafted answers live only on this page. Going back discards them and closes the form.</p>
         <div className="mt-3 flex flex-wrap gap-2">
@@ -389,12 +388,12 @@ function DrivePanel({ steps, filling }: { steps: DriveStep[]; filling?: boolean 
         <div aria-hidden className="co-skel h-56 w-full rounded-xl" />
       )}
       {steps.length > 0 && (
-        <ol className="mt-3 space-y-1.5 rounded-xl border border-border/70 bg-surface/70 p-3 backdrop-blur-sm">
+        <ol className="frost mt-3 space-y-1.5 rounded-xl p-3">
           {steps.map((s, i) => (
             <li key={i} className={cn("flex items-center gap-2 text-xs", i === steps.length - 1 ? "text-foreground" : "text-muted")}>
               <span className="grid size-5 shrink-0 place-items-center rounded-full bg-brand-soft text-2xs font-semibold text-brand-text">{s.turn}</span>
               <span className="shrink-0 font-medium">{DRIVE_VERB[s.action] ?? s.action}</span>
-              <span className="truncate text-faint">{s.detail}</span>
+              <span className="truncate text-muted">{s.detail}</span>
               {/* `submit-control` is the guard doing its job (good news, distinct
                   color); `not-offered`/`gone` are the page moving under us
                   (a caution, not a protection). */}
@@ -422,7 +421,7 @@ function ApplyIssues({ issues }: { issues: ApplyIssue[] }) {
   return (
     <div className="mb-4 space-y-2">
       {warns.length > 0 && (
-        <Card inset tone="warn" as="section" aria-labelledby="apply-issues" className="bg-warn/10 backdrop-blur-sm">
+        <Card inset tone="warn" as="section" aria-labelledby="apply-issues">
           <h3 id="apply-issues" className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-warn">
             <AlertTriangle aria-hidden className="size-4" /> A few things to check
           </h3>
@@ -529,7 +528,7 @@ function ProcessingHero({ title, subtitle }: { title: string; subtitle: string }
 
 function FieldSkeleton() {
   return (
-    <div aria-hidden className="co-rise space-y-3 rounded-2xl border border-border/70 bg-surface/70 p-5 backdrop-blur-md" style={{ animationDelay: "120ms" }}>
+    <div aria-hidden className="frost co-rise space-y-3 rounded-2xl p-5" style={{ animationDelay: "120ms" }}>
       {[64, 80, 48, 72, 56].map((w, i) => (
         <div key={i} className="space-y-2">
           <div className="co-skel h-3" style={{ width: `${w}px` }} />
@@ -594,9 +593,9 @@ function FieldRow({
           handoff notice, not a control. */}
       <div className="mb-1.5 flex items-center gap-1 text-sm font-medium text-foreground">
         {f.type === "file" || f.type === "checkbox" ? (
-          <span className={f.label ? undefined : "text-faint"}>{labelText}</span>
+          <span className={f.label ? undefined : "text-muted"}>{labelText}</span>
         ) : (
-          <label htmlFor={controlId} className={f.label ? undefined : "text-faint"}>{labelText}</label>
+          <label htmlFor={controlId} className={f.label ? undefined : "text-muted"}>{labelText}</label>
         )}
         {f.required && <Asterisk aria-hidden className="size-3 text-brand" />}
         {needs && <span id={confirmationId} className="ml-1 rounded-md bg-warn/15 px-1.5 py-0.5 text-2xs font-semibold text-warn">you confirm</span>}
