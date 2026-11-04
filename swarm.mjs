@@ -212,7 +212,9 @@ export function runLiveness(args, script = join(ROOT, 'check-liveness.mjs'), { s
       clearTimeout(timer);
       if (!finished) timer = setTimeout(kill, stallMs);
     });
-    child.on('error', reject);
+    // A spawn failure never closes, so the armed timer would hold the process
+    // for stallMs and then taskkill an undefined pid.
+    child.on('error', e => { clearTimeout(timer); reject(e); });
     child.on('close', status => {
       clearTimeout(timer);
       resolve(stalled ? { status, finished, stalled } : { status, finished });
@@ -239,7 +241,8 @@ async function main() {
                      because max_posting_age_days also truncates pagination
   --stale <days>     retire pending entries older than this (prune-pipeline.mjs)
   --liveness-skip <hosts>  leave these hosts out of the liveness check (comma list);
-                     exits 3 if check-liveness dies before its Results line
+                     exits 3 if check-liveness dies before its Results line,
+                     4 if it was killed for printing nothing for 20 min
   --max-evals <n>    global cap on evaluations this run (default 10)
   --check-lanes      report lane registration drift and exit
 `);
@@ -289,10 +292,12 @@ async function main() {
     const livenessArgs = ['--api-only', '--file', urlFile];
     if (dryRun) runNode('check-liveness.mjs', livenessArgs, { dryRun, label: 'check-liveness' });
     else {
-      const { status, finished } = await runLiveness(livenessArgs);
+      const { status, finished, stalled } = await runLiveness(livenessArgs);
       if (!finished) {
-        console.error(`   ❌ check-liveness.mjs exited ${status} before its Results line, so no verdict was recorded`);
-        livenessDied = true;
+        console.error(stalled
+          ? `   ❌ check-liveness.mjs was silent for ${LIVENESS_STALL_MS / 60000} min and was killed, so no verdict was recorded`
+          : `   ❌ check-liveness.mjs exited ${status} before its Results line, so no verdict was recorded`);
+        livenessDied = stalled ? 4 : 3;
       }
     }
   }
@@ -320,8 +325,9 @@ async function main() {
   }
   console.log('\nPhase 1 stops here: nothing is evaluated, nothing is submitted.');
   // Distinct from 1 (lane drift, no pipeline): scan and prune did run, so a
-  // caller can carry on without the liveness verdicts.
-  if (livenessDied) process.exitCode = 3;
+  // caller can carry on without the liveness verdicts. 4 says the stall guard
+  // killed it, so a hang and a crash read differently in the run log.
+  if (livenessDied) process.exitCode = livenessDied;
 }
 
 if (isMainModule(import.meta.url)) {

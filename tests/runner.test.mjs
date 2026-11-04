@@ -73,6 +73,10 @@ test('alert: a liveness check that died is logged and the mail still goes', t =>
   assert.equal(alert({ exec, log, root: setup(t) }), 0);
   assert.equal(calls.at(-1), 'notify-email.mjs');
   assert.deepEqual(rows, ['liveness: FAILED - continuing', 'profile riley: ok', 'run: ok']);
+
+  const stalled = fakeLog();
+  assert.equal(alert({ exec: argv => (argv[0] === 'swarm.mjs' ? 4 : 0), log: stalled.log, root: setup(t) }), 0);
+  assert.equal(stalled.rows[0], 'liveness: FAILED - stalled 20 min, killed - continuing');
 });
 
 test('alert: a failed owner page skips the mail; failed reads, hub and calendar do not', t => {
@@ -140,6 +144,10 @@ test('sweep: liveness findings are not failures, the pending list is the pipelin
   assert.equal(await sweep({ exec: died.exec, log: ld.log, root, liveness: async () => ({ status: 1, finished: false }) }), 0);
   assert.equal(died.calls.at(-1), 'prune-pipeline.mjs --stale 45');
   assert.deepEqual(ld.rows, ['sweep-liveness: FAILED - continuing', 'sweep: ok']);
+
+  const ls = fakeLog();
+  await sweep({ exec: fakeExec().exec, log: ls.log, root, liveness: async () => ({ status: null, finished: false, stalled: true }) });
+  assert.equal(ls.rows[0], 'sweep-liveness: FAILED - stalled 20 min, killed - continuing');
 
   mkdirSync(join(root, 'data', 'cache'), { recursive: true });
   writeFileSync(join(root, 'data', 'cache', 'ats-full-checkpoint.json'), '{}');

@@ -29,7 +29,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import { parsePendingRows, runLiveness } from './swarm.mjs';
+import { LIVENESS_STALL_MS, parsePendingRows, runLiveness } from './swarm.mjs';
+
+const STALLED = `stalled ${LIVENESS_STALL_MS / 60000} min, killed - `;
 import { isMainModule } from './lib/is-main-module.mjs';
 import { validateFlags } from './lib/cli-flags.mjs';
 
@@ -75,13 +77,14 @@ const profileNames = root => {
 export function alert({ exec, log, root = ROOT }) {
   // swarm.mjs owns preflight, scan, liveness and prune, and exits non-zero on
   // lane registration drift, which is the right place for the chain to stop.
-  // Its exit 3 means check-liveness died: scan and prune ran, so the mail is
-  // still right, only dead postings stay listed until a liveness pass lands.
+  // Its exit 3 means check-liveness died (4: killed by the stall guard): scan
+  // and prune ran, so the mail is still right, only dead postings stay listed
+  // until a liveness pass lands.
   // LinkedIn's guest endpoint is paced at 3.5 s a request, and ~3,300 pending
   // LinkedIn URLs held every run for over three hours, so they are left to the
   // weekly sweep.
   const triage = exec(['swarm.mjs', '--scan', '--since', '45', '--stale', '45', '--liveness-skip', 'linkedin.com']);
-  if (triage === 3) log('liveness', 'FAILED - continuing');
+  if (triage === 3 || triage === 4) log('liveness', `FAILED - ${triage === 4 ? STALLED : ''}continuing`);
   else if (triage) {
     log('triage', 'FAILED - snapshot and alert skipped');
     return 1;
@@ -164,9 +167,9 @@ export async function sweep({ exec, log, root = ROOT, liveness = runLiveness }) 
   // check-liveness.mjs exits 1 whenever anything is expired or uncertain, and
   // also when it dies, so the exit code cannot be the guard: its Results line
   // is. A dead check recorded nothing, which leaves prune safe to run.
-  const { finished } = await liveness(['--file', urls, '--throttle']);
+  const { finished, stalled } = await liveness(['--file', urls, '--throttle']);
   rmSync(urls, { force: true });
-  if (!finished) log('sweep-liveness', 'FAILED - continuing');
+  if (!finished) log('sweep-liveness', `FAILED - ${stalled ? STALLED : ''}continuing`);
   if (exec(['prune-pipeline.mjs', '--stale', '45'])) {
     log('sweep-prune', 'FAILED');
     return 1;

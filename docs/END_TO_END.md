@@ -289,7 +289,9 @@ persona:
   row said so. `check-liveness.mjs` exits 1 both for its normal report and for
   a crash, and `swarm.mjs` read both as a report. It now checks for the
   `Results:` line and exits 3 without one, which the alert logs as
-  `liveness FAILED - continuing`; the sweep checks the same line. The same look showed the cost of that stage:
+  `liveness FAILED - continuing`; the sweep checks the same line. A run the
+  20-minute stall guard killed exits 4 instead and logs
+  `FAILED - stalled 20 min, killed - continuing`. The same look showed the cost of that stage:
   about 3,300 pending LinkedIn URLs at 3.5 s each kept the 10-31 mail waiting
   more than three hours. The daily run now skips LinkedIn in liveness, and the
   weekly sweep checks those URLs.
