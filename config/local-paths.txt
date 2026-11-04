@@ -1,8 +1,3 @@
-# caveman IDE rule files (13fe5e4a): fork-only, never shipped by update-system
-.clinerules/caveman.md
-.cursor/rules/caveman.mdc
-.opencode/AGENTS.md
-.windsurf/rules/caveman.md
 # Greenhouse apply runner: fork-only, drives web/ from outside and is never shipped by update-system
 apply-runner/
 # ADR-001 cloud inbox (Pages + D1 for one profile): fork-only infra, never shipped by update-system
