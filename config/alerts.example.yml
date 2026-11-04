@@ -37,6 +37,14 @@ alerts:
   # session and may lag the attachment.
   artifact_url: ""
 
+  # Links into the full app. dashboard_url is the local web dashboard
+  # (http://127.0.0.1:3000 by default); set, it adds an inbox link under the
+  # new postings, a "Follow-ups due" digest, and a row of links to the app's
+  # pages. cloud_url is the Cloudflare phone board; set, it adds its Board and
+  # Postings views. Leave both blank for a mail read away from this machine.
+  dashboard_url: ""
+  cloud_url: ""
+
   # Google Calendar events for the few postings worth an evening slot
   # (calendar-alert.mjs, run by scripts/alert.cmd before the mail). Every rule
   # must pass. Needs GCAL_REFRESH_TOKEN: `node scripts/mint-gmail-token.mjs

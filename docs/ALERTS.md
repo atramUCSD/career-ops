@@ -192,6 +192,16 @@ attaches a freshly built snapshot (always current) and links the last version
 published from a Claude session (may lag). Set `artifact_url` in
 `config/alerts.yml` to include the link, or leave it blank to omit it.
 
+**Links into the full app are opt-in.** `dashboard_url` (the local web
+dashboard) adds an inbox link under the new postings, a "Follow-ups due"
+digest from the same cadence math as the Follow-ups page, and a row of links
+to the dashboard's pages. `cloud_url` (the Cloudflare phone board) adds its
+Board and Postings views; the board has no per-posting route, so neither app
+gets a per-row link. A profile layer's mail leaves both blank, because its
+reader cannot reach this machine. The digest uses the owner's follow-up
+cadence for every layer. It never wakes a quiet run: a mail goes out only
+when a posting is new, upgraded or retired.
+
 ## Files
 
 | Path | Role |

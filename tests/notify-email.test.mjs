@@ -101,6 +101,25 @@ composeBody({
   ? pass('scraped text is escaped in the mail body')
   : fail('a company name went into the body unescaped');
 
+// App links are opt-in: a profile layer mailed to someone without this
+// machine's dashboard must get no localhost links.
+const appBody = (cfg, due = []) => composeBody({
+  fresh: [a], upgraded: [], cfg: { ...DEFAULTS, ...cfg }, date: '2026-08-21', due,
+  model: { rows: [a], expired: { count: 0 } },
+});
+!/Open the full app|in the inbox|Follow-ups due/.test(appBody({}))
+  ? pass('blank dashboard_url and cloud_url leave the mail without app links')
+  : fail('blank URLs still render app links');
+const linked = appBody(
+  { dashboard_url: 'http://127.0.0.1:3000/', cloud_url: 'https://board.test/#' },
+  [{ company: 'Gamma <i>', role: 'Designer', urgency: 'urgent', daysSinceApplication: 4 }],
+);
+linked.includes('href="http://127.0.0.1:3000/pipeline"') && linked.includes('href="http://127.0.0.1:3000/followups"')
+  && linked.includes('href="https://board.test/#postings"') && /they replied · 4d/.test(linked)
+  && linked.includes('Gamma &lt;i&gt;') && !linked.includes(':3000//')
+  ? pass('dashboard and phone-board links render, trailing slashes folded, digest escaped')
+  : fail('app links or follow-ups digest missing from the body');
+
 const url = toBase64Url(mime);
 /^[A-Za-z0-9_-]+$/.test(url) && Buffer.from(url.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString() === mime
   ? pass('base64url round-trips and is URL-safe')

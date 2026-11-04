@@ -40,6 +40,8 @@ import { sendRaw } from './gmail-send.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
 import { flagValue, hasFlag, validateFlags } from './lib/cli-flags.mjs';
 import { writeFileAtomic } from './tracker-utils.mjs';
+import { analyzeFromContent, loadFollowupsEnabled } from './followup-cadence.mjs';
+import { getProfilePath, resolveTrackerPath } from './path-resolver.mjs';
 
 // The scheduled path (scripts/alert.cmd under Task Scheduler) runs with a
 // minimal environment and sources nothing, so without this the three GMAIL_*
@@ -67,6 +69,12 @@ export const DEFAULTS = {
   quiet_if_empty: true,
   attach_artifact: true,
   artifact_url: '',
+  // Base URLs of the local web dashboard and the Cloudflare phone board. Either
+  // one set adds links into that app; the local one also adds the follow-ups
+  // digest. Blank keeps the mail as it was, which is what a profile layer mailed
+  // to someone without this machine's dashboard needs.
+  dashboard_url: '',
+  cloud_url: '',
 };
 
 export function loadConfig(root = ROOT) {
@@ -169,9 +177,30 @@ function rowsTable(rows, max) {
 ${body}${more}</table>`;
 }
 
-export function composeBody({ fresh, upgraded, model, cfg, date }) {
+/**
+ * The follow-ups the dashboard's Follow-ups page flags today: overdue, plus
+ * "urgent" (the company replied and the answer is still owed).
+ */
+export function dueFollowups(root = ROOT) {
+  const tracker = resolveTrackerPath(root);
+  if (!existsSync(tracker)) return [];
+  const read = p => (existsSync(p) ? readFileSync(p, 'utf-8') : '');
+  // ponytail: the cadence thresholds are the owner's (followup-cadence binds its
+  // profile at import), so a layer with its own follow_ups cadence is judged
+  // by the owner's. Thread a cadence through analyzeFromContent if one diverges.
+  const { entries = [] } = analyzeFromContent(read(tracker), read(join(root, 'data/follow-ups.md')), {
+    enabled: loadFollowupsEnabled(getProfilePath(root)),
+    statusLogContent: read(join(dirname(tracker), 'status-log.tsv')),
+  });
+  return entries.filter(e => e.urgency === 'urgent' || e.urgency === 'overdue');
+}
+
+const link = (href, text) => `<a href="${esc(href)}" style="color:#0f6f6b;font-weight:600;text-decoration:none">${text}</a>`;
+
+export function composeBody({ fresh, upgraded, model, cfg, date, due = [] }) {
   const wrap = s => `<div style="font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;color:#12242c;background:#ffffff;padding:4px">${s}</div>`;
   const h = t => `<h2 style="font-size:15px;letter-spacing:.04em;text-transform:uppercase;color:#4a6068;margin:22px 0 8px">${t}</h2>`;
+  const app = cfg.dashboard_url ? path => cfg.dashboard_url.replace(/\/+$/, '') + path : null;
   const out = [];
   out.push(`<p style="margin:0 0 4px;font-size:13px;color:#74898f">career-ops · ${date} · ${model.rows.length} pending across ${new Set(model.rows.map(r => r.c)).size} companies</p>`);
   if (fresh.length) {
@@ -184,12 +213,35 @@ export function composeBody({ fresh, upgraded, model, cfg, date }) {
   }
   if (!fresh.length && !upgraded.length) {
     out.push(`<p style="margin:16px 0">No new postings this run.</p>`);
+  } else if (app) {
+    out.push(`<p style="margin:10px 0 0;font-size:13.5px">${link(app('/pipeline'), 'Score, shortlist or dismiss these in the inbox')}</p>`);
+  }
+  if (due.length) {
+    const cell = 'padding:6px 10px;border-bottom:1px solid #d6dedf;font-size:14px;vertical-align:top';
+    out.push(h(`Follow-ups due — ${due.length}`));
+    out.push(`<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;max-width:640px">${due.slice(0, 5).map(e => `<tr>
+  <td style="${cell}"><b>${esc(e.company)}</b><br><span style="color:#74898f;font-size:12.5px">${esc(e.role)}</span></td>
+  <td style="${cell};white-space:nowrap;color:${e.urgency === 'urgent' ? '#a04f2a' : '#9a7420'}">${e.urgency === 'urgent' ? 'they replied' : 'overdue'} · ${e.daysSinceApplication}d</td>
+</tr>`).join('')}${due.length > 5 ? `<tr><td colspan="2" style="${cell};color:#74898f;font-size:12.5px">+ ${due.length - 5} more</td></tr>` : ''}</table>`);
+    if (app) out.push(`<p style="margin:8px 0 0;font-size:13.5px">${link(app('/followups'), 'Draft and log them in Follow-ups')}</p>`);
   }
   out.push(h('Snapshot'));
   out.push(`<p style="margin:0;font-size:14px;line-height:1.6">
     ${BANDS.filter(b => b.id !== 'blocked').map(b =>
       `${model.rows.filter(r => r.cbBand === b.id).length} ${b.id}`).join(' · ')} ·
     ${model.expired.count} retired to date${cfg.artifact_url ? ` · <a href="${esc(cfg.artifact_url)}" style="color:#0f6f6b">open the full page</a>` : ''}</p>`);
+  const desk = app ? [['/', 'Home'], ['/pipeline', 'Inbox'], ['/board', 'Board'], ['/followups', 'Follow-ups'],
+    ['/cv', 'CV studio'], ['/analytics', 'Analytics'], ['/config', 'Config &amp; setup']].map(([p, t]) => link(app(p), t)) : [];
+  // The phone board has no per-posting route, only its two hash views.
+  const cloud = cfg.cloud_url ? cfg.cloud_url.replace(/[#/]+$/, '') : '';
+  const phone = cloud ? [link(cloud + '/', 'Board'), link(cloud + '/#postings', 'Shortlist or run a scan')] : [];
+  if (desk.length || phone.length) {
+    out.push(h('Open the full app'));
+    out.push(`<p style="margin:0;font-size:14px;line-height:1.9">${[
+      desk.length ? `<span style="color:#74898f">At the desk</span>&nbsp; ${desk.join(' · ')}` : '',
+      phone.length ? `<span style="color:#74898f">On the phone</span>&nbsp; ${phone.join(' · ')}` : '',
+    ].filter(Boolean).join('<br>')}</p>`);
+  }
   out.push(`<p style="margin:20px 0 0;font-size:12px;color:#74898f;line-height:1.6">
     Match is 100 × eligibility × fit × timing, read from the posting's own description — a prior on
     what is worth reading, not a fit score and not a verdict. A 0 means a hard gate fired (clearance,
@@ -257,7 +309,8 @@ export function composeRun({ root = ROOT, now = new Date(), cfg = null, model = 
     : null;
 
   const subject = (test ? '[test] ' : '') + subjectFor({ fresh, upgraded, retired, date });
-  const html = composeBody({ fresh, upgraded, model: m, cfg: config, date });
+  const due = config.dashboard_url ? dueFollowups(root) : [];
+  const html = composeBody({ fresh, upgraded, model: m, cfg: config, date, due });
   return {
     quiet,
     subject,
