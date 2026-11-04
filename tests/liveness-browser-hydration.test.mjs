@@ -263,3 +263,16 @@ const live = { text: POSTING, controls: ['Apply for this job'] };
     fail(`BambooHR reload poll: ${JSON.stringify(verdict)}, reloadedAtRead=${reloadedAtRead}, waits=${page.waits.length}`);
   }
 }
+
+// A renderer that never yields leaves page.evaluate pending forever (the
+// 2026-11-01 sweep hung 14 hours on one URL). The deadline answers instead.
+{
+  const page = scriptedPage({ render: () => blank });
+  page.evaluate = () => new Promise(() => {});
+  const verdict = await checkUrlLiveness(page, POSTING_URL, { deadlineMs: 50 });
+  if (verdict.result === 'uncertain' && verdict.code === 'liveness_timeout') {
+    pass('a page that never answers is uncertain at the deadline, not a hang');
+  } else {
+    fail(`wedged page: ${JSON.stringify(verdict)}`);
+  }
+}

@@ -184,19 +184,39 @@ export function skipsHost(url, hosts) {
  * postings. Its verdicts are only written at the end, so an unfinished run left
  * nothing behind.
  */
-export function runLiveness(args, script = join(ROOT, 'check-liveness.mjs')) {
+// One URL's worst legitimate silence is about 8 min: the API rung, a headed
+// launch, and two browser checks at CHECK_DEADLINE_MS each.
+export const LIVENESS_STALL_MS = 20 * 60_000;
+
+export function runLiveness(args, script = join(ROOT, 'check-liveness.mjs'), { stallMs = LIVENESS_STALL_MS } = {}) {
   console.log(`   node check-liveness.mjs ${args.join(' ')}`);
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [script, ...args], { cwd: ROOT, stdio: ['inherit', 'pipe', 'inherit'] });
-    let tail = '', finished = false;
+    let tail = '', finished = false, stalled = false;
+    // Last resort behind the per-URL deadline: a run that prints nothing for
+    // stallMs before its Results line is killed with its browsers, so the chain
+    // after it still runs. Disarmed at Results, so the writes that follow it
+    // are never cut off.
+    const kill = () => {
+      stalled = true;
+      console.error(`   check-liveness printed nothing for ${stallMs / 60000} min; killed`);
+      if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' });
+      else child.kill('SIGKILL');
+    };
+    let timer = setTimeout(kill, stallMs);
     child.stdout.on('data', chunk => {
       process.stdout.write(chunk);
       const seen = tail + chunk;
       if (/(^|\n)Results: /.test(seen)) finished = true;
       tail = seen.slice(-16);
+      clearTimeout(timer);
+      if (!finished) timer = setTimeout(kill, stallMs);
     });
     child.on('error', reject);
-    child.on('close', status => resolve({ status, finished }));
+    child.on('close', status => {
+      clearTimeout(timer);
+      resolve(stalled ? { status, finished, stalled } : { status, finished });
+    });
   });
 }
 

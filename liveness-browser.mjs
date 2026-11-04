@@ -473,7 +473,34 @@ export async function gotoWithTimeoutRetry(page, url, {
   }
 }
 
-export async function checkUrlLiveness(page, url, { extraSettleMs = 0, timeoutRetry = true } = {}) {
+// page.evaluate takes no timeout, so a renderer whose main thread never yields
+// (a page script stuck in a loop, a wedged GPU process) holds a check forever:
+// the 2026-11-01 weekly sweep sat 14 hours on one URL until it was killed. The
+// slowest legitimate path (timed-out goto, its 30 s retry, the hydration poll,
+// the frame wait, the BambooHR reload) stays under about 90 s. Past the
+// deadline the verdict is uncertain, and the page should not be reused: its
+// renderer may still be busy. Callers that keep a page across URLs recycle the
+// browser on this code.
+export const CHECK_DEADLINE_MS = 120_000;
+export const DEADLINE_CODE = 'liveness_timeout';
+
+export async function checkUrlLiveness(page, url, { deadlineMs = CHECK_DEADLINE_MS, ...options } = {}) {
+  let timer;
+  const deadline = new Promise((resolve) => {
+    timer = setTimeout(() => resolve({
+      result: 'uncertain',
+      code: DEADLINE_CODE,
+      reason: `page did not answer within ${Math.round(deadlineMs / 1000)}s; browser recycled`,
+    }), deadlineMs);
+  });
+  try {
+    return await Promise.race([readLiveness(page, url, options), deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function readLiveness(page, url, { extraSettleMs = 0, timeoutRetry = true } = {}) {
   const guardError = rejectPrivateOrInvalid(url);
   if (guardError) {
     return { result: 'uncertain', code: guardError.code, reason: guardError.reason };

@@ -29,6 +29,7 @@ import {
   createHostSpacer,
   takeSuppressedBlockCount,
   sleep,
+  DEADLINE_CODE,
 } from './liveness-browser.mjs';
 import { checkLivenessViaApi } from './liveness-api.mjs';
 import { planExpiredHistoryRows, isUnreadableVerdict, trackerLivenessTargets, DEFAULT_TRACKER_STATUSES, planExpiredDiscards, postingClosedNote, DEFAULT_DISCARD_STATUSES, discardableExpiredUrls } from './liveness-core.mjs';
@@ -315,6 +316,15 @@ async function main() {
           // A failed visit counts too: that is when a WAF is most likely involved.
           spacer.visited(url);
         }
+        // A timed-out page may still be wedged, and so may its browser: drop
+        // both and let the next URL launch fresh ones. close() can hang on the
+        // same renderer, so it is not awaited; the exit backstop below reaps
+        // whatever it leaves.
+        if (code === DEADLINE_CODE) {
+          headed?.close();
+          browser.close().catch(() => {});
+          browser = page = headed = null;
+        }
       } catch (err) {
         result = 'uncertain';
         code = 'browser_unavailable';
@@ -335,8 +345,8 @@ async function main() {
     verdicts.push({ url, result, code });
   }
 
-  if (headed) await headed.close();
-  if (browser) await browser.close();
+  const closing = Promise.all([headed?.close(), browser?.close()]).catch(() => {});
+  await Promise.race([closing, new Promise((resolve) => setTimeout(resolve, 10_000).unref())]);
 
   if (!noLog && expiredEntries.length > 0) {
     const log = await recordExpired(expiredEntries, { date: localToday() });
@@ -406,5 +416,10 @@ if (isMainModule(import.meta.url)) {
   main().catch(err => {
     console.error('Fatal:', err.message);
     process.exitCode = 1;
+  }).finally(() => {
+    // An abandoned browser keeps its pipe open, so the event loop would never
+    // drain. Unref'd: a clean run exits at once; a stuck one exits here, and
+    // Playwright's exit hook kills the browsers it launched.
+    setTimeout(() => process.exit(), 30_000).unref();
   });
 }
