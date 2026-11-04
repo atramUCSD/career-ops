@@ -16,16 +16,18 @@ export default async function SetupLayout({ children }: { children: ReactNode })
 
   // The same scores the alert filters, so the How picky preview counts what the email would send.
   let scores: number[];
+  let scoresError: string | null = null;
   try {
     const { buildModel } = await coreModule<{ buildModel: (o: { root: string }) => { rows: { cb: number }[] } }>("build-artifact");
     scores = buildModel({ root: userRoot() }).rows.map((r) => r.cb).filter(Number.isFinite);
-  } catch {
+  } catch (e) {
     scores = [];
+    scoresError = e instanceof Error ? e.message : String(e);
   }
   // ponytail: scores rebuilt per request; cache if slow
 
   return (
-    <SetupWizard setup={setup} hasCv={hasCv} scores={scores} schedule={home.schedule} gmailMissing={home.gmailMissing} persona={home.active.label}>
+    <SetupWizard setup={setup} hasCv={hasCv} scores={scores} scoresError={scoresError} schedule={home.schedule} gmailMissing={home.gmailMissing} persona={home.active.label}>
       {children}
     </SetupWizard>
   );

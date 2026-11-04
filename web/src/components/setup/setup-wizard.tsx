@@ -11,7 +11,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEv
 import Link from "next/link";
 import { useRouter, useSelectedLayoutSegment } from "next/navigation";
 import { radialPositions } from "@/lib/camera-path.mjs";
-import { addRole, baseFrom, bins, draftFrom, formFrom, passing, REMOTE, setEmail, stageLabel, STAGES, STAGE_IDS, status, validate } from "@/lib/setup-wizard.mjs";
+import { addRole, baseFrom, bins, draftFrom, formFrom, passing, REMOTE, setEmail, setKeywords, setRoles, stageLabel, STAGES, STAGE_IDS, status, validate } from "@/lib/setup-wizard.mjs";
 import type { Schedule } from "@/lib/home/home-data";
 import { OVERVIEW, Stage, World } from "@/components/ui/camera";
 import { Badge } from "@/components/ui/badge";
@@ -50,6 +50,10 @@ const subscribe = (cb: () => void) => {
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const show = (v: unknown) => (v === undefined ? "(none)" : Array.isArray(v) ? v.join(", ") || "(empty)" : String(v));
 const hrefOf = (id: string) => (id === OVERVIEW ? "/setup" : `/setup/${id}`);
+const boardCount = (bs: Board[]) => {
+  const n = (s: Board["status"]) => bs.filter((b) => b.status === s).length;
+  return `Checked ${bs.length} boards: ${n("live")} live, ${n("empty")} empty, ${n("broken")} broken.`;
+};
 // discover-ats lists a company as a bare name or as an object with one.
 const names = (rs: ({ name?: string } | string)[]) => rs.map((r) => (typeof r === "string" ? r : r.name));
 
@@ -64,6 +68,7 @@ export function SetupWizard({
   setup,
   hasCv,
   scores,
+  scoresError,
   schedule,
   gmailMissing,
   persona,
@@ -72,6 +77,7 @@ export function SetupWizard({
   setup: Setup;
   hasCv: boolean;
   scores: number[];
+  scoresError: string | null;
   schedule: Schedule | null;
   gmailMissing: string[];
   persona: string;
@@ -96,6 +102,7 @@ export function SetupWizard({
   const [serverError, setServerError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [diff, setDiff] = useState<Diff | null>(null);
+  const [diffError, setDiffError] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
   const [applied, setApplied] = useState<Applied | null>(null);
   const [replacing, setReplacing] = useState(false);
@@ -106,6 +113,7 @@ export function SetupWizard({
   const railHeading = useRef<HTMLHeadingElement>(null);
   const flatHeading = useRef<HTMLHeadingElement>(null);
   const mounted = useRef(false);
+  const reseed = useRef(false);
 
   const positions = useMemo(() => radialPositions(STAGE_IDS, R) as Record<string, [number, number]>, []);
   const ring = STAGE_IDS.slice(1).map((id) => positions[id]);
@@ -127,13 +135,33 @@ export function SetupWizard({
     if (summary) document.getElementById(`summary-${summary.stage}`)?.focus();
   }, [summary]);
 
-  // Re-entry with a saved draft: fetch what it would change, so the review is not blank.
+  // A summary of an older draft must not stand over Apply: any edit drops it,
+  // and the bump discards a reply still in flight for the old draft.
+  const diffReq = useRef(0);
   useEffect(() => {
-    if (active !== OVERVIEW || diff || empty) return;
+    diffReq.current++;
+    setDiff(null);
+    setDiffError(null);
+  }, [draft]);
+
+  // The overview fetches what the draft would change: on re-entry with a saved draft,
+  // after edits made without Continue, after an apply that left a change unwritten, and
+  // on retry (which clears diffError).
+  useEffect(() => {
+    if (active !== OVERVIEW || diff || diffError || empty) return;
+    const n = ++diffReq.current;
     postJson<{ diff: Diff }>("/api/setup", { draft })
-      .then((r) => setDiff(r.diff))
-      .catch((e) => setServerError(message(e)));
-  }, [active]);
+      .then((r) => n === diffReq.current && setDiff(r.diff))
+      .catch((e) => n === diffReq.current && setDiffError(message(e)));
+  }, [active, draft, diff, diffError, empty]);
+
+  // After an apply, the refreshed files are the new baseline. A writer that
+  // normalises a value would otherwise leave the form differing from base.
+  useEffect(() => {
+    if (!reseed.current) return;
+    reseed.current = false;
+    setForm(formFrom(setup));
+  }, [setup]);
 
   const go = (id: string) => router.push(hrefOf(id), { scroll: false });
   const errorsOf = (stage: string): Record<string, string> => validate(stage, form);
@@ -174,7 +202,7 @@ export function SetupWizard({
       setApplied(j);
       if (j.ok) {
         setForm((f) => ({ ...f, adds: [] }));
-        setDiff(null);
+        reseed.current = true;
       }
       // Re-read the files either way: a failed run may still have landed some of them.
       router.refresh();
@@ -276,12 +304,18 @@ export function SetupWizard({
   const health = schedule ? HEALTH[schedule.health] : null;
   const nextRun = schedule?.nextRun ? new Date(schedule.nextRun).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit" }) : null;
 
+  const alertSteps = (
+    <a href="/api/docs/alerts" target="_blank" rel="noopener" className="text-foreground underline underline-offset-2 focus-ring">
+      See the setup steps
+    </a>
+  );
+
   const bodies: Record<string, (errs: Record<string, string>) => ReactNode> = {
     you: (errs) => (
       <>
         <p className="text-sm text-muted">
           No account. Paste text or drop a .md / .txt file to start. A PDF needs an AI CLI in{" "}
-          <a href="/config" className="text-foreground underline-offset-2 hover:underline focus-ring">
+          <a href="/config" target="_blank" rel="noopener" className="text-foreground underline-offset-2 hover:underline focus-ring">
             Config
           </a>{" "}
           first. The market scan is <span className="text-foreground">free</span>. You only spend tokens when you choose to score a role.
@@ -319,12 +353,12 @@ export function SetupWizard({
       <form {...formProps("what")}>
         <div data-field="roles" id="f-roles">
           <Field label="Roles you want" hint="Adding a role also adds it as a search keyword." error={errs.roles}>
-            <ChipList label="Roles" values={form.roles} onChange={(next) => setForm((f) => next.reduce(addRole, { ...f, roles: next.filter((r) => f.roles.includes(r)) }))} />
+            <ChipList label="Roles" values={form.roles} onChange={(next) => setForm((f) => setRoles(f, next))} />
           </Field>
         </div>
         <div data-field="keywords" id="f-keywords">
           <Field label="Title keywords" hint="The scan keeps a posting whose title contains one of these." error={errs.keywords}>
-            <ChipList label="Title keywords" values={form.keywords} onChange={set("keywords")} />
+            <ChipList label="Title keywords" values={form.keywords} onChange={(next) => setForm((f) => setKeywords(f, next))} />
           </Field>
         </div>
         {Object.entries(form.lanes).map(([id, kw]) => (
@@ -354,20 +388,20 @@ export function SetupWizard({
           </Select>
         </div>
         <div data-field="places" id="f-places">
-          <Field label="Places to search" hint="Cities or countries. Remote is not a place: leave this empty to search anywhere.">
+          <Field label="Places to search" hint="Cities or countries. Remote is not a place: leave this empty to search anywhere." error={errs.places}>
             <ChipList label="Places to search" values={form.places} onChange={set("places")} />
           </Field>
         </div>
         {actions("where")}
       </form>
     ),
-    who: () => (
+    who: (errs) => (
       <form {...formProps("who")}>
         <fieldset>
           <legend className="mb-1.5 text-sm font-medium text-foreground">Companies to watch</legend>
           {companies.length ? (
             <ul className="grid gap-x-4 gap-y-1.5 sm:grid-cols-2">
-              {companies.map((n) => {
+              {companies.map((n, i) => {
                 const b = boards?.[n];
                 return (
                   <li key={n}>
@@ -377,14 +411,16 @@ export function SetupWizard({
                         className="size-4 accent-brand focus-ring"
                         checked={form.companies[n] ?? base.companies[n] ?? false}
                         onChange={(e) => setForm((f) => ({ ...f, companies: { ...f.companies, [n]: e.target.checked } }))}
+                        aria-describedby={b?.detail ? `board-${i}` : undefined}
                       />
                       {n}
-                      {b && (
-                        <Badge tone={BOARD_TONE[b.status]} title={b.detail}>
-                          {b.status}
-                        </Badge>
-                      )}
+                      {b && <Badge tone={BOARD_TONE[b.status]}>{b.status}</Badge>}
                     </label>
+                    {b?.detail && (
+                      <p id={`board-${i}`} className="ml-6 text-xs text-muted">
+                        {b.detail}
+                      </p>
+                    )}
                   </li>
                 );
               })}
@@ -397,11 +433,17 @@ export function SetupWizard({
           <Button type="button" variant="secondary" size="sm" loading={checking} onClick={checkBoards}>
             Check boards
           </Button>
-          <span className="text-xs text-muted">Asks each board for postings. Takes up to two minutes.</span>
+          <span role="status" className="text-xs text-muted">
+            {boards ? boardCount(Object.values(boards)) : "Asks each board for postings. Takes up to two minutes."}
+          </span>
         </div>
-        {boardsError && <p className="text-xs text-bad-text">Could not check boards: {boardsError}</p>}
+        {boardsError && (
+          <p role="alert" className="text-xs text-bad-text">
+            Could not check boards: {boardsError}
+          </p>
+        )}
         <div data-field="adds" id="f-adds">
-          <Field label="Companies to add" hint="Looked up on Apply and added when a board is found. Up to 20.">
+          <Field label="Companies to add" hint="Looked up on Apply and added when a board is found. Up to 20." error={errs.adds}>
             <ChipList label="Companies to add" values={form.adds} onChange={set("adds")} />
           </Field>
         </div>
@@ -429,13 +471,22 @@ export function SetupWizard({
             step={1}
             value={Number.isFinite(form.minMatch) ? form.minMatch : 42}
             onChange={(e) => set("minMatch")(Number(e.target.value))}
-            aria-describedby="minMatch-pass"
+            aria-invalid={errs.minMatch ? true : undefined}
+            aria-describedby={errs.minMatch ? "minMatch-error minMatch-pass" : "minMatch-pass"}
             className="w-full accent-brand focus-ring"
           />
-          <p id="minMatch-pass" className="mt-1.5 text-xs text-muted">
-            {scores.length ? `${pass} of ${scores.length} scored roles pass.` : "No scored roles yet, so there is nothing to preview."}
+          {errs.minMatch && (
+            <p id="minMatch-error" className="mt-1.5 text-xs text-bad-text">
+              {errs.minMatch}
+            </p>
+          )}
+          <p id="minMatch-pass" className={cn("mt-1.5 text-xs", scoresError ? "text-bad-text" : "text-muted")}>
+            {scoresError
+              ? `Couldn't load your scored postings (${scoresError}), so there's no preview.`
+              : scores.length
+                ? `${pass} of ${scores.length} scored roles pass.`
+                : "No scored roles yet, so there is nothing to preview."}
           </p>
-          {errs.minMatch && <p className="mt-1.5 text-xs text-bad-text">{errs.minMatch}</p>}
         </div>
         {text("maxRows", "Matches per alert", errs, {
           type: "number",
@@ -465,12 +516,12 @@ export function SetupWizard({
         </div>
         {form.calendarOn && (
           <p className="text-xs text-muted">
-            Needs a calendar token. Run <code className="rounded-md bg-surface-muted px-1 font-mono">node scripts/mint-gmail-token.mjs --calendar</code> once at your desk.
+            Calendar needs a one-time sign-in from a terminal. {alertSteps}
           </p>
         )}
         {gmailMissing.length > 0 && (
           <div className="rounded-xl border border-warn/30 bg-warn-soft p-4 text-sm text-foreground">
-            Email sending is not set up yet. Missing in .env: {gmailMissing.join(", ")}.
+            Email sending is not set up yet. Missing in .env: {gmailMissing.join(", ")}. {alertSteps}
           </div>
         )}
         {actions("tell")}
@@ -529,7 +580,15 @@ export function SetupWizard({
         Changes to apply
       </h3>
       {empty && !applied?.ok && <p className="text-foreground">Nothing to apply. Your files already say this.</p>}
-      {!empty && !diff && <p className="text-muted">Working out what changes…</p>}
+      {!empty && !diff && !diffError && <p className="text-muted">Working out what changes…</p>}
+      {!empty && !diff && diffError && (
+        <div role="alert" className="space-y-2">
+          <p className="text-bad-text">Couldn't work out the changes: {diffError}</p>
+          <Button type="button" variant="secondary" size="sm" onClick={() => setDiffError(null)}>
+            Try again
+          </Button>
+        </div>
+      )}
       {targets.map((t) => {
         const d = diff![t];
         return (
@@ -562,10 +621,15 @@ export function SetupWizard({
         </p>
       )}
       {nextRun && <p className="text-xs text-muted">Changes take effect on the next run: {nextRun}.</p>}
-      {serverError && active === OVERVIEW && <p className="text-xs text-bad-text">{serverError}</p>}
-      <Button onClick={apply} loading={applying} disabled={empty} className="w-full">
+      {serverError && active === OVERVIEW && (
+        <p role="alert" className="text-xs text-bad-text">
+          {serverError}
+        </p>
+      )}
+      <Button onClick={apply} loading={applying} disabled={empty || !diff} className="w-full">
         Apply to {persona}
       </Button>
+      {applying && <p className="text-xs text-muted">Saving, then looking up your companies' job boards. This can take up to 2 minutes.</p>}
       {applied && (
         <div role="status" className="space-y-1 text-xs">
           {applied.ok ? (
@@ -613,9 +677,7 @@ export function SetupWizard({
         {active === OVERVIEW ? "Review your setup" : "Your setup"}
       </h2>
       <p className="mt-1 text-xs text-muted">{stageLabel(active)}</p>
-      <nav aria-label="Setup tasks" className="mt-4">
-        {taskList}
-      </nav>
+      <div className="mt-4">{taskList}</div>
       {active === OVERVIEW && <div className="mt-6">{review}</div>}
     </>
   );
@@ -651,7 +713,9 @@ export function SetupWizard({
               {bodies[s.id](visible(s.id))}
             </section>
           )}
-          <aside className="rounded-2xl border border-border bg-surface p-5 text-sm">{rail}</aside>
+          <aside aria-label="Setup progress" className="rounded-2xl border border-border bg-surface p-5 text-sm">
+            {rail}
+          </aside>
           {children}
         </div>
       </div>
@@ -684,7 +748,7 @@ export function SetupWizard({
         ))}
       </World>
 
-      {stepper("glass fixed top-4 left-1/2 flex -translate-x-1/2 gap-1 rounded-2xl p-1.5")}
+      {stepper("glass fixed top-4 left-1/2 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 flex-wrap justify-center gap-1 rounded-2xl p-1.5")}
 
       <aside aria-label="Setup progress" className="glass fixed top-24 right-4 bottom-4 w-80 overflow-y-auto rounded-2xl p-4 text-sm">
         {rail}

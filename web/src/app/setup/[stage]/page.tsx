@@ -8,6 +8,7 @@ type Props = { params: Promise<{ stage: string }> };
 // navigation commit, before the camera lands.
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { stage } = await params;
+  if (!STAGE_IDS.includes(stage)) return { title: "Not found · career-ops" };
   return { title: `${stageLabel(stage)} · Setup · career-ops` };
 }
 

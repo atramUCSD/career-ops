@@ -1,7 +1,8 @@
 // The setup wizard's form: one flat object the stages edit, read from what
 // GET /api/setup returns and written back as the draft POST /api/setup takes.
 // The draft names only what differs from the files, so applying an untouched
-// wizard writes nothing. Validation here is the wizard's own (required fields,
+// wizard writes nothing once the files are filled in (for a new user, alerts
+// follow the profile email and personalization fills empty sections). Validation here is the wizard's own (required fields,
 // in the wizard's words); the writers' libraries still check the draft on POST.
 
 import { EMAIL } from "./alerts-config.mjs";
@@ -29,6 +30,10 @@ export function stageLabel(id) {
 export const REMOTE = ["Remote only", "Remote or hybrid", "Hybrid or on-site", "Anywhere"];
 
 const MAX_TEXT = 200;
+// Mirrors checkDraft in setup-draft.mjs and NOT_A_PLACE in the root onboard-write.mjs.
+const MAX_ADDS = 20;
+const MAX_NAME = 100;
+const NOT_A_PLACE = /^(remote|hybrid|anywhere|on-?site)$/i;
 
 // Form field to the profile draft key profile-patch.mjs reads.
 const PROFILE = [
@@ -76,6 +81,8 @@ export function baseFrom(setup) {
     name: str(p.name),
     email: str(p.email),
     roles: list(p.roles),
+    // Keywords addRole added in this session, so removing the role can take them back out.
+    roleKeywords: /** @type {string[]} */ ([]),
     keywords: fresh ? [] : list(pt.title_filter?.positive),
     lanes: Object.fromEntries((ok(setup.lanes)?.value ?? []).filter((l) => typeof l?.id === "string").map((l) => [l.id, list(l.title_keywords)])),
     currency: str(p.currency),
@@ -130,13 +137,33 @@ export function setEmail(form, email) {
   return { ...form, email, ...(follows && { to: email }) };
 }
 
-/** Add a role, and its title keyword when the scan filter lacks it. Never removes a keyword. */
+/** Add a role, and its title keyword when the scan filter lacks it. */
 export function addRole(form, role) {
   const r = role.trim();
   const has = (xs) => xs.some((x) => x.toLowerCase() === r.toLowerCase());
   if (!r || has(form.roles)) return form;
-  return { ...form, roles: [...form.roles, r], keywords: has(form.keywords) ? form.keywords : [...form.keywords, r] };
+  if (has(form.keywords)) return { ...form, roles: [...form.roles, r] };
+  return { ...form, roles: [...form.roles, r], keywords: [...form.keywords, r], roleKeywords: [...form.roleKeywords, r] };
 }
+
+/**
+ * The roles ChipList's new value. A removed role takes its keyword with it only
+ * when addRole added that keyword; one the user typed or the files already had stays.
+ */
+export function setRoles(form, next) {
+  const gone = new Set(form.roles.filter((r) => !next.includes(r)).map((r) => r.toLowerCase()));
+  const drop = new Set(form.roleKeywords.filter((k) => gone.has(k.toLowerCase())));
+  const kept = {
+    ...form,
+    roles: next.filter((r) => form.roles.includes(r)),
+    keywords: form.keywords.filter((k) => !drop.has(k)),
+    roleKeywords: form.roleKeywords.filter((k) => !drop.has(k)),
+  };
+  return next.reduce(addRole, kept);
+}
+
+/** The keywords ChipList's new value. A keyword removed by hand stops being the role's. */
+export const setKeywords = (form, keywords) => ({ ...form, keywords, roleKeywords: form.roleKeywords.filter((k) => keywords.includes(k)) });
 
 /**
  * The _profile.md sections the answers can fill, for sections the user has not
@@ -237,7 +264,18 @@ export function validate(stage, form) {
     case "where":
       text("home", "Where you live", "Enter where you live");
       text("remote", "Work mode");
+      {
+        const place = form.places.find((p) => NOT_A_PLACE.test(p.trim()));
+        if (place) e.places = `Remove "${place.trim()}": it is not a place. Leave places empty to search anywhere`;
+      }
       break;
+    case "who": {
+      const flag = form.adds.find((n) => n.startsWith("-"));
+      if (form.adds.length > MAX_ADDS) e.adds = `Add at most ${MAX_ADDS} companies at a time`;
+      else if (flag) e.adds = `Remove "${flag}": a company name cannot start with "-"`;
+      else if (form.adds.some((n) => n.length > MAX_NAME)) e.adds = `Company names must be ${MAX_NAME} characters or fewer`;
+      break;
+    }
     case "picky":
       if (!Number.isInteger(form.minMatch) || form.minMatch < 0 || form.minMatch > 100) e.minMatch = "Match score must be a whole number from 0 to 100";
       if (!Number.isInteger(form.maxRows) || form.maxRows < 1 || form.maxRows > 100) e.maxRows = "Matches per alert must be a whole number from 1 to 100";

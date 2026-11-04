@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { checkDraft, targets } from "../../src/lib/setup-draft.mjs";
-import { addRole, baseFrom, bins, draftFrom, formFrom, passing, setEmail, STAGE_IDS, status, validate } from "../../src/lib/setup-wizard.mjs";
+import { addRole, baseFrom, bins, draftFrom, formFrom, passing, setEmail, setKeywords, setRoles, STAGE_IDS, status, validate } from "../../src/lib/setup-wizard.mjs";
 
 // A GET /api/setup response for a user whose files all exist.
 const SETUP = {
@@ -48,9 +48,10 @@ test("every edit lands in the section its writer reads, and checkDraft accepts i
   assert.ok(!("error" in result), result.error);
   assert.deepEqual(targets(result.checked), ["portals", "alerts", "profile", "personalization", "lanes"]);
 
-  // The saved draft reopens as the same form.
+  // The saved draft reopens as the same form. Which keywords a role added is
+  // session state: after a reload, removing a role leaves its keyword.
   const reopened = formFrom({ ...SETUP, draft: { value: draft } });
-  assert.deepEqual(reopened, form);
+  assert.deepEqual(reopened, { ...form, roleKeywords: [] });
   assert.deepEqual(draftFrom(reopened, base, ["compTargets"]), draft);
 });
 
@@ -123,6 +124,33 @@ test("addRole is additive and case-insensitive", () => {
   const next = addRole({ ...form, keywords: ["Designer"] }, "Designer");
   assert.deepEqual(next.roles, ["Analyst", "Designer"]);
   assert.deepEqual(next.keywords, ["Designer"]);
+});
+
+test("removing a role takes only the keyword addRole added", () => {
+  const form = { ...formFrom(SETUP), keywords: ["Designer"] };
+  const added = setRoles(form, ["Analyst", "Designer", "Researcher"]);
+  assert.deepEqual(added.keywords, ["Designer", "Researcher"]);
+  // Designer was a keyword before it was a role, so it outlives the role.
+  const removed = setRoles(added, ["Analyst"]);
+  assert.deepEqual(removed.roles, ["Analyst"]);
+  assert.deepEqual(removed.keywords, ["Designer"]);
+  assert.deepEqual(removed.roleKeywords, []);
+  // A keyword removed by hand and typed back is the user's, not the role's.
+  const owned = setKeywords(setKeywords(added, ["Designer"]), ["Designer", "Researcher"]);
+  assert.deepEqual(setRoles(owned, ["Analyst"]).keywords, ["Designer", "Researcher"]);
+  assert.deepEqual(draftFrom(removed, baseFrom(SETUP)), draftFrom({ ...formFrom(SETUP), keywords: ["Designer"] }, baseFrom(SETUP)));
+});
+
+test("validate catches what the server would refuse in places and adds", () => {
+  const form = formFrom(SETUP);
+  assert.match(validate("where", { ...form, places: ["London", " Remote "] }).places, /Remove "Remote": it is not a place/);
+  assert.deepEqual(validate("where", { ...form, places: ["London", "Remote-first Ltd HQ"] }), {});
+  const adds = (a) => validate("who", { ...form, adds: a }).adds;
+  assert.match(adds(Array.from({ length: 21 }, (_, i) => `Co${i}`)), /at most 20/);
+  assert.match(adds(["Initech", "-x"]), /cannot start with "-"/);
+  assert.match(adds(["x".repeat(101)]), /100 characters or fewer/);
+  assert.equal(adds(["Initech"]), undefined);
+  assert.equal(status("who", { ...form, adds: ["-x"] }, { hasCv: true }), "todo");
 });
 
 test("bins and passing", () => {
