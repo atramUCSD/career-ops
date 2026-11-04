@@ -76,7 +76,9 @@ node runner.mjs install           # add --sync for the cloud sync task, --dry-ru
 This builds `career-ops.exe` (a windowless launcher compiled from
 `scripts/launcher.cs` with the .NET Framework `csc` that ships with Windows)
 and registers `career-ops-alert` at 07:00 and 19:00 and `career-ops-sweep` on
-Sunday at 03:00, both pointed at it. The launcher only runs
+Sunday at 03:00, both pointed at it, plus `career-ops-dashboard`, which runs
+`career-ops.exe serve` at logon to start the web dashboard without opening a
+browser. The launcher only runs
 `node runner.mjs <command>` and appends its output to `data/runner-log-<command>.txt`, one log per command so an alert that overlaps the Sunday sweep is not locked out of a shared log;
 every decision about which stage runs and which failure stops what lives in
 `runner.mjs`, so a fix to the chain never needs a rebuild of the exe. The tasks
@@ -90,7 +92,7 @@ registered on them.
 `career-ops.exe` with no command opens the web dashboard at
 http://127.0.0.1:3000, starting it hidden first if nothing answers there (about
 15 seconds, logged to `data/web-log.txt`). The server stays up until
-`career-ops.exe stop` or a reboot, so later launches open it at once. It runs
+`career-ops.exe stop` or logoff, so later launches open it at once. It runs
 `next dev`, which holds about 900 MB and compiles each page on its first visit.
 Every launch also writes `output/status.html`: the tasks' last and next runs,
 the recent log rows, and links to the pages. The exe opens that page as well

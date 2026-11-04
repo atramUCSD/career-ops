@@ -9,6 +9,7 @@
  *   node runner.mjs sync        one cloud sync pass (every 10 minutes, once deployed)
  *   node runner.mjs status      scheduled tasks and the latest log rows
  *   node runner.mjs home        open the web dashboard, starting it if needed (the exe's default)
+ *   node runner.mjs serve       start the web dashboard if it is down, open nothing (the logon task)
  *   node runner.mjs stop        stop the web dashboard on port 3000
  *   node runner.mjs build-exe   compile scripts/launcher.cs to career-ops.exe
  *   node runner.mjs install [--sync] [--dry-run]
@@ -370,6 +371,9 @@ export function installScript(root = ROOT, { sync: withSync = false } = {}) {
     task('career-ops-sweep', 'sweep',
       '(Local (New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At 03:00))',
       `${base} -WakeToRun -ExecutionTimeLimit (New-TimeSpan -Hours 72)`),
+    // The server outlives this task: startWeb hands it to cmd's start /b, so the
+    // task ends when serve returns and the dashboard stays up until logoff.
+    task('career-ops-dashboard', 'serve', '(New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\\$env:USERNAME")', base),
   ];
   // No -WakeToRun: waking a sleeping laptop every 10 minutes costs battery for
   // a page nobody is reading. 30 minutes because a queued scan runs inside the pass.
@@ -397,9 +401,10 @@ const USAGE = `Usage: node runner.mjs [alert|sweep|sync|status|home|stop|build-e
   sync        one cloud sync pass (needs .env)
   status      scheduled tasks and the latest log rows
   home        open the web dashboard, starting it if needed (default)
+  serve       start the web dashboard if it is down, open nothing
   stop        stop the web dashboard on port 3000
   build-exe   compile scripts/launcher.cs to ${EXE}
-  install     register career-ops-alert and -sweep on ${EXE}; --sync adds
+  install     register career-ops-alert, -sweep and -dashboard on ${EXE}; --sync adds
               career-ops-sync; --dry-run prints the PowerShell instead`;
 const CHAINS = { alert, sweep, sync };
 
@@ -413,6 +418,7 @@ export function main(argv, root = ROOT) {
   if (CHAINS[cmd]) return CHAINS[cmd]({ exec: nodeExec(root), log: tsvLog(root), root });
   if (cmd === 'status') return status(root);
   if (cmd === 'home') return home({ root });
+  if (cmd === 'serve') return home({ root, open: () => {} });
   if (cmd === 'stop') return stop();
   if (cmd === 'build-exe') return buildExe(root);
   if (cmd === 'install') return install(root, { sync: argv.includes('--sync'), dryRun: argv.includes('--dry-run') });

@@ -179,7 +179,10 @@ test('install: alert twice daily and the weekly sweep in local time, runnable on
   assert.match(ps, /-TaskName 'career-ops-alert'.*-Argument 'alert'.*-Daily -At 07:00.*-Daily -At 19:00/);
   assert.match(ps, /-TaskName 'career-ops-sweep'.*-DaysOfWeek Sunday -At 03:00/);
   assert.match(ps, /-Execute 'C:\\it''s\\career-ops\\career-ops\.exe'/);
-  assert.equal(ps.match(/-AllowStartIfOnBatteries -DontStopIfGoingOnBatteries/g).length, 2);
+  assert.equal(ps.match(/-AllowStartIfOnBatteries -DontStopIfGoingOnBatteries/g).length, 3);
+  const dash = ps.split('\n').find(l => l.includes('career-ops-dashboard'));
+  assert.match(dash, /-Argument 'serve'.*-AtLogOn -User "\$env:USERDOMAIN\\\$env:USERNAME"/);
+  assert.doesNotMatch(dash, /WakeToRun|ExecutionTimeLimit/);
   // Local wall time, so the 07:00 run stays at 07:00 across a DST change.
   assert.equal(ps.match(/\(Local \(New-ScheduledTaskTrigger/g).length, 3);
   assert.ok(ps.split('\n').includes("function Local($t) { $t.StartBoundary = ([datetime]$t.StartBoundary).ToString('s'); $t }"));
