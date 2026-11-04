@@ -193,11 +193,14 @@ published from a Claude session (may lag). Set `artifact_url` in
 `config/alerts.yml` to include the link, or leave it blank to omit it.
 
 **Links into the full app are opt-in.** `dashboard_url` (the local web
-dashboard) adds an inbox link under the new postings, a "Follow-ups due"
+dashboard) adds a Pipeline link under the new postings, a "Follow-ups due"
 digest from the same cadence math as the Follow-ups page, and a row of links
-to the dashboard's pages. `cloud_url` (the Cloudflare phone board) adds its
-Board and Postings views; the board has no per-posting route, so neither app
-gets a per-row link. A profile layer's mail leaves both blank, because its
+to the dashboard's pages, labelled as in its nav. `cloud_url` (the Cloudflare
+phone board) adds its Board and Postings views, and puts the Postings link
+first under the new postings, since the dashboard link only works at the
+desk. The board has no per-posting route, so neither app gets a per-row link.
+A digest that fails to read the tracker is logged as `followups digest
+FAILED` and dropped; the mail still goes out. A profile layer's mail leaves both blank, because its
 reader cannot reach this machine. The digest uses the owner's follow-up
 cadence for every layer. It never wakes a quiet run: a mail goes out only
 when a posting is new, upgraded or retired.

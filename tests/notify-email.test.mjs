@@ -5,8 +5,11 @@
 import { pass, fail } from './helpers.mjs';
 import {
   diffRows, subjectFor, encodeMime, toBase64Url, composeBody, composeRun, DEFAULTS,
-  BAND_COLOR,
+  BAND_COLOR, loadConfig,
 } from '../notify-email.mjs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { BANDS } from '../callback-score.mjs';
 import { sendRaw, credentialsFrom, GmailSendError } from '../gmail-send.mjs';
 
@@ -119,6 +122,40 @@ linked.includes('href="http://127.0.0.1:3000/pipeline"') && linked.includes('hre
   && linked.includes('Gamma &lt;i&gt;') && !linked.includes(':3000//')
   ? pass('dashboard and phone-board links render, trailing slashes folded, digest escaped')
   : fail('app links or follow-ups digest missing from the body');
+/Shortlist on your phone<\/a> · <a[^>]*>Score at your desk/.test(linked) && linked.includes('3000/setup"')
+  && !/Inbox|CV studio/.test(linked)
+  ? pass('the postings CTA leads with the phone link and the desk labels match the nav')
+  : fail('postings CTA is desk-only or desk labels drifted from the nav');
+
+// The digest is optional: a tracker it cannot read must not cost the mail.
+{
+  const root = mkdtempSync(join(tmpdir(), 'notify-due-'));
+  mkdirSync(join(root, 'data/applications.md'), { recursive: true }); // EISDIR on read
+  const origErr = console.error;
+  console.error = () => {};
+  let run = null;
+  try {
+    run = composeRun({
+      root, cfg: { ...DEFAULTS, to: 'me@example.com', dashboard_url: 'http://127.0.0.1:3000' },
+      model: { rows: [a], expired: { count: 0 }, generated: '2026-08-21' },
+      now: new Date('2026-08-21T00:00:00Z'),
+    });
+  } catch { /* asserted below */ } finally { console.error = origErr; rmSync(root, { recursive: true, force: true }); }
+  run && run.mime !== '' && !run.html.includes('Follow-ups due')
+    ? pass('an unreadable tracker drops the follow-ups digest, not the mail')
+    : fail('a follow-ups digest failure killed the mail');
+}
+
+{
+  const root = mkdtempSync(join(tmpdir(), 'notify-cfg-'));
+  mkdirSync(join(root, 'config'));
+  writeFileSync(join(root, 'config/alerts.yml'), 'alerts:\n  dashboard_url:\n  cloud_url: 3000\n');
+  const cfg = loadConfig(root);
+  rmSync(root, { recursive: true, force: true });
+  cfg.dashboard_url === '' && cfg.cloud_url === '3000'
+    ? pass('a null or numeric app URL loads as a string')
+    : fail(`app URLs not coerced: ${JSON.stringify([cfg.dashboard_url, cfg.cloud_url])}`);
+}
 
 const url = toBase64Url(mime);
 /^[A-Za-z0-9_-]+$/.test(url) && Buffer.from(url.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString() === mime

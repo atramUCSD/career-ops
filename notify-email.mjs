@@ -88,6 +88,9 @@ export function loadConfig(root = ROOT) {
   if (cfg.min_reply_odds !== undefined && (parsed.alerts || parsed).min_match === undefined) {
     cfg.min_match = cfg.min_reply_odds;
   }
+  // A bare `dashboard_url:` parses to null and a port-only value to a number;
+  // both reach .replace() at compose time.
+  for (const k of ['dashboard_url', 'cloud_url']) cfg[k] = cfg[k] == null ? '' : String(cfg[k]);
   return cfg;
 }
 
@@ -201,6 +204,8 @@ export function composeBody({ fresh, upgraded, model, cfg, date, due = [] }) {
   const wrap = s => `<div style="font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;color:#12242c;background:#ffffff;padding:4px">${s}</div>`;
   const h = t => `<h2 style="font-size:15px;letter-spacing:.04em;text-transform:uppercase;color:#4a6068;margin:22px 0 8px">${t}</h2>`;
   const app = cfg.dashboard_url ? path => cfg.dashboard_url.replace(/\/+$/, '') + path : null;
+  // The phone board has no per-posting route, only its two hash views.
+  const cloud = cfg.cloud_url ? cfg.cloud_url.replace(/[#/]+$/, '') : '';
   const out = [];
   out.push(`<p style="margin:0 0 4px;font-size:13px;color:#74898f">career-ops · ${date} · ${model.rows.length} pending across ${new Set(model.rows.map(r => r.c)).size} companies</p>`);
   if (fresh.length) {
@@ -213,8 +218,13 @@ export function composeBody({ fresh, upgraded, model, cfg, date, due = [] }) {
   }
   if (!fresh.length && !upgraded.length) {
     out.push(`<p style="margin:16px 0">No new postings this run.</p>`);
-  } else if (app) {
-    out.push(`<p style="margin:10px 0 0;font-size:13.5px">${link(app('/pipeline'), 'Score, shortlist or dismiss these in the inbox')}</p>`);
+  } else if (app || cloud) {
+    // The desk link is loopback and dead on the phone the mail is often read on.
+    const acts = [
+      cloud && link(cloud + '/#postings', 'Shortlist on your phone'),
+      app && link(app('/pipeline'), cloud ? 'Score at your desk' : 'Score, shortlist or dismiss these in Pipeline'),
+    ].filter(Boolean);
+    out.push(`<p style="margin:10px 0 0;font-size:13.5px">${acts.join(' · ')}</p>`);
   }
   if (due.length) {
     const cell = 'padding:6px 10px;border-bottom:1px solid #d6dedf;font-size:14px;vertical-align:top';
@@ -230,10 +240,9 @@ export function composeBody({ fresh, upgraded, model, cfg, date, due = [] }) {
     ${BANDS.filter(b => b.id !== 'blocked').map(b =>
       `${model.rows.filter(r => r.cbBand === b.id).length} ${b.id}`).join(' · ')} ·
     ${model.expired.count} retired to date${cfg.artifact_url ? ` · <a href="${esc(cfg.artifact_url)}" style="color:#0f6f6b">open the full page</a>` : ''}</p>`);
-  const desk = app ? [['/', 'Home'], ['/pipeline', 'Inbox'], ['/board', 'Board'], ['/followups', 'Follow-ups'],
-    ['/cv', 'CV studio'], ['/analytics', 'Analytics'], ['/config', 'Config &amp; setup']].map(([p, t]) => link(app(p), t)) : [];
-  // The phone board has no per-posting route, only its two hash views.
-  const cloud = cfg.cloud_url ? cfg.cloud_url.replace(/[#/]+$/, '') : '';
+  // Labels match the app's nav (web/src/lib/nav-items.ts).
+  const desk = app ? [['/', 'Home'], ['/pipeline', 'Pipeline'], ['/board', 'Board'], ['/followups', 'Follow-ups'],
+    ['/cv', 'CV'], ['/analytics', 'Analytics'], ['/setup', 'Setup'], ['/config', 'Config']].map(([p, t]) => link(app(p), t)) : [];
   const phone = cloud ? [link(cloud + '/', 'Board'), link(cloud + '/#postings', 'Shortlist or run a scan')] : [];
   if (desk.length || phone.length) {
     out.push(h('Open the full app'));
@@ -309,7 +318,11 @@ export function composeRun({ root = ROOT, now = new Date(), cfg = null, model = 
     : null;
 
   const subject = (test ? '[test] ' : '') + subjectFor({ fresh, upgraded, retired, date });
-  const due = config.dashboard_url ? dueFollowups(root) : [];
+  // The digest is optional; a tracker it cannot read must not cost the alert.
+  let due = [];
+  if (config.dashboard_url) {
+    try { due = dueFollowups(root); } catch (e) { console.error(`followups digest FAILED - ${e.message}`); }
+  }
   const html = composeBody({ fresh, upgraded, model: m, cfg: config, date, due });
   return {
     quiet,
