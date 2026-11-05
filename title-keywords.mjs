@@ -369,6 +369,17 @@ function padded(k) {
   return WORD_PREFIX + lower;
 }
 
+// One title_filter entry exactly as buildTitleFilter reads it. Every other
+// consumer (doctor's conflict check, per-company overrides, onboarding) must
+// go through this rather than its own trim: a local `k.trim()` drops the
+// padding before padded() can see it, so "Java " turns back into a substring
+// "java" there while the scan reads `word:java`. That drift made doctor
+// report a JavaScript positive as vetoed when the scan kept it, and made the
+// override path really veto it.
+export function titleKeyword(k) {
+  return foldTitle(padded(k)).trim();
+}
+
 export function buildTitleFilter(titleFilter) {
   // AND-groups are a POSITIVE-side feature only. On the negative side an entry
   // is a veto, and " + " there would read as "reject when both appear", which

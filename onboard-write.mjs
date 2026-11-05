@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readFileSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { loadYaml } from './lib/yaml-document.mjs';
-import { compileKeyword, foldTitle } from './title-keywords.mjs';
+import { compileKeyword, foldTitle, titleKeyword } from './title-keywords.mjs';
 import { getCareerOpsRoot, getProfilePath } from './path-resolver.mjs';
 import { writeFileAtomic } from './tracker-utils.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
@@ -72,6 +72,12 @@ function list(value) {
   return Array.isArray(value) ? value.map((v) => String(v).trim()).filter(Boolean) : [];
 }
 
+// Title keywords keep their padding: the scanner reads "Java " as word:java,
+// and trimming it here would write a bare "Java" that vetoes JavaScript.
+function keywords(value) {
+  return Array.isArray(value) ? value.map(String).filter((v) => v.trim()) : [];
+}
+
 function required(value, field) {
   const text = typeof value === 'string' ? value.trim() : '';
   if (!text) throw new AnswerError(`missing answer: ${field}`);
@@ -86,7 +92,7 @@ export function normalizeAnswers(raw) {
   const portals = a.portals || {};
   const roles = list(a.target_roles);
   if (!roles.length) throw new AnswerError('missing answer: target_roles');
-  const positive = list(portals.positive);
+  const positive = keywords(portals.positive);
   if (!positive.length) throw new AnswerError('missing answer: portals.positive');
   const tier = a.spend_tier ?? 'standard';
   if (!['economy', 'standard', 'premium'].includes(tier)) {
@@ -107,9 +113,9 @@ export function normalizeAnswers(raw) {
   if (!Number.isInteger(age) || age < 0) {
     throw new AnswerError('portals.max_posting_age_days must be a whole number of days (0 turns it off)');
   }
-  const negative = list(portals.negative);
+  const negative = keywords(portals.negative);
   for (const n of negative) {
-    const matches = compileKeyword(foldTitle(n));
+    const matches = compileKeyword(titleKeyword(n));
     const title = positive.find((p) => matches(foldTitle(p)));
     if (title) throw new AnswerError(`portals.negative "${n}" rejects the title "${title}"`);
   }
@@ -239,7 +245,7 @@ export function buildPortals(template, a) {
   // Drop shipped negatives that would reject a user positive under the same
   // word:/stem:/substring rules the scanner uses.
   const conflicting = new Set(shippedNegatives.filter((negative) => {
-    const matches = compileKeyword(negative);
+    const matches = compileKeyword(titleKeyword(negative));
     return p.positive.some((positive) => matches(foldTitle(positive)));
   }));
   const [negStart, negEnd] = blockAfter(lines, '  negative:', '  seniority_boost:');

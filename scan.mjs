@@ -72,7 +72,7 @@ import { normalizeCompany, appendLedgerRows } from './tracker-utils.mjs';
 import { normalizeCompanyName } from './invite-match.mjs';
 import { withPipelineLock } from './pipeline-lock.mjs';
 import { recordExpired, parseExpiredLog } from './expired-log.mjs';
-import { compileKeyword, compilePositiveKeyword, compileContentKeyword, buildTitleFilter, foldTitle } from './title-keywords.mjs';
+import { compileKeyword, compilePositiveKeyword, compileContentKeyword, buildTitleFilter, foldTitle, titleKeyword } from './title-keywords.mjs';
 import { flagValue, hasFlag, validateFlags } from './lib/cli-flags.mjs';
 import { withPortalHealthLock } from './portal-health-lock.mjs';
 import { localToday } from './lib/local-today.mjs';
@@ -294,7 +294,7 @@ export function buildTitleFilterOverrides(overrides) {
     // it's an additive positive list, so it should behave like one.
     const matchers = extraRaw
       .filter(k => typeof k === 'string')
-      .map(k => k.trim().toLowerCase())
+      .map(titleKeyword)
       .filter(k => k.length > 0)
       .map(compilePositiveKeyword);
     if (matchers.length === 0) continue; // nothing to add — skip the entry entirely
@@ -322,7 +322,7 @@ export function buildTitleFilterWithOverrides(titleFilter, overridesMap) {
 
   const normalize = (arr) => (Array.isArray(arr) ? arr : [])
     .filter(k => typeof k === 'string')
-    .map(k => k.trim().toLowerCase())
+    .map(titleKeyword)
     .filter(k => k.length > 0)
     .map(compileKeyword);
   const negative = normalize(titleFilter?.negative);
@@ -331,7 +331,7 @@ export function buildTitleFilterWithOverrides(titleFilter, overridesMap) {
     if (base(title)) return true;
     const extra = overrides.get(String(companySlug ?? '').trim().toLowerCase());
     if (!extra || extra.length === 0) return false;
-    const lower = String(title ?? '').toLowerCase();
+    const lower = foldTitle(title);
     if (negative.some(m => m(lower))) return false;
     return extra.some(m => m(lower));
   };
@@ -347,7 +347,7 @@ function compiledPositiveMatchers(positiveList) {
   if (compiledPositiveCache.has(positiveList)) return compiledPositiveCache.get(positiveList);
   const compiled = positiveList
     .filter(k => typeof k === 'string' && k.trim().length > 0)
-    .map(k => ({ raw: k, match: compilePositiveKeyword(foldTitle(k).trim()) }));
+    .map(k => ({ raw: k, match: compilePositiveKeyword(titleKeyword(k)) }));
   compiledPositiveCache.set(positiveList, compiled);
   return compiled;
 }
